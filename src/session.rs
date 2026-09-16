@@ -50,8 +50,14 @@ impl DiffTarget {
     }
 }
 
+/// A full hash cut down for a label. `get` rather than a slice: a revision comes from the
+/// UIs and the API, and 40 bytes of anything is not 40 characters.
 fn short(rev: &str) -> &str {
-    if rev.len() == 40 { &rev[..7] } else { rev }
+    if rev.len() == 40 {
+        rev.get(..7).unwrap_or(rev)
+    } else {
+        rev
+    }
 }
 
 /// A file as the viewer shows it: its text, and the comments placed on it.
@@ -173,6 +179,10 @@ impl Session {
     }
 
     pub fn set_layout(&mut self, layout: &str) -> Result<()> {
+        anyhow::ensure!(
+            matches!(layout, "auto" | "side-by-side" | "unified"),
+            "no layout named {layout:?}"
+        );
         self.config.layout = layout.to_string();
         self.save_config()
     }
@@ -603,6 +613,21 @@ pub(crate) mod tests {
     }
 
     /// A scratch repository with two commits and one unstaged edit.
+    /// A revision comes from a URL: forty bytes of anything must not be sliced as if they
+    /// were forty characters.
+    #[test]
+    fn a_label_survives_an_odd_revision() {
+        let forty = "\u{3b1}".repeat(20);
+        assert_eq!(forty.len(), 40);
+        let target = DiffTarget::Revisions {
+            from: forty.clone(),
+            to: forty.clone(),
+        };
+        assert!(!target.label().is_empty());
+        assert_eq!(short(&forty), forty);
+        assert_eq!(short(&"a".repeat(40)), "aaaaaaa");
+    }
+
     #[test]
     fn targets_fan_out_over_a_directory_of_repositories() {
         let parent = tempfile::tempdir().unwrap();

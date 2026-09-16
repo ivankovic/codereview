@@ -99,11 +99,21 @@ between automatic, side-by-side and unified layout, `c` comments on the after-si
 
 `codereview web` prints a URL that includes a session token and opens it. Only that URL works:
 the server binds a loopback address and rejects requests without the token, so no other page
-in the browser can read the repository or write to `REVIEW.md`. The token opens the page once
-and leaves a cookie behind, so it does not stay in the address bar; API requests carry it in a
-header instead, which no other site can set. Set `CODEREVIEW_TOKEN` to keep one URL across
-restarts. Passing `--host` to listen on another address exposes the repository to whoever can
-reach it.
+in the browser can read the repository or write to `REVIEW.md`. The token opens a session once
+and leaves a cookie behind, so it does not stay in the address bar; API requests carry a
+separate per-session secret in a header, which no other site can set.
+
+For anything reachable from another machine, use a password instead of a token:
+
+```sh
+codereview hash-password                 # asks twice, prints an Argon2 hash
+export CODEREVIEW_PASSWORD_HASH='$argon2id$...'
+codereview web --public-url https://review.example.com --no-agent --no-open
+```
+
+The page is then a sign-in form, a session lasts a week, **Sign out** ends it, and repeated
+wrong passwords are answered more and more slowly. Binding a non-loopback address without a
+password is refused outright.
 
 To reach the page from another machine, put nginx in front of it rather than opening the port:
 [docs/deploy.md](docs/deploy.md) has a TLS site on a custom domain, a systemd unit, and what to

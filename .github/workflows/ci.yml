@@ -8,6 +8,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   fmt:
     name: cargo fmt --check
@@ -52,3 +55,12 @@ jobs:
       - run: git config --global user.email ci@example.com && git config --global user.name CI
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run --locked --features "${{ matrix.features }}"
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit --deny warnings

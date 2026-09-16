@@ -7,6 +7,18 @@ use anyhow::Result;
 use serde_json::Value;
 
 pub use crate::acp::{Event, PermissionOption, Role, prompts};
+
+/// Keeps this server's own secrets out of the agent's environment. The agent runs commands
+/// of its own, and anything it inherits it can pass on.
+pub(crate) fn strip_secrets(command: &mut std::process::Command) {
+    for name in [
+        "CODEREVIEW_TOKEN",
+        "CODEREVIEW_PASSWORD_HASH",
+        "CODEREVIEW_CONFIG",
+    ] {
+        command.env_remove(name);
+    }
+}
 use crate::config::AgentConfig;
 
 pub enum Agent {

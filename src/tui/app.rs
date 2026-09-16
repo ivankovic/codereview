@@ -919,6 +919,7 @@ impl App {
             AgentEvent::Permission {
                 request_id,
                 title,
+                details,
                 options,
             } => {
                 let names: Vec<String> = options
@@ -926,9 +927,16 @@ impl App {
                     .enumerate()
                     .map(|(i, o)| format!("{} {}", i + 1, o.name))
                     .collect();
+                // The whole of what is being approved goes in the transcript: the bar below
+                // has room for one line, and a command's second line is where something
+                // unwanted would hide.
+                let full = match &details {
+                    Some(d) if d.trim() != title.trim() => format!("permission: {title}\n{d}"),
+                    _ => format!("permission: {title}"),
+                };
                 state.entries.push(Entry {
                     kind: EntryKind::System,
-                    text: format!("permission: {title}  ({})", names.join("  ")),
+                    text: format!("{full}\n({})", names.join("  ")),
                 });
                 state.permission = Some((request_id, title, options));
                 state.status = "waiting for permission".into();

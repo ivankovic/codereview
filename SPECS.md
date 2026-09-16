@@ -205,30 +205,33 @@ thread so the interface never waits for it. `o` suspends the UI and runs `$VISUA
 
 ## Browser UI
 
-One embedded page served by an axum server on a loopback address (by default) with a random
-port. The token is `CODEREVIEW_TOKEN` when that is set, which keeps one URL across restarts
-and must be at least sixteen characters, otherwise a fresh random one. The page is served to
-a browser that carries the token in the query, which redirects to the bare path after leaving
-a cookie that lasts thirty days, or to one that carries that cookie; the token therefore
-leaves the address bar, the history and the proxy's log of later requests. Every API request
-must send the token as a bearer header instead, never the cookie, so a page on another site
-cannot act as the signed-in browser. Tokens are compared without stopping at the first wrong
-byte. Every response forbids storing, referrers and framing, and restricts the page to its
-own origin. `--public-url` names what a reverse proxy publishes: it is the URL printed at
-start-up, and an HTTPS one marks the cookie `Secure`. `--no-agent` leaves the agent routes
-unregistered and tells the page, which then offers no way to one. The server stops on SIGTERM
-as well as on Ctrl-C. The API mirrors the session: state, file with
-highlighting and change markers, blame, log, commit files, changes, diff with highlighting on
-both sides and anchored comments, comments and notes (list, add, toggle, edit, delete),
-refresh and re-anchor, the theme list and config, symbols (file symbols, definitions,
-occurrences, search, identifier at a position), and the agent (start, poll for events since
-a sequence number, prompt with text or a preset, answer a permission, cancel, stop). The
-server drains the agent into a buffer on every poll, so a reloaded page rebuilds the
-transcript. The page has the same views as the terminal UI: explorer with tree and file,
-changes, log and history, diff, review, notes, and the agent tab; clicking a name in code
-offers its definition and usages in a side drawer. A comment on a whole file comes from the
-Comment button in the file header and is shown above the first line; one on a directory from
-the `+` on its row in the tree.
+One embedded page served by an axum server on a loopback address (by default) with a random port.
+
+Signing in works one of two ways. With `CODEREVIEW_PASSWORD_HASH` set, to an Argon2 hash from
+`codereview hash-password`, the page is a sign-in form and the password is checked against it;
+wrong answers are counted and sign-in then stops answering for a doubling delay, capped at a
+quarter of an hour, which a success clears. Otherwise a token opens a session: `CODEREVIEW_TOKEN`
+when set, which keeps one URL across restarts and must be at least sixteen characters, otherwise
+a fresh random one for the run. Setting both is an error, and a non-loopback address without a
+password is refused. Either way the browser ends up with a session: a cookie holding an
+identifier, and a second secret embedded in the page which every API request must send as a
+bearer header, never the cookie, so a page on another site cannot act as the signed-in browser. A
+session lasts a week, at most thirty-two are kept, and signing out ends one. Secrets are compared
+without stopping at the first wrong byte. Every response forbids storing, referrers and framing,
+and restricts the page to its own origin. `--public-url` names what a reverse proxy publishes: it
+is the URL printed at start-up, and an HTTPS one marks the cookie `Secure`. `--no-agent` leaves
+the agent routes unregistered and tells the page, which then offers no way to one. The server
+stops on SIGTERM as well as on Ctrl-C. The API mirrors the session: state, file with highlighting
+and change markers, blame, log, commit files, changes, diff with highlighting on both sides and
+anchored comments, comments and notes (list, add, toggle, edit, delete), refresh and re-anchor,
+the theme list and config, symbols (file symbols, definitions, occurrences, search, identifier at
+a position), and the agent (start, poll for events since a sequence number, prompt with text or a
+preset, answer a permission, cancel, stop). The server drains the agent into a buffer on every
+poll, so a reloaded page rebuilds the transcript. The page has the same views as the terminal UI:
+explorer with tree and file, changes, log and history, diff, review, notes, and the agent tab;
+clicking a name in code offers its definition and usages in a side drawer. A comment on a whole
+file comes from the Comment button in the file header and is shown above the first line; one on a
+directory from the `+` on its row in the tree.
 
 ## Command line
 

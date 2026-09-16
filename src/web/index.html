@@ -126,6 +126,8 @@ table.code tr.cur-sym td.c { outline: 1px solid var(--accent); }
 #agent .entry.log { margin-bottom: 2px; }
 #agent .entry.log .body { color: var(--dim); font-family: ui-monospace, monospace; font-size: 11px; }
 #agent .progress { color: var(--accent); font-size: 12px; }
+#agent .permission pre.perm { margin: 6px 0 0; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; max-height: 12em; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
 /* A server started with --no-agent offers no way to one. */
 body.no-agent [data-view=agent], body.no-agent [data-act=ask], body.no-agent [data-act=askall],
 body.no-agent [data-act=review] { display: none !important; }
@@ -154,6 +156,7 @@ body.no-agent [data-act=review] { display: none !important; }
   <input id="search" placeholder="search in file (/)" size="20">
   <select id="theme" title="colour scheme, saved to the config file"></select>
   <button id="refresh" title="re-read the repository and both Markdown files">Refresh</button>
+  <button id="signout" title="end this session in this browser">Sign out</button>
   <button id="helpbtn">?</button>
 </header>
 <main>
@@ -166,7 +169,7 @@ body.no-agent [data-act=review] { display: none !important; }
 <div id="help" hidden></div>
 <script>
 'use strict';
-const TOKEN = '__TOKEN__';
+const TOKEN = __TOKEN__;
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -268,7 +271,7 @@ async function switchRepo(index) {
   state.repo = index;
   state.file = null; state.diff = null; state.log = null; state.allComments = undefined;
   state.tree.collapsed = new Set(); state.tree.filter = '';
-  Object.assign(agent, { seq: 0, entries: [], tools: {}, permission: null, running: false, name: '', status: 'not started',
+  Object.assign(agent, { seq: 0, entries: [], tools: Object.create(null), permission: null, running: false, name: '', status: 'not started',
     phase: '', turnMs: null, quietMs: null, turnTools: 0, inputTokens: 0, outputTokens: 0, cost: null, startedAt: null });
   state.allComments = await api('/comments');
   await loadState();
@@ -299,7 +302,7 @@ function buildTree() {
 }
 
 function renderTree() {
-  const counts = {};
+  const counts = Object.create(null);
   for (const c of (state.allComments || [])) if (c.comment.section === 'Pending') counts[c.comment.path] = (counts[c.comment.path] || 0) + 1;
   const parts = [`<input id="filter" placeholder="filter files" value="${esc(state.tree.filter)}">`];
   const walk = (node, depth) => {
@@ -307,7 +310,7 @@ function renderTree() {
     for (const name of dirs) {
       const d = node.dirs.get(name);
       const collapsed = state.tree.collapsed.has(d.path) && !state.tree.filter;
-      const dcnt = counts[d.path] ? `<span class="cnt">●${counts[d.path]}</span>` : '';
+      const dcnt = counts[d.path] ? `<span class="cnt">●${esc(counts[d.path])}</span>` : '';
       parts.push(`<div class="row dir" data-dir="${esc(d.path)}" style="padding-left:${8 + depth * 14}px"><span class="st"></span>${collapsed ? '▸' : '▾'} ${esc(name)}/${dcnt}<span class="add" title="comment on this directory">+</span></div>`);
       if (!collapsed) walk(d, depth + 1);
     }
@@ -315,8 +318,8 @@ function renderTree() {
       const st = state.status[f.path] || '';
       const cls = st === '?' ? 'q' : st;
       const sel = state.file && state.file.path === f.path ? ' selected' : '';
-      const cnt = counts[f.path] ? `<span class="cnt">●${counts[f.path]}</span>` : '';
-      parts.push(`<div class="row${sel}" data-file="${esc(f.path)}" style="padding-left:${8 + depth * 14}px"><span class="st ${cls}">${esc(st)}</span><span class="name ${cls}">${esc(f.name)}</span>${cnt}</div>`);
+      const cnt = counts[f.path] ? `<span class="cnt">●${esc(counts[f.path])}</span>` : '';
+      parts.push(`<div class="row${sel}" data-file="${esc(f.path)}" style="padding-left:${8 + depth * 14}px"><span class="st ${esc(cls)}">${esc(st)}</span><span class="name ${esc(cls)}">${esc(f.name)}</span>${cnt}</div>`);
     }
   };
   walk(buildTree(), 0);
@@ -495,7 +498,7 @@ function renderFile() {
   const head = document.createElement('div');
   head.className = 'filehead';
   head.innerHTML = `<span class="path">${esc(f.path)}</span>
-    ${st ? `<span class="badge ${st === '?' ? 'q' : st}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
+    ${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
     <span class="dim">${f.lines.length} lines</span>
     <span class="spacer" style="flex:1"></span>
     <button data-act="symbols" title="definitions in this file (@)">Symbols</button>
@@ -675,7 +678,7 @@ $('#symbol').onkeydown = e => { if (e.key === 'Enter') { searchSymbols(e.target.
 
 // ----- agent ----------------------------------------------------------------------------------
 
-const agent = { seq: 0, entries: [], status: 'not started', running: false, name: '', permission: null, timer: null, tools: {}, showThoughts: false, showLog: true,
+const agent = { seq: 0, entries: [], status: 'not started', running: false, name: '', permission: null, timer: null, tools: Object.create(null), showThoughts: false, showLog: true,
   phase: '', turnMs: null, quietMs: null, turnTools: 0, inputTokens: 0, outputTokens: 0, cost: null, startedAt: null };
 
 async function agentPoll() {
@@ -715,7 +718,7 @@ function applyAgentEvent(e) {
     }
     case 'plan': agent.entries.push({ kind: 'system', text: 'plan:\n' + e.entries.map(([c, s]) => '[' + s + '] ' + c).join('\n') }); break;
     case 'permission': agent.entries.push({ kind: 'system', text: 'permission: ' + e.title }); break;
-    case 'turn_done': agent.tools = {}; agent.turnTools = 0; if (e.stop_reason !== 'end_turn') agent.entries.push({ kind: 'system', text: 'stopped: ' + e.stop_reason }); break;
+    case 'turn_done': agent.tools = Object.create(null); agent.turnTools = 0; if (e.stop_reason !== 'end_turn') agent.entries.push({ kind: 'system', text: 'stopped: ' + e.stop_reason }); break;
     case 'error': agent.entries.push({ kind: 'system', text: 'error: ' + e.message }); break;
     case 'exited': agent.entries.push({ kind: 'system', text: e.message }); break;
     case 'stderr': agent.entries.push({ kind: 'log', text: 'stderr: ' + e.text }); break;
@@ -801,7 +804,7 @@ function showAgent() {
   $('#agent [data-act=all]').onclick = () => agentSend({ preset: 'address_all' });
   $('#agent [data-act=cancel]').onclick = () => api('/agent/cancel', { post: true }).catch(fail);
   $('#agent [data-act=restart]').onclick = async () => { await api('/agent/stop', { post: true }).catch(fail); agent.running = false; agentStart(); };
-  $('#agent [data-act=clear]').onclick = () => { agent.entries = []; agent.tools = {}; renderAgent(); };
+  $('#agent [data-act=clear]').onclick = () => { agent.entries = []; agent.tools = Object.create(null); renderAgent(); };
   $('#thoughts').checked = agent.showThoughts;
   $('#thoughts').onchange = e => { agent.showThoughts = e.target.checked; renderAgent(); };
   $('#showlog').checked = agent.showLog;
@@ -825,8 +828,11 @@ function renderAgent() {
   const p = root.querySelector('.permission');
   if (agent.permission) {
     p.hidden = false;
-    p.innerHTML = `<b>agent asks:</b> ${esc(agent.permission.title)} ` + agent.permission.options.map(o => `<button class="small" data-opt="${esc(o.option_id)}">${esc(o.name)}</button>`).join('') + `<button class="small" data-opt="">Cancel</button>`;
-    p.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => api('/agent/permission', { body: { option_id: b.dataset.opt || null } }).then(agentPoll).catch(fail));
+    const details = agent.permission.details && agent.permission.details.trim() !== agent.permission.title.trim()
+      ? `<pre class="perm">${esc(agent.permission.details)}</pre>` : '';
+    p.innerHTML = `<div class="grow"><b>agent asks:</b> ${esc(agent.permission.title)}${details}</div>` + agent.permission.options.map(o => `<button class="small" data-opt="${esc(o.option_id)}">${esc(o.name)}</button>`).join('') + `<button class="small" data-opt="">Cancel</button>`;
+    const asked = agent.permission.request_id;
+    p.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => api('/agent/permission', { body: { option_id: b.dataset.opt || null, request_id: asked } }).then(agentPoll).catch(fail));
   } else {
     p.hidden = true;
   }
@@ -1170,6 +1176,11 @@ document.querySelectorAll('header .tabs button').forEach(b => b.onclick = () => 
   if (v === 'notes') showNotes();
   if (v === 'agent') showAgent();
 });
+$('#signout').onclick = async () => {
+  try { await api('/logout', { post: true }); } catch (e) { /* the session may already be gone */ }
+  location.href = '/';
+};
+
 $('#refresh').onclick = async () => {
   try {
     await api('/refresh', { post: true });

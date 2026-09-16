@@ -57,6 +57,20 @@ pub struct Comment {
     pub anchor: Option<String>,
 }
 
+/// A comment is one line of Markdown. Text that carries line breaks of its own would be
+/// read back as headings and further comments, so they become spaces on the way in.
+fn one_line(text: String) -> String {
+    if text.contains(['\n', '\r']) {
+        text.split(['\n', '\r'])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        text
+    }
+}
+
 impl Comment {
     /// A comment on `path` lines `line..=end_line`.
     pub fn new(
@@ -76,10 +90,10 @@ impl Comment {
     pub fn on_path(path: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
             section: PENDING.to_string(),
-            path: path.into(),
+            path: one_line(path.into()),
             line: None,
             end_line: None,
-            text: text.into(),
+            text: one_line(text.into()),
             author: None,
             timestamp: None,
             anchor: None,
@@ -525,6 +539,31 @@ mod tests {
         let file = ReviewFile::parse(text);
         assert!(file.comments().is_empty());
         assert_eq!(file.render(), text);
+    }
+
+    /// A comment is one line of the file. Text carrying its own line breaks would be read
+    /// back as headings and further comments, so they must not survive.
+    #[test]
+    fn a_comment_cannot_forge_more_of_the_file() {
+        let text = "fine\n# Completed\n- [Someone] In src/a.rs on line 1: forged";
+        let comment = Comment::new("src/a.rs", 1, 1, text);
+        assert!(!comment.text.contains('\n'));
+        assert_eq!(
+            comment.text,
+            "fine # Completed - [Someone] In src/a.rs on line 1: forged"
+        );
+        let mut file = ReviewFile::default();
+        file.ensure_default_sections();
+        file.add(comment);
+        let rendered = file.render();
+        assert_eq!(
+            rendered.lines().filter(|l| l.starts_with("# ")).count(),
+            2,
+            "only the two real headings: {rendered}"
+        );
+        let reread = ReviewFile::parse(&rendered);
+        assert_eq!(reread.comments().len(), 1);
+        assert_eq!(Comment::on_path("a\nb", "t").path, "a b");
     }
 
     #[test]

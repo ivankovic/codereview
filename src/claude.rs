@@ -18,6 +18,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use crate::acp::{Event, PermissionOption, Raw, Role, Transport};
+use crate::agent::strip_secrets;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -77,6 +78,7 @@ impl Agent {
             ])
             .args(extra)
             .current_dir(root);
+        strip_secrets(&mut process);
         let description = format!(
             "{command}{}",
             extra.iter().map(|a| format!(" {a}")).collect::<String>()
@@ -459,11 +461,13 @@ impl Agent {
                     name: "Deny".into(),
                     kind: "reject_once".into(),
                 });
+                let details = details_of(tool, &input);
                 self.permissions
                     .insert(id.clone(), PendingPermission { input, suggestions });
                 Some(Event::Permission {
                     request_id: Value::String(id),
                     title,
+                    details,
                     options,
                 })
             }
@@ -759,6 +763,36 @@ pub fn count(n: u64) -> String {
     }
 }
 
+/// Everything a permission would approve, for the panel to show in full: the whole command
+/// for a shell call, otherwise every argument. `describe` keeps one shortened line for the
+/// status bar, and a command's second line is exactly where something unwanted hides.
+fn details_of(tool: &str, input: &Value) -> Option<String> {
+    const MAX: usize = 4000;
+    let text = match tool {
+        "Bash" => input.get("command").and_then(Value::as_str)?.to_string(),
+        _ => {
+            let fields = input.as_object()?;
+            if fields.is_empty() {
+                return None;
+            }
+            fields
+                .iter()
+                .map(|(name, value)| match value.as_str() {
+                    Some(text) => format!("{name}: {text}"),
+                    None => format!("{name}: {value}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    };
+    let short: String = text.chars().take(MAX).collect();
+    Some(if short.len() < text.len() {
+        format!("{short}\n… {} more characters", text.len() - short.len())
+    } else {
+        short
+    })
+}
+
 fn kind_of(tool: &str) -> &'static str {
     match tool {
         "Read" | "Grep" | "Glob" | "LS" | "NotebookRead" => "read",
@@ -882,18 +916,29 @@ mod tests {
                 cost_usd: None
             }
         )));
-        let (request_id, title, options) = events
+        let (request_id, title, details, options) = events
             .iter()
             .find_map(|e| match e {
                 Event::Permission {
                     request_id,
                     title,
+                    details,
                     options,
-                } => Some((request_id.clone(), title.clone(), options.clone())),
+                } => Some((
+                    request_id.clone(),
+                    title.clone(),
+                    details.clone(),
+                    options.clone(),
+                )),
                 _ => None,
             })
             .unwrap();
         assert_eq!(title, "Bash: echo hi");
+        assert_eq!(
+            details.as_deref(),
+            Some("echo hi"),
+            "the whole command is shown"
+        );
         assert_eq!(
             options
                 .iter()

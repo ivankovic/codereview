@@ -76,6 +76,12 @@ enum Command {
         /// Repositories to serve; the page switches between them.
         paths: Vec<String>,
     },
+    /// Hash a password for the browser UI, for CODEREVIEW_PASSWORD_HASH.
+    ///
+    /// Asks for the password twice without echoing it, or reads one line from stdin when
+    /// that is not a terminal. The hash goes to stdout, everything else to stderr.
+    #[cfg(feature = "web")]
+    HashPassword,
     /// Print comments from REVIEW.md.
     List {
         /// Include completed comments.
@@ -167,6 +173,8 @@ fn main() -> Result<()> {
                 },
             )
         }
+        #[cfg(feature = "web")]
+        Some(Command::HashPassword) => hash_password(),
         Some(Command::List { all, path, json }) => list(&from, all, path.as_deref(), json),
         Some(Command::Add {
             path,
@@ -261,8 +269,40 @@ fn main() -> Result<()> {
     }
 }
 
-/// One prompt, answer streamed to stdout, permission requests answered on stdin (or
-/// auto-allowed with `--yes`), tool calls and diagnostics on stderr.
+/// Asks for a password and prints its hash. The password is never written anywhere: it is
+/// read without an echo when there is a terminal to read from, and only the hash is printed.
+#[cfg(feature = "web")]
+fn hash_password() -> Result<()> {
+    use std::io::IsTerminal;
+    const MIN: usize = 12;
+    let interactive = std::io::stdin().is_terminal();
+    let password = if interactive {
+        let first = rpassword::prompt_password("Password: ")?;
+        let again = rpassword::prompt_password("Again: ")?;
+        if first != again {
+            bail!("the two do not match");
+        }
+        first
+    } else {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        line.trim_end_matches(['\n', '\r']).to_string()
+    };
+    if password.chars().count() < MIN {
+        bail!(
+            "a password guarding a published site should be at least {MIN} characters; \
+             a few unrelated words make a good one"
+        );
+    }
+    let hash = codereview::web::hash_password(&password)?;
+    println!("{hash}");
+    if interactive {
+        eprintln!("\nPut that in the service environment, quoted. In /etc/codereview.env:");
+        eprintln!("  CODEREVIEW_PASSWORD_HASH='{hash}'");
+    }
+    Ok(())
+}
+
 #[cfg(any(feature = "tui", feature = "web"))]
 fn open_targets(
     from: &std::path::Path,
@@ -271,6 +311,8 @@ fn open_targets(
     codereview::session::open_targets(from, paths, None, |m| eprintln!("{m}"))
 }
 
+/// One prompt, answer streamed to stdout, permission requests answered on stdin (or
+/// auto-allowed with `--yes`), tool calls and diagnostics on stderr.
 fn agent_once(from: &std::path::Path, prompt: &str, yes: bool) -> Result<()> {
     use codereview::agent::{Event, Role};
     use std::io::Write;
@@ -322,6 +364,7 @@ fn agent_once(from: &std::path::Path, prompt: &str, yes: bool) -> Result<()> {
                 Event::Permission {
                     request_id,
                     title,
+                    details,
                     options,
                 } => {
                     let choice = if yes {
@@ -331,6 +374,9 @@ fn agent_once(from: &std::path::Path, prompt: &str, yes: bool) -> Result<()> {
                             .or(options.first())
                     } else {
                         eprintln!("permission: {title}");
+                        if let Some(details) = &details {
+                            eprintln!("{details}");
+                        }
                         for (i, o) in options.iter().enumerate() {
                             eprintln!("  {}. {} ({})", i + 1, o.name, o.kind);
                         }

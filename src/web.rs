@@ -17,7 +17,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{Agent, Event as AgentEvent, PermissionOption, prompts};
@@ -30,35 +30,40 @@ use crate::review::Comment;
 use crate::session::{DiffTarget, FileView, Session};
 use crate::symbols::{Location, Symbol};
 
+mod auth;
+
+pub use auth::hash_password;
+use auth::{Auth, COOKIE, SESSION_MAX_AGE, Sessions, constant_eq};
+
 const INDEX_HTML: &str = include_str!("web/index.html");
-
-/// The cookie that keeps a browser signed in, so the token is in the address bar once
-/// rather than on every request a reverse proxy logs.
-const COOKIE: &str = "codereview_token";
-
-/// How long that cookie lasts: long enough that a bookmark of the bare domain keeps
-/// working, short enough that an abandoned browser forgets.
-const COOKIE_MAX_AGE: u32 = 30 * 24 * 60 * 60;
-
-/// A token given through the environment must be worth having; a short one is a typo or a
-/// password, and both are guessable.
-const MIN_TOKEN_LEN: usize = 16;
+const LOGIN_HTML: &str = include_str!("web/login.html");
 
 /// The page carries its own script and styles and fetches nothing else, so everything but
-/// same-origin requests can be refused.
+/// same-origin requests can be refused. `form-action` is for the sign-in form.
 const CSP: &str = "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; \
                    style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; \
-                   base-uri 'none'; form-action 'none'";
+                   base-uri 'none'; form-action 'self'";
 
 #[derive(Clone)]
 struct AppState {
     repos: Arc<Vec<RepoState>>,
-    token: Arc<String>,
+    /// What a browser must show to be let in: a password, or a token in the first URL.
+    auth: Arc<Auth>,
+    /// Everyone signed in, and how sign-in has been going.
+    sessions: Arc<Mutex<Sessions>>,
     /// Mark the session cookie `Secure`: set when the page is published over HTTPS.
     secure_cookie: bool,
     /// Whether the agent is available at all. When it is off the routes are not registered
     /// and the page hides every way of reaching them.
     agent: bool,
+}
+
+impl AppState {
+    fn sessions(&self) -> std::sync::MutexGuard<'_, Sessions> {
+        // A lock this short is only poisoned by a panic while holding it, which would mean
+        // a bug in the few lines below each `sessions()` call.
+        self.sessions.lock().unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 /// One served repository: its session and its agent.
@@ -138,13 +143,21 @@ struct AgentHub {
     seq: u64,
     status: String,
     name: String,
-    permission: Option<(serde_json::Value, String, Vec<PermissionOption>)>,
+    permission: Option<Pending>,
     /// The user's prompts, echoed so a reloaded page can rebuild the transcript.
     transcript: Vec<(u64, String)>,
     /// What the backend says it is doing, when the turn started, when it last spoke.
     phase: String,
     turn_started: Option<Instant>,
     last_event: Option<Instant>,
+}
+
+/// A permission request waiting for an answer.
+struct Pending {
+    id: serde_json::Value,
+    title: String,
+    details: Option<String>,
+    options: Vec<PermissionOption>,
 }
 
 impl AgentHub {
@@ -159,9 +172,15 @@ impl AgentHub {
                 AgentEvent::Permission {
                     request_id,
                     title,
+                    details,
                     options,
                 } => {
-                    self.permission = Some((request_id.clone(), title.clone(), options.clone()));
+                    self.permission = Some(Pending {
+                        id: request_id.clone(),
+                        title: title.clone(),
+                        details: details.clone(),
+                        options: options.clone(),
+                    });
                     self.status = "waiting for permission".into();
                 }
                 AgentEvent::TurnDone { stop_reason } => {
@@ -206,7 +225,10 @@ impl IntoResponse for ApiError {
 
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
-        ApiError(StatusCode::BAD_REQUEST, format!("{e:#}"))
+        // The whole chain holds git command lines, raw git stderr and absolute paths. The
+        // operator can see it in the log; the browser is told only what went wrong.
+        eprintln!("api error: {e:#}");
+        ApiError(StatusCode::BAD_REQUEST, format!("{e}"))
     }
 }
 
@@ -239,12 +261,34 @@ pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
         }
         None => None,
     };
-    let token = session_token()?;
+    let auth = Auth::from_env()?;
+    let loopback_only = serve
+        .host
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback());
+    anyhow::ensure!(
+        auth.is_password() || loopback_only,
+        "listening on {} would put this on the network with only a token; set \
+         CODEREVIEW_PASSWORD_HASH (see `codereview hash-password`), or bind a loopback address \
+         and put a reverse proxy in front",
+        serve.host
+    );
+    if public.is_some() && !auth.is_password() {
+        eprintln!(
+            "warning: published at a URL but signed in with a token; anyone who learns it is in. \
+             Set CODEREVIEW_PASSWORD_HASH, see `codereview hash-password`"
+        );
+    }
     let runtime = tokio::runtime::Runtime::new().context("tokio runtime")?;
     runtime.block_on(async {
+        let first_url = match auth.token() {
+            Some(token) => format!("/?t={token}"),
+            None => "/".to_string(),
+        };
         let state = AppState {
             repos: Arc::new(sessions.into_iter().map(RepoState::new).collect()),
-            token: Arc::new(token.clone()),
+            auth: Arc::new(auth),
+            sessions: Arc::new(Mutex::new(Sessions::default())),
             secure_cookie: public.as_deref().is_some_and(|u| u.starts_with("https://")),
             agent: serve.agent,
         };
@@ -255,22 +299,19 @@ pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
             .await
             .with_context(|| format!("cannot listen on {addr}"))?;
         let local = listener.local_addr()?;
-        let url = format!("http://{local}/?t={token}");
+        let url = format!("http://{local}{first_url}");
         match &public {
             Some(public) => {
-                println!("codereview web UI at {public}/?t={token}");
+                println!("codereview web UI at {public}{first_url}");
                 println!("listening on {local}");
             }
             None => println!("codereview web UI at {url}"),
         }
+        if state.auth.is_password() {
+            println!("sign in with the password behind CODEREVIEW_PASSWORD_HASH");
+        }
         if !serve.agent {
             println!("the agent is off; its routes are not served");
-        }
-        if !local.ip().is_loopback() && public.is_none() {
-            eprintln!(
-                "warning: listening on {}; anyone who can reach it can read this repository",
-                local.ip()
-            );
         }
         if serve.open_browser {
             if let Err(e) = open::that(&url) {
@@ -306,35 +347,6 @@ async fn shutdown_signal() {
     ctrl_c.await;
 }
 
-/// The token this run accepts: `CODEREVIEW_TOKEN` when it is set, so a proxied deployment
-/// keeps one URL across restarts, otherwise a fresh random one.
-fn session_token() -> Result<String> {
-    match std::env::var("CODEREVIEW_TOKEN") {
-        Ok(token) => {
-            let token = token.trim().to_string();
-            anyhow::ensure!(
-                token.len() >= MIN_TOKEN_LEN,
-                "CODEREVIEW_TOKEN must be at least {MIN_TOKEN_LEN} characters; \
-                 `openssl rand -hex 32` makes a good one"
-            );
-            Ok(token)
-        }
-        Err(_) => Ok(random_token()),
-    }
-}
-
-/// Compares a token without stopping at the first wrong byte, so timing cannot be used to
-/// guess it one byte at a time. Its length is not a secret.
-fn token_eq(given: &str, want: &str) -> bool {
-    let (given, want) = (given.as_bytes(), want.as_bytes());
-    given.len() == want.len()
-        && given
-            .iter()
-            .zip(want)
-            .fold(0u8, |differences, (a, b)| differences | (a ^ b))
-            == 0
-}
-
 /// The session cookie's value, when the request carries one.
 fn cookie_token(headers: &HeaderMap) -> Option<&str> {
     headers
@@ -346,13 +358,6 @@ fn cookie_token(headers: &HeaderMap) -> Option<&str> {
             let (name, value) = pair.split_once('=')?;
             (name.trim() == COOKIE).then_some(value.trim())
         })
-}
-
-fn random_token() -> String {
-    use rand::RngCore;
-    let mut bytes = [0u8; 16];
-    rand::rng().fill_bytes(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn router(state: AppState) -> Router {
@@ -390,9 +395,12 @@ fn router(state: AppState) -> Router {
             .route("/agent/cancel", post(post_agent_cancel))
             .route("/agent/stop", post(post_agent_stop));
     }
-    let api = api.route_layer(middleware::from_fn_with_state(state.clone(), require_token));
+    let api = api
+        .route("/logout", post(post_logout))
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
         .route("/", get(index))
+        .route("/login", post(post_login))
         .nest("/api", api)
         .layer(middleware::from_fn(security_headers))
         .with_state(state)
@@ -404,14 +412,14 @@ async fn require_token(
     req: Request,
     next: Next,
 ) -> Response {
-    // The API takes the token in a header, never the cookie: a page on another site cannot
-    // set that header without a preflight this server never answers, so it cannot act as
-    // the signed-in browser.
+    // The API takes the session's token in a header, never the cookie: a page on another
+    // site cannot set that header without a preflight this server never answers, so it
+    // cannot act as the signed-in browser.
     let ok = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|t| token_eq(t, &state.token));
+        .is_some_and(|t| state.sessions().accepts(t));
     if ok {
         next.run(req).await
     } else {
@@ -444,48 +452,129 @@ struct IndexQuery {
     t: Option<String>,
 }
 
-/// The page, for a browser that proves it knows the token. `?t=` proves it once and leaves
-/// a cookie behind, then redirects so that the token is not left in the address bar, in the
-/// browser's history, or in the access log of every later request.
+/// The page, for a browser that is signed in. A cookie says so; `?t=` earns one on a token
+/// run, and the sign-in form earns one on a password run. The redirect afterwards keeps the
+/// token out of the address bar, the browser's history, and the log of every later request.
 async fn index(
     State(state): State<AppState>,
     Query(q): Query<IndexQuery>,
     headers: HeaderMap,
 ) -> Response {
-    if let Some(given) = q.t.as_deref() {
-        if !token_eq(given, &state.token) {
-            return forbidden();
+    if let Some(api_token) = signed_in(&state, &headers) {
+        return Html(page_for(&api_token)).into_response();
+    }
+    if let (Some(given), Some(want)) = (q.t.as_deref(), state.auth.token()) {
+        if constant_eq(given, want) {
+            return start_session(&state);
         }
-        let cookie = session_cookie(&state.token, state.secure_cookie);
-        let mut response = Redirect::to("/").into_response();
-        if let Ok(value) = HeaderValue::from_str(&cookie) {
-            response.headers_mut().insert(header::SET_COOKIE, value);
-        }
-        return response;
     }
-    if cookie_token(&headers).is_some_and(|t| token_eq(t, &state.token)) {
-        return Html(INDEX_HTML.replace("__TOKEN__", &state.token)).into_response();
+    if state.auth.is_password() {
+        return (StatusCode::OK, Html(login_page(None))).into_response();
     }
-    forbidden()
-}
-
-/// The cookie that keeps this browser signed in. `Secure` only over HTTPS, since a browser
-/// throws away a `Secure` cookie that arrives over plain HTTP.
-fn session_cookie(token: &str, secure: bool) -> String {
-    let mut cookie =
-        format!("{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={COOKIE_MAX_AGE}");
-    if secure {
-        cookie.push_str("; Secure");
-    }
-    cookie
-}
-
-fn forbidden() -> Response {
     (
         StatusCode::FORBIDDEN,
         "open the URL codereview printed, token included",
     )
         .into_response()
+}
+
+/// The API token of the session this request's cookie names, if it names a live one.
+fn signed_in(state: &AppState, headers: &HeaderMap) -> Option<String> {
+    let cookie = cookie_token(headers)?.to_string();
+    state.sessions().api_token_for(&cookie)
+}
+
+/// Opens a session and sends the browser to the page with the cookie for it.
+fn start_session(state: &AppState) -> Response {
+    let (id, _) = state.sessions().open();
+    let cookie = session_cookie(&id, state.secure_cookie);
+    let mut response = Redirect::to("/").into_response();
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        response.headers_mut().insert(header::SET_COOKIE, value);
+    }
+    response
+}
+
+#[derive(Deserialize)]
+struct LoginForm {
+    password: String,
+}
+
+/// The sign-in form's target. Wrong passwords are counted, and once there have been a few
+/// the answer is refused for a while, so that the password cannot be worked out by asking
+/// repeatedly.
+async fn post_login(State(state): State<AppState>, Form(form): Form<LoginForm>) -> Response {
+    if !state.auth.is_password() {
+        return (StatusCode::NOT_FOUND, "this server has no password").into_response();
+    }
+    if let Some(wait) = state.sessions().locked_for() {
+        let seconds = wait.as_secs() + 1;
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, seconds.to_string())],
+            Html(login_page(Some(&format!(
+                "Too many attempts. Try again in {seconds} seconds."
+            )))),
+        )
+            .into_response();
+    }
+    if !state.auth.password_matches(&form.password) {
+        state.sessions().note_failure();
+        return (
+            StatusCode::UNAUTHORIZED,
+            Html(login_page(Some("Wrong password."))),
+        )
+            .into_response();
+    }
+    state.sessions().note_success();
+    start_session(&state)
+}
+
+/// Ends this browser's session. The page asks for it with the session's own token, so no
+/// other site can sign anybody out.
+async fn post_logout(State(state): State<AppState>, headers: HeaderMap) -> Json<Ok_> {
+    if let Some(token) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    {
+        state.sessions().close(token);
+    }
+    Json(Ok_ { ok: true })
+}
+
+/// The page, carrying this session's API token. The token is put in as a JSON string, so
+/// whatever it holds stays one string literal and cannot become script.
+fn page_for(api_token: &str) -> String {
+    let literal = serde_json::to_string(api_token).unwrap_or_else(|_| "\"\"".into());
+    INDEX_HTML.replace("__TOKEN__", &literal)
+}
+
+fn login_page(message: Option<&str>) -> String {
+    let block = match message {
+        Some(text) => format!("<p class=\"error\">{}</p>", escape(text)),
+        None => String::new(),
+    };
+    LOGIN_HTML.replace("__MESSAGE__", &block)
+}
+
+/// Enough escaping for the fixed messages the sign-in page shows.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// The cookie that keeps this browser signed in. `Secure` only over HTTPS, since a browser
+/// throws away a `Secure` cookie that arrives over plain HTTP.
+fn session_cookie(id: &str, secure: bool) -> String {
+    let mut cookie =
+        format!("{COOKIE}={id}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_MAX_AGE}");
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    cookie
 }
 
 /// Runs `f` with the session on a blocking thread; diffs and git calls are not async.
@@ -496,9 +585,10 @@ where
 {
     let session = state.session.clone();
     tokio::task::spawn_blocking(move || {
-        let mut guard = session
-            .lock()
-            .map_err(|_| anyhow::anyhow!("session poisoned"))?;
+        // Take the lock back after a panic rather than refusing every later request for
+        // this repository: the session is rebuilt from disk by a refresh, and one bad
+        // request must not put a repository out of service until a restart.
+        let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut guard)
     })
     .await
@@ -678,10 +768,15 @@ fn default_limit() -> usize {
     100
 }
 
+/// The most commits one request may ask for. Without a cap, `limit` reaches git's
+/// `--max-count` and the answer is the entire history, held in memory twice.
+const MAX_LOG_PAGE: usize = 1000;
+
 async fn get_log(state: Ctx, Query(q): Query<LogQuery>) -> ApiResult<Vec<Commit>> {
+    let limit = q.limit.clamp(1, MAX_LOG_PAGE);
     let r = with_session(&state, move |s| match &q.path {
-        Some(p) if !p.is_empty() => s.file_log(p, q.skip, q.limit),
-        _ => s.log(q.skip, q.limit),
+        Some(p) if !p.is_empty() => s.file_log(p, q.skip, limit),
+        _ => s.log(q.skip, limit),
     })
     .await?;
     Ok(Json(r))
@@ -960,9 +1055,18 @@ async fn get_definitions(state: Ctx, Query(q): Query<NameQuery>) -> ApiResult<Ve
     ))
 }
 
+/// The most matches one search answers with; a one-letter query otherwise returns the
+/// whole index.
+const MAX_HITS: usize = 500;
+
 async fn get_references(state: Ctx, Query(q): Query<NameQuery>) -> ApiResult<Vec<Location>> {
     Ok(Json(
-        with_session(&state, move |s| Ok(s.references(&q.name))).await?,
+        with_session(&state, move |s| {
+            let mut hits = s.references(&q.name);
+            hits.truncate(MAX_HITS);
+            Ok(hits)
+        })
+        .await?,
     ))
 }
 
@@ -973,7 +1077,12 @@ struct SearchQuery {
 
 async fn get_symbol_search(state: Ctx, Query(q): Query<SearchQuery>) -> ApiResult<Vec<Symbol>> {
     Ok(Json(
-        with_session(&state, move |s| Ok(s.search_symbols(&q.q))).await?,
+        with_session(&state, move |s| {
+            let mut hits = s.search_symbols(&q.q);
+            hits.truncate(MAX_HITS);
+            Ok(hits)
+        })
+        .await?,
     ))
 }
 
@@ -1021,8 +1130,13 @@ struct AgentStatus {
 
 #[derive(Serialize)]
 struct AgentPermission {
+    /// What the request is about, in one line.
     title: String,
+    /// Everything it would approve, in full.
+    details: Option<String>,
     options: Vec<PermissionOption>,
+    /// Which request this is, so an answer cannot be applied to a later one.
+    request_id: String,
 }
 
 fn status_of(hub: &mut AgentHub, since: u64, command: &str) -> AgentStatus {
@@ -1038,13 +1152,12 @@ fn status_of(hub: &mut AgentHub, since: u64, command: &str) -> AgentStatus {
             .last_event
             .filter(|_| hub.turn_started.is_some())
             .map(|t| t.elapsed().as_millis() as u64),
-        permission: hub
-            .permission
-            .as_ref()
-            .map(|(_, title, options)| AgentPermission {
-                title: title.clone(),
-                options: options.clone(),
-            }),
+        permission: hub.permission.as_ref().map(|p| AgentPermission {
+            title: p.title.clone(),
+            details: p.details.clone(),
+            options: p.options.clone(),
+            request_id: p.id.as_str().unwrap_or_default().to_string(),
+        }),
         events: hub
             .events
             .iter()
@@ -1086,7 +1199,12 @@ fn agent_label(config: &crate::config::AgentConfig) -> String {
 /// Starts the agent when it is not running. Blocks for the handshake, which can take a while
 /// when `npx` has to fetch an adapter.
 async fn post_agent_start(state: Ctx) -> ApiResult<AgentStatus> {
-    let already = state.hub.lock().map(|h| h.agent.is_some()).unwrap_or(false);
+    let already = state
+        .hub
+        .lock()
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "hub poisoned".into()))?
+        .agent
+        .is_some();
     if !already {
         let session = state.session.clone();
         let hub = state.hub.clone();
@@ -1225,6 +1343,9 @@ async fn post_agent_prompt(
 #[derive(Deserialize)]
 struct PermissionAnswer {
     option_id: Option<String>,
+    /// Which request is being answered. A page that has not seen the current request, or
+    /// that answers a stale one, must not have its answer applied to another.
+    request_id: Option<String>,
 }
 
 async fn post_agent_permission(state: Ctx, Json(body): Json<PermissionAnswer>) -> ApiResult<Ok_> {
@@ -1232,19 +1353,39 @@ async fn post_agent_permission(state: Ctx, Json(body): Json<PermissionAnswer>) -
         .hub
         .lock()
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "hub poisoned".into()))?;
-    let Some((id, _, _)) = hub.permission.take() else {
+    let Some(pending) = hub.permission.take() else {
         return Err(ApiError(
             StatusCode::CONFLICT,
             "no permission request is pending".into(),
         ));
     };
+    if let Some(answering) = &body.request_id
+        && pending.id.as_str() != Some(answering.as_str())
+    {
+        let id = pending.id.clone();
+        hub.permission = Some(pending);
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            format!(
+                "that answer is for another request; {} is the one waiting",
+                id.as_str().unwrap_or("another")
+            ),
+        ));
+    }
+    // An option the request never offered is not an answer; the backend treats anything it
+    // does not recognise as a refusal, which is the safe reading.
+    let chosen = body
+        .option_id
+        .as_deref()
+        .filter(|id| pending.options.iter().any(|o| o.option_id == *id));
+    let id = pending.id;
     let Some(agent) = &mut hub.agent else {
         return Err(ApiError(
             StatusCode::CONFLICT,
             "the agent is not running".into(),
         ));
     };
-    agent.respond_permission(&id, body.option_id.as_deref())?;
+    agent.respond_permission(&id, chosen)?;
     hub.status = "working".into();
     Ok(Json(Ok_ { ok: true }))
 }
@@ -1290,20 +1431,19 @@ async fn post_reanchor(state: Ctx) -> ApiResult<Reanchored> {
 
 /// For tests: the router bound to a scratch session, with its token.
 #[cfg(test)]
-pub(crate) fn test_router(roots: &[&Path], agent: bool) -> Result<(Router, String)> {
-    let token = random_token();
-    let state = AppState {
+pub(crate) fn test_router(roots: &[&Path], agent: bool, auth: Auth) -> Router {
+    router(AppState {
         repos: Arc::new(
             roots
                 .iter()
                 .map(|r| RepoState::new(crate::session::tests::scratch_session(r)))
                 .collect(),
         ),
-        token: Arc::new(token.clone()),
+        auth: Arc::new(auth),
+        sessions: Arc::new(Mutex::new(Sessions::default())),
         secure_cookie: false,
         agent,
-    };
-    Ok((router(state), token))
+    })
 }
 
 #[cfg(not(test))]
@@ -1318,12 +1458,26 @@ mod tests {
     use std::net::TcpStream;
 
     /// Serves the router on a random port and returns its address.
+    /// A server on a token, already signed in: the string is the API token of a session,
+    /// which is what every request below sends.
     fn serve(roots: &[&Path]) -> (SocketAddr, String, tokio::runtime::Runtime) {
         serve_with(roots, true)
     }
 
     fn serve_with(roots: &[&Path], agent: bool) -> (SocketAddr, String, tokio::runtime::Runtime) {
-        let (router, token) = test_router(roots, agent).unwrap();
+        let token = auth::random_secret();
+        let (addr, rt) = listen(test_router(roots, agent, Auth::Token(token.clone())));
+        let api_token = sign_in_with_token(addr, &token);
+        (addr, api_token, rt)
+    }
+
+    /// A server on a password, nobody signed in.
+    fn serve_password(roots: &[&Path], password: &str) -> (SocketAddr, tokio::runtime::Runtime) {
+        let hash = auth::hash_password(password).unwrap();
+        listen(test_router(roots, true, Auth::Password(hash)))
+    }
+
+    fn listen(router: Router) -> (SocketAddr, tokio::runtime::Runtime) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let addr = rt.block_on(async {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1331,7 +1485,55 @@ mod tests {
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
             addr
         });
-        (addr, token, rt)
+        (addr, rt)
+    }
+
+    /// A form post, which is how signing in works.
+    fn request_form(
+        addr: SocketAddr,
+        path: &str,
+        extra: &[(String, String)],
+        body: &str,
+    ) -> (u16, String, String) {
+        let mut stream = TcpStream::connect(addr).unwrap();
+        let mut req = format!("POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
+        for (name, value) in extra {
+            req.push_str(&format!("{name}: {value}\r\n"));
+        }
+        req.push_str(&format!("Content-Length: {}\r\n\r\n{body}", body.len()));
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let status: u16 = response[9..12].parse().unwrap();
+        let (head, body) = response.split_once("\r\n\r\n").unwrap_or((&response, ""));
+        (status, head.to_lowercase(), body.to_string())
+    }
+
+    /// The `Set-Cookie` value of a response, cut down to what a browser sends back.
+    fn cookie_of(head: &str) -> String {
+        let full = head
+            .lines()
+            .find_map(|l| l.strip_prefix("set-cookie: "))
+            .expect("a session cookie");
+        full.split(';').next().unwrap().to_string()
+    }
+
+    /// What the page carries for the API: `const TOKEN = "...";`, a JSON string.
+    fn api_token_of(page: &str) -> String {
+        let start = page.find("const TOKEN = ").expect("a token in the page") + 14;
+        let rest = &page[start..];
+        let literal = &rest[..rest.find(';').expect("end of the statement")];
+        serde_json::from_str::<String>(literal.trim()).expect("a JSON string")
+    }
+
+    /// Opens the token URL, follows it to the page, and returns the session's API token.
+    fn sign_in_with_token(addr: SocketAddr, token: &str) -> String {
+        let (status, head, _) = request_full(addr, "GET", &format!("/?t={token}"), &[], None);
+        assert_eq!(status, 303, "{head}");
+        let sent = vec![("Cookie".to_string(), cookie_of(&head))];
+        let (status, _, page) = request_full(addr, "GET", "/", &sent, None);
+        assert_eq!(status, 200);
+        api_token_of(&page)
     }
 
     fn request(
@@ -1381,15 +1583,15 @@ mod tests {
         (status, head.to_string(), body.to_string())
     }
 
-    /// The page is reached with the token once, then by the cookie it leaves behind; the
-    /// API takes the token in a header only.
+    /// A token run: the URL opens a session once, the cookie keeps it, and the API takes
+    /// the session's own secret in a header.
     #[test]
-    fn the_token_opens_the_page_once_and_then_a_cookie_does() {
+    fn the_token_opens_a_session_and_a_cookie_keeps_it() {
         let dir = scratch_repo();
-        let (addr, token, _rt) = serve(&[dir.path()]);
+        let token = auth::random_secret();
+        let (addr, _rt) = listen(test_router(&[dir.path()], true, Auth::Token(token.clone())));
         // A wrong token is refused, for the page and for the API.
-        let (status, _, _) = request_full(addr, "GET", "/?t=wrong", &[], None);
-        assert_eq!(status, 403);
+        assert_eq!(request_full(addr, "GET", "/?t=wrong", &[], None).0, 403);
         assert_eq!(
             request(addr, "GET", "/api/state", Some("wrong"), None).0,
             403
@@ -1403,38 +1605,110 @@ mod tests {
             !body.contains(&token),
             "the redirect body carries the token"
         );
-        let cookie = head
-            .lines()
-            .find_map(|l| l.strip_prefix("set-cookie: "))
-            .expect("a session cookie")
-            .to_string();
-        assert!(cookie.starts_with(&format!("{COOKIE}={token}")), "{cookie}");
+        let cookie = cookie_of(&head);
         assert!(
-            cookie.contains("HttpOnly") && cookie.contains("SameSite=Lax"),
-            "{cookie}"
+            !cookie.contains(&token),
+            "the cookie is the session, not the token"
         );
-        assert!(!cookie.contains("Secure"), "plain HTTP: {cookie}");
+        assert!(
+            head.contains("HttpOnly") && head.contains("SameSite=Lax"),
+            "{head}"
+        );
+        assert!(!head.contains("; Secure"), "plain HTTP: {head}");
         assert!(head.contains("cache-control: no-store"), "{head}");
         assert!(head.contains("referrer-policy: no-referrer"), "{head}");
         assert!(
             head.contains("content-security-policy: default-src 'none'"),
             "{head}"
         );
-        // The cookie alone serves the page, which carries the token for the API.
-        let sent = vec![(
-            "Cookie".to_string(),
-            cookie.split(';').next().unwrap().to_string(),
-        )];
+        // The cookie serves the page, which carries a secret of its own for the API.
+        let sent = vec![("Cookie".to_string(), cookie)];
         let (status, _, page) = request_full(addr, "GET", "/", &sent, None);
         assert_eq!(status, 200);
-        assert!(page.contains(&token));
+        let api_token = api_token_of(&page);
+        assert_ne!(api_token, token, "the page must not carry the way in");
+        assert_eq!(
+            request(addr, "GET", "/api/state", Some(&api_token), None).0,
+            200
+        );
         // A cookie is not enough for the API, so another site cannot act as this browser.
-        let (status, _, _) = request_full(addr, "GET", "/api/state", &sent, None);
-        assert_eq!(status, 403);
+        assert_eq!(request_full(addr, "GET", "/api/state", &sent, None).0, 403);
+        // Signing out ends it: the API refuses, and so does the cookie.
+        assert_eq!(
+            request(addr, "POST", "/api/logout", Some(&api_token), None).0,
+            200
+        );
+        assert_eq!(
+            request(addr, "GET", "/api/state", Some(&api_token), None).0,
+            403
+        );
+        assert_eq!(request_full(addr, "GET", "/", &sent, None).0, 403);
         // No cookie, no token: the page says where to look.
         let (status, _, body) = request_full(addr, "GET", "/", &[], None);
         assert_eq!(status, 403);
         assert!(body.contains("token"), "{body}");
+    }
+
+    /// A password run: a form, a session, and a growing delay once guessing starts.
+    #[test]
+    fn a_password_opens_a_session_and_guessing_is_slowed() {
+        let dir = scratch_repo();
+        let (addr, _rt) = serve_password(&[dir.path()], "a good long password");
+        // Without a session the page is the sign-in form, not a refusal, and it carries no
+        // secret of any kind.
+        let (status, head, page) = request_full(addr, "GET", "/", &[], None);
+        assert_eq!(status, 200);
+        assert!(page.contains("name=\"password\""), "the sign-in form");
+        assert!(
+            !page.contains("const TOKEN"),
+            "no API token before signing in"
+        );
+        assert!(head.contains("cache-control: no-store"), "{head}");
+        assert!(
+            head.contains("form-action 'self'"),
+            "the form must be allowed: {head}"
+        );
+        // A token in the URL is no way in when there is a password.
+        assert_eq!(request_full(addr, "GET", "/?t=anything", &[], None).0, 200);
+        // A wrong password says so and opens nothing.
+        let form = |body: &str| {
+            let extra = vec![(
+                "Content-Type".to_string(),
+                "application/x-www-form-urlencoded".to_string(),
+            )];
+            request_form(addr, "/login", &extra, body)
+        };
+        let (status, head, page) = form("password=wrong");
+        assert_eq!(status, 401);
+        assert!(page.contains("Wrong password"), "{page}");
+        assert!(!head.contains("set-cookie"), "{head}");
+        // The right one opens a session, and the page then carries an API token.
+        let (status, head, _) = form("password=a+good+long+password");
+        assert_eq!(status, 303, "{head}");
+        let sent = vec![("Cookie".to_string(), cookie_of(&head))];
+        let (status, _, page) = request_full(addr, "GET", "/", &sent, None);
+        assert_eq!(status, 200);
+        let api_token = api_token_of(&page);
+        assert_eq!(
+            request(addr, "GET", "/api/state", Some(&api_token), None).0,
+            200
+        );
+        // Enough wrong guesses and sign-in stops answering for a while.
+        let mut locked = None;
+        for _ in 0..12 {
+            let (status, head, _) = form("password=wrong");
+            if status == 429 {
+                locked = Some(head);
+                break;
+            }
+        }
+        let head = locked.expect("guessing must be locked out eventually");
+        assert!(head.to_lowercase().contains("retry-after"), "{head}");
+        // The lockout does not touch a session already open.
+        assert_eq!(
+            request(addr, "GET", "/api/state", Some(&api_token), None).0,
+            200
+        );
     }
 
     /// `--no-agent`: the routes are gone and the page is told, so it hides every way to one.
@@ -1459,19 +1733,21 @@ mod tests {
     }
 
     #[test]
-    fn tokens_compare_whole_and_cookies_parse() {
-        assert!(token_eq("abcd", "abcd"));
-        assert!(!token_eq("abcd", "abce"));
-        assert!(!token_eq("abcd", "abcde"));
+    fn cookies_parse_and_are_built_right() {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("other=1; codereview_token=abc; x=2"),
+            HeaderValue::from_static("other=1; codereview_session=abc; x=2"),
         );
         assert_eq!(cookie_token(&headers), Some("abc"));
         assert_eq!(cookie_token(&HeaderMap::new()), None);
-        assert!(session_cookie("t", false).ends_with(&format!("Max-Age={COOKIE_MAX_AGE}")));
+        assert!(session_cookie("t", false).ends_with(&format!("Max-Age={SESSION_MAX_AGE}")));
         assert!(session_cookie("t", true).ends_with("; Secure"));
+        assert!(login_page(None).contains("name=\"password\""));
+        assert!(
+            login_page(Some("<b>x")).contains("&lt;b&gt;x"),
+            "messages are escaped"
+        );
     }
 
     #[test]
@@ -1480,13 +1756,9 @@ mod tests {
         let (addr, token, _rt) = serve(&[dir.path()]);
         let t = Some(token.as_str());
 
+        // Signing in has its own tests; here `token` is already a session's API token.
         assert_eq!(request(addr, "GET", "/", None, None).0, 403);
         assert_eq!(request(addr, "GET", "/api/state", None, None).0, 403);
-        // The page itself is reached with the token; see the cookie test below.
-        assert_eq!(
-            request(addr, "GET", &format!("/?t={token}"), None, None).0,
-            303
-        );
 
         let (status, body) = request(addr, "GET", "/api/state", t, None);
         assert_eq!(status, 200);
@@ -1766,6 +2038,19 @@ mod tests {
                         .unwrap()
                         .starts_with("started in-process fake")),
             "{body}"
+        );
+        // An answer naming a different request is refused, and the request stays open, so
+        // a page that never saw this one cannot approve it.
+        let wrong = serde_json::json!({ "option_id": option, "request_id": "other" }).to_string();
+        assert_eq!(
+            request(addr, "POST", "/api/agent/permission", t, Some(&wrong)).0,
+            409
+        );
+        let (_, body) = request(addr, "GET", "/api/agent/events?since=0", t, None);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(
+            !v["permission"].is_null(),
+            "the refused answer must leave the request open: {body}"
         );
         let answer = serde_json::json!({ "option_id": option }).to_string();
         assert_eq!(

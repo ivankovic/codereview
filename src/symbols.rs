@@ -524,7 +524,12 @@ pub fn identifier_at(path: &str, text: &str, row: usize, column: usize) -> Optio
 /// The `[A-Za-z0-9_]+` word covering byte `column` of `line`.
 pub fn word_at(line: &str, column: usize) -> Option<String> {
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
-    let column = column.min(line.len());
+    // The column arrives from a click or an API call: it may land anywhere, including
+    // inside a character, and slicing there would panic.
+    let mut column = column.min(line.len());
+    while column > 0 && !line.is_char_boundary(column) {
+        column -= 1;
+    }
     let mut start = column;
     while start > 0 {
         let prev = line[..start].chars().next_back()?;
@@ -623,6 +628,21 @@ mod tests {
             vec![("variable", "CC"), ("target", "all"), ("target", "build")]
         );
         assert_eq!(idents.iter().filter(|i| i.name == "CC").count(), 3);
+    }
+
+    /// The column comes from a click or an API call and may land inside a character.
+    #[test]
+    fn a_column_inside_a_character_is_not_a_panic() {
+        let line = "h\u{e9}llo world";
+        assert_eq!(word_at(line, 2).as_deref(), Some("h\u{e9}llo"));
+        assert_eq!(word_at(line, 0).as_deref(), Some("h\u{e9}llo"));
+        assert_eq!(word_at(line, line.len()).as_deref(), Some("world"));
+        assert_eq!(word_at(line, 9999).as_deref(), Some("world"));
+        assert_eq!(word_at("", 5), None);
+        assert_eq!(
+            identifier_at("a.txt", "h\u{e9}llo", 0, 2).as_deref(),
+            Some("h\u{e9}llo")
+        );
     }
 
     #[test]

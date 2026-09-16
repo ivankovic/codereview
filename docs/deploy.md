@@ -2,12 +2,14 @@
 
 `codereview web` is a plain HTTP server meant for a loopback address. To reach it from a
 browser on another machine, put nginx in front of it: nginx terminates TLS on your domain and
-forwards to the loopback port, and codereview never speaks to the internet directly.
+forwards to the loopback port, and codereview itself never listens on a public address. With
+the agent on, the agent still makes outbound connections of its own to whatever model it
+uses.
 
 ## Read this before you publish anything
 
-The session token is the only thing between the internet and your repositories. Whoever has
-it reads every file and every commit of every repository you serve, and writes to `REVIEW.md`
+The password is the only thing between the internet and your repositories. Whoever knows it
+reads every file and every commit of every repository you serve, and writes to `REVIEW.md`
 and `NOTES.md`.
 
 **With the agent on, that person can also make it run commands in those repositories.** The
@@ -30,16 +32,26 @@ cargo install --path . --features web --locked   # or: make install
 sudo cp ~/.cargo/bin/codereview /usr/local/bin/
 ```
 
-Make a token and keep it out of the unit file, out of `ps`, and out of your shell history.
+Choose a password and store only its hash. `hash-password` asks twice without echoing, and
+prints nothing but the hash:
+
+```sh
+codereview hash-password
+```
 
 ```sh
 umask 077
-printf 'CODEREVIEW_TOKEN=%s\n' "$(openssl rand -hex 32)" | sudo tee /etc/codereview.env
+sudo tee /etc/codereview.env >/dev/null <<'EOF'
+CODEREVIEW_PASSWORD_HASH='$argon2id$v=19$m=19456,t=2,p=1$...'
+EOF
 sudo chmod 600 /etc/codereview.env
 ```
 
-Without `CODEREVIEW_TOKEN` every restart invents a new token and everybody's bookmark stops
-working. The token must be at least 16 characters; the server refuses to start otherwise.
+Quote the value: it contains `$`. The hash is Argon2id, so the password cannot be recovered
+from the file, and a stolen hash cannot be replayed as a password.
+
+Without `CODEREVIEW_PASSWORD_HASH` the server falls back to a token in the URL, which is the
+local default and is refused outright on a non-loopback address.
 
 `/etc/systemd/system/codereview.service`:
 
@@ -93,11 +105,14 @@ Notes on that unit:
 - Drop `MemoryDenyWriteExecute` and loosen `ProtectHome` if you ever serve **with** the agent:
   Claude Code runs on Node, which needs both.
 - `systemctl restart` works cleanly; the server shuts down on SIGTERM.
+- What the hardening block protects is the **host**, not the repositories. Nothing there stops
+  an agent from doing as it likes inside `ReadWritePaths`, and `RestrictAddressFamilies`
+  leaves it full outbound network. Keep `/srv/review` to what you are willing to lose.
 
 ```sh
 sudo systemctl daemon-reload
 sudo systemctl enable --now codereview
-systemctl status codereview          # prints the URL to open, token included
+systemctl status codereview          # prints the URL to open
 ```
 
 ## The certificate
@@ -124,13 +139,17 @@ paths.
 
 ## nginx
 
-In the `http` block, a log format that drops the query string. The token appears in a query
-exactly once, on a first visit, and there is no reason to keep it on disk:
+In the `http` block, a log format that drops the query string, and a rate limit for signing
+in. codereview slows repeated wrong passwords itself, but a limit here costs nothing and also
+covers everything else:
 
 ```nginx
 log_format noquery '$remote_addr - $remote_user [$time_local] '
                    '"$request_method $uri $server_protocol" $status $body_bytes_sent '
                    '"$http_referer" "$http_user_agent"';
+
+limit_req_zone $binary_remote_addr zone=signin:1m rate=10r/m;
+server_tokens off;
 ```
 
 The site itself:
@@ -153,6 +172,9 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/review.example.com/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;   # what certbot's include should already say; say it anyway
+    ssl_stapling on;
+    ssl_stapling_verify on;
 
     add_header Strict-Transport-Security "max-age=31536000" always;
 
@@ -165,6 +187,13 @@ server {
 
     # Nothing is uploaded; a comment is a few hundred bytes.
     client_max_body_size 256k;
+
+    location = /login {
+        limit_req zone=signin burst=5 nodelay;
+        proxy_pass http://127.0.0.1:8765;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:8765;
@@ -191,20 +220,17 @@ and marks the session cookie `Secure` when it is an HTTPS one.
 
 ## Signing in
 
-Open the URL the service log prints, once:
+Open `https://review.example.com/`. The page is a sign-in form; the password is the one you
+hashed. A session lasts a week in that browser, and **Sign out** in the header ends it at
+once. Wrong passwords are counted, and after a few the server stops answering sign-in for a
+while, longer each time, so the password cannot be found by asking repeatedly.
 
-```
-https://review.example.com/?t=<the token>
-```
+The cookie only opens the page. Every API request carries a separate per-session secret in an
+`Authorization` header, which a page on another site cannot set, so no other site can act as
+your signed-in browser, and the cookie on its own is worth nothing to one.
 
-The server checks the token, sets a cookie that lasts 30 days, and redirects to the bare
-domain, so the token is not left in the address bar, in the browser's history, or in the log
-of every later request. Bookmark `https://review.example.com/` afterwards. When the cookie
-expires, or in a new browser, open the token URL again.
-
-The cookie only opens the page. Every API request carries the token in an `Authorization`
-header instead, which a page on another site cannot set, so no other site can act as your
-signed-in browser.
+On a loopback run without a password, the printed URL carries a token instead; it opens a
+session once and redirects to the bare path, and the token is never what the page holds.
 
 ## If you want another lock in front
 
@@ -236,7 +262,15 @@ deny all;
 - Each repository keeps its own agent process, started the first time somebody asks for one,
   and its own symbol index, built the first time somebody looks a name up. A directory of
   many large checkouts is cheap to start and grows as it is used.
-- Logs go to the journal: `journalctl -u codereview -f`. The start-up line there holds the
-  token, which is the other copy of it besides `/etc/codereview.env`.
-- To rotate the token, edit `/etc/codereview.env` and `systemctl restart codereview`. Every
-  browser has to open the new token URL once.
+- Logs go to the journal: `journalctl -u codereview -f`. With a password configured nothing
+  secret is printed there. Failed API calls are logged in full and answered in brief, so the
+  browser is not told which paths exist on the machine.
+- Each repository's symbol index is built the first time somebody looks a name up, and a
+  request that asks for every occurrence of a common name is answered with the first 500.
+  Both are per repository, so a directory of many checkouts costs memory as it is used.
+- To change the password, run `codereview hash-password` again, replace the value in
+  `/etc/codereview.env` and `systemctl restart codereview`. Restarting ends every session, so
+  everybody signs in again.
+- The agent is started with this server's own secrets removed from its environment, so a
+  command it runs cannot read the password hash. It does inherit everything else the service
+  has.

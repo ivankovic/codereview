@@ -9,7 +9,7 @@
 //! front ends call [`Agent::poll`] from their own loops. Protocol version 1.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
@@ -63,7 +63,12 @@ pub enum Event {
     /// The agent wants to do something and asks; answer with [`Agent::respond_permission`].
     Permission {
         request_id: Value,
+        /// One line, for a status bar.
         title: String,
+        /// Everything the answer would approve, in full. A title is shortened to fit, and
+        /// approving what you cannot see is how a second command rides along with the one
+        /// you meant to allow.
+        details: Option<String>,
         options: Vec<PermissionOption>,
     },
     /// The prompt turn ended: `end_turn`, `max_tokens`, `refusal`, `cancelled`, ...
@@ -239,6 +244,7 @@ impl Agent {
         preflight(command, args)?;
         let mut process = Command::new(command);
         process.args(args).current_dir(root);
+        crate::agent::strip_secrets(&mut process);
         let io = Transport::spawn(process, format!("{command} {}", args.join(" ")))?;
         Self::start(io, command, root)
     }
@@ -642,6 +648,7 @@ impl Agent {
                 Some(Event::Permission {
                     request_id: id,
                     title,
+                    details: None,
                     options,
                 })
             }
@@ -818,12 +825,29 @@ fn resolve_in(root: &Path, path: &str) -> Result<PathBuf> {
     if !canonical.starts_with(&root) {
         bail!("{path} is outside the repository");
     }
+    // A link that points nowhere yet looks like a file that does not exist, and writing
+    // through it would create the file wherever it points, outside the repository.
+    if std::fs::symlink_metadata(&canonical).is_ok_and(|m| m.file_type().is_symlink()) {
+        bail!("{path} is a symlink; codereview will not follow it");
+    }
+    // The repository's own machinery is not a file to edit: a hook or a config written
+    // there runs the next time anybody uses git here.
+    if canonical
+        .strip_prefix(&root)
+        .is_ok_and(|rest| rest.components().any(|c| c.as_os_str() == ".git"))
+    {
+        bail!("{path} is inside .git");
+    }
     Ok(canonical)
 }
 
+/// The longest line an agent may send. Its output is newline-delimited JSON; a line longer
+/// than this is a runaway, not a message, and reading it would grow until memory ran out.
+const MAX_LINE: u64 = 8 * 1024 * 1024;
+
 pub(crate) fn spawn_reader(stdout: std::process::ChildStdout, tx: Sender<Raw>) {
     std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
+        let reader = BufReader::new(stdout).take(MAX_LINE);
         for line in reader.lines() {
             let Ok(line) = line else { break };
             let line = line.trim();
@@ -1011,6 +1035,7 @@ mod tests {
                     request_id,
                     title,
                     options,
+                    ..
                 } => Some((request_id.clone(), title.clone(), options.clone())),
                 _ => None,
             })
@@ -1117,5 +1142,17 @@ mod tests {
         assert!(resolve_in(dir.path(), "/etc/hostname").is_err());
         assert!(resolve_in(dir.path(), "../outside.txt").is_err());
         assert!(resolve_in(dir.path(), "src/../../outside.txt").is_err());
+        // A link pointing out of the repository is refused whether or not its target is
+        // there yet: a link to nothing looks like a file that does not exist, and writing
+        // it would create the target wherever the link points.
+        let outside = dir.path().parent().unwrap().join("codereview-escape.txt");
+        std::os::unix::fs::symlink(&outside, dir.path().join("dangling")).unwrap();
+        assert!(resolve_in(dir.path(), "dangling").is_err());
+        std::fs::write(&outside, "x").unwrap();
+        assert!(resolve_in(dir.path(), "dangling").is_err());
+        let _ = std::fs::remove_file(&outside);
+        // Nor may the agent write the repository's own machinery.
+        assert!(resolve_in(dir.path(), ".git/hooks/pre-commit").is_err());
+        assert!(resolve_in(dir.path(), "src/../.git/config").is_err());
     }
 }

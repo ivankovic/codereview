@@ -196,6 +196,12 @@ impl Repo {
             .filter(|s| !s.is_empty())
             .map(|s| String::from_utf8_lossy(s).into_owned())
             .collect();
+        // A symlink has no content worth reviewing, and following one would read a file
+        // outside the repository. git lists them like any other path, so drop them here,
+        // before they reach the tree, the symbol index or a request.
+        files.retain(|f| {
+            !std::fs::symlink_metadata(self.root.join(f)).is_ok_and(|m| m.file_type().is_symlink())
+        });
         files.sort();
         files.dedup();
         Ok(files)
@@ -310,14 +316,38 @@ impl Repo {
         }
     }
 
-    /// The file's content in the working tree, or `None` when it is missing.
-    pub fn read_working(&self, path: &str) -> Result<Option<Vec<u8>>> {
+    /// Where `path` really is in the working tree, or `None` when nothing is there.
+    /// Resolving before reading is what keeps a symlink in the checkout from being used to
+    /// read a file elsewhere on the machine: `check_path` only rules out `..` and absolute
+    /// paths, which a link does not need.
+    pub fn working_path(&self, path: &str) -> Result<Option<PathBuf>> {
         Self::check_path(path)?;
         let full = self.root.join(path);
+        match std::fs::canonicalize(&full) {
+            Ok(real) => {
+                let root = self
+                    .root
+                    .canonicalize()
+                    .unwrap_or_else(|_| self.root.clone());
+                if !real.starts_with(&root) {
+                    bail!("{path} leads outside the repository");
+                }
+                Ok(Some(real))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("cannot read {path}")),
+        }
+    }
+
+    /// The file's content in the working tree, or `None` when it is missing.
+    pub fn read_working(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        let Some(full) = self.working_path(path)? else {
+            return Ok(None);
+        };
         match std::fs::read(&full) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e).with_context(|| format!("cannot read {}", full.display())),
+            Err(e) => Err(e).with_context(|| format!("cannot read {path}")),
         }
     }
 
@@ -521,6 +551,36 @@ fn parse_blame(bytes: &[u8]) -> Vec<BlameLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A symlink in the checkout must not become a way to read the rest of the machine.
+    #[test]
+    fn a_symlink_out_of_the_tree_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(dir.path().join("real.rs"), "fn a() {}\n").unwrap();
+        let outside = dir.path().parent().unwrap().join("secret.txt");
+        std::fs::write(&outside, "secret\n").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.path().join("link.txt")).unwrap();
+        std::os::unix::fs::symlink("nowhere", dir.path().join("dangling")).unwrap();
+        let repo = Repo::open(dir.path()).unwrap();
+        assert!(
+            repo.read_working("link.txt").is_err(),
+            "followed a symlink out"
+        );
+        assert_eq!(repo.read_working("dangling").unwrap(), None);
+        assert_eq!(
+            repo.read_working("real.rs").unwrap(),
+            Some(b"fn a() {}\n".to_vec())
+        );
+        // And neither link is offered as a file at all.
+        let files = repo.list_files().unwrap();
+        assert_eq!(files, vec!["real.rs".to_string()]);
+        let _ = std::fs::remove_file(outside);
+    }
 
     #[test]
     fn options_and_escapes_are_refused() {
