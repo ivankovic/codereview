@@ -32,8 +32,8 @@ header .brand { font-weight: 700; color: var(--accent); }
 header #branch { max-width: 28vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 header .tabs button { border-radius: 0; border: none; border-bottom: 2px solid transparent; background: none; }
 header .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
-header .spacer { flex: 1; }
-header .dim, .dim { color: var(--dim); }
+.spacer { flex: 1; }
+.dim { color: var(--dim); }
 main { flex: 1; display: flex; min-height: 0; }
 aside#tree { width: 280px; min-width: 180px; max-width: 50vw; overflow: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 6px 0; resize: horizontal; }
 aside#tree .row { padding: 1px 8px; cursor: pointer; white-space: nowrap; display: flex; gap: 4px; align-items: center; }
@@ -99,22 +99,22 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .sbs > div { overflow-x: auto; min-width: 0; }
 .sbs > div:first-child { border-right: 2px solid var(--border); }
 footer { padding: 4px 12px; border-top: 1px solid var(--border); background: var(--panel); color: var(--dim); font-size: 12px; display: flex; gap: 16px; }
-footer .msg.error { color: #f85149; }
+footer .msg.error { color: var(--del-fg); }
 .center { padding: 40px; color: var(--dim); text-align: center; }
 #help { position: fixed; inset: 10% 20%; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 16px 24px; overflow: auto; z-index: 10; }
 #help h3 { margin: 8px 0 4px; color: var(--accent); }
 #help table td { padding: 1px 12px 1px 0; }
 #help kbd { font-family: ui-monospace, monospace; background: var(--bg); padding: 0 4px; border-radius: 3px; border: 1px solid var(--border); }
-#popover { position: fixed; z-index: 20; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+#popover { position: fixed; z-index: 20; max-width: 90vw; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
 #popover .word { font-family: ui-monospace, monospace; font-weight: 600; margin-right: 4px; }
 #drawer { width: 380px; min-width: 200px; max-width: 60vw; border-left: 1px solid var(--border); background: var(--panel); overflow: auto; display: flex; flex-direction: column; }
 #drawer .filehead { position: static; }
+/* The list scrolls, not the drawer, so the close button in its header stays put. */
+#drawer .list { flex: 1; overflow: auto; }
 #drawer .list .item { flex-direction: column; align-items: stretch; gap: 2px; }
 #drawer .list .item .loc { color: var(--accent); font-family: ui-monospace, monospace; font-size: 12px; }
 #drawer .list .item .label { font-weight: 600; }
 #drawer .list .item .text { font-family: ui-monospace, monospace; font-size: 12px; color: var(--dim); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
-table.code td.c span.ident:hover { text-decoration: underline; cursor: pointer; }
-table.code tr.cur-sym td.c { outline: 1px solid var(--accent); }
 #agent { display: flex; flex-direction: column; height: 100%; }
 #agent .transcript { flex: 1; overflow: auto; padding: 12px 16px; }
 #agent .entry { display: flex; gap: 10px; margin-bottom: 10px; }
@@ -135,7 +135,12 @@ body.no-agent [data-act=review] { display: none !important; }
 #agent .compose { border-top: 1px solid var(--border); padding: 8px 12px; background: var(--panel); }
 #agent .compose textarea { min-height: 2.6em; }
 #agent .permission { padding: 8px 12px; background: var(--upd); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-@media (max-width: 800px) { aside#tree { width: 160px; } .sbs { grid-template-columns: 1fr; } #drawer { width: 200px; } }
+@media (max-width: 800px) {
+  aside#tree { width: 160px; }
+  .sbs { grid-template-columns: 1fr; }
+  #drawer { width: 200px; }
+  #help { inset: 4%; padding: 12px; }
+}
 </style>
 </head>
 <body>
@@ -184,7 +189,18 @@ const state = {
   search: '',
 };
 
+// Wires a panel button, named by `data-act`. Optional by design: several panels show a
+// button only when it applies.
+function on(root, act, fn) {
+  root.querySelector(`[data-act=${act}]`)?.addEventListener('click', fn);
+}
+
 // The one-letter mark for a changed file: `?` for untracked, otherwise its status.
+// `q` is the CSS class for `?`, which is not a name a class may have.
+function statusClass(letter) {
+  return letter === '?' ? 'q' : letter;
+}
+
 function statusLetter(f) {
   return f.status === 'untracked' ? '?' : f.status[0].toUpperCase();
 }
@@ -218,6 +234,7 @@ function msg(text, isError = false) {
   const el = $('#msg');
   el.textContent = text || '';
   el.className = 'msg' + (isError ? ' error' : '');
+  // Clear it later, unless something newer has been said in the meantime.
   if (text) setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 6000);
 }
 function fail(e) { console.error(e); msg(e.message || String(e), true); }
@@ -254,6 +271,7 @@ async function loadState() {
   state.files = s.files;
   state.theme = s.theme;
   const sel = $('#theme');
+  // Only when the list itself changed: rebuilding it would close an open dropdown.
   if (sel.options.length !== s.themes.length + (s.theme.terminal ? 1 : 0)) {
     sel.innerHTML = (s.theme.terminal ? '<option value="Terminal">Terminal (browser default)</option>' : '') + s.themes.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
   }
@@ -360,15 +378,16 @@ function segStyle(seg) {
   return s;
 }
 
-// Cuts the line's segments at diff-span and search boundaries; byte offsets from the server
-// are converted to string indices assuming the line is mostly ASCII (a UTF-8 aware conversion
-// is done per segment via TextEncoder when needed).
 // Where the character containing byte `i` starts. A UTF-8 continuation byte is 10xxxxxx.
 function charStart(bytes, i) {
   while (i > 0 && (bytes[i] & 0xc0) === 0x80) i--;
   return i;
 }
 
+// One line of code as spans. The server gives colours per segment and changes per byte
+// range, and the two do not line up, so each segment is cut where a change or a search match
+// begins or ends. Everything is done in bytes, because that is what the server counts in and
+// what `data-off` has to carry for a click to name the right column.
 function renderSegments(segs, spans, searchRanges) {
   const cuts = new Set();
   for (const s of spans || []) { cuts.add(s.start); cuts.add(s.end); }
@@ -444,13 +463,13 @@ function commentRow(c, colspan, onChange) {
       <button class="small" data-act="delete">delete</button>
       <button class="small" data-act="ask" title="have the agent address this comment">ask agent</button>
     </span></div></td>`;
-  tr.querySelector('[data-act=ask]').onclick = () => askAgent({ preset: 'address_comment', comment: c.comment });
-  tr.querySelector('[data-act=toggle]').onclick = () => api('/comments/toggle', { body: { comment: c.comment } }).then(onChange).catch(fail);
-  tr.querySelector('[data-act=delete]').onclick = () => api('/comments/delete', { body: { comment: c.comment } }).then(onChange).catch(fail);
-  tr.querySelector('[data-act=edit]').onclick = () => {
+  on(tr, 'ask', () => askAgent({ preset: 'address_comment', comment: c.comment }));
+  on(tr, 'toggle', () => api('/comments/toggle', { body: { comment: c.comment } }).then(onChange).catch(fail));
+  on(tr, 'delete', () => api('/comments/delete', { body: { comment: c.comment } }).then(onChange).catch(fail));
+  on(tr, 'edit', () => {
     const text = prompt('Edit comment', c.comment.text);
     if (text && text.trim()) api('/comments/edit', { body: { comment: c.comment, text } }).then(onChange).catch(fail);
-  };
+  });
   return tr;
 }
 
@@ -468,13 +487,13 @@ function commentForm(path, line, endLine, sourceLine, colspan, onDone) {
     if (!text) return;
     api('/comments', { body: { path, line: line || null, end_line: line ? endLine : null, text, source_line: line ? sourceLine : null } }).then(() => onDone(true)).catch(fail);
   };
-  tr.querySelector('[data-act=save]').onclick = save;
-  tr.querySelector('[data-act=ask]').onclick = () => {
+  on(tr, 'save', save);
+  on(tr, 'ask', () => {
     const question = ta.value.trim() || 'Explain this.';
     onDone(false);
     askAgent({ preset: 'about_code', path, line: line || null, end_line: line ? endLine : null, text: question, context: line ? [{ uri: 'file://' + path, text: sourceLine }] : [] });
-  };
-  tr.querySelector('[data-act=cancel]').onclick = () => onDone(false);
+  });
+  on(tr, 'cancel', () => onDone(false));
   ta.onkeydown = e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save(); }
     if (e.key === 'Escape') { e.preventDefault(); onDone(false); }
@@ -485,7 +504,7 @@ function commentForm(path, line, endLine, sourceLine, colspan, onDone) {
 
 // ----- explore --------------------------------------------------------------------------------
 
-let selectStart = null;
+let commentAnchorLine = null;
 
 async function openFile(path, line) {
   try {
@@ -525,7 +544,7 @@ function renderFile() {
   head.innerHTML = `<span class="path">${esc(f.path)}</span>
     ${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
     <span class="dim">${f.lines.length} lines</span>
-    <span class="spacer" style="flex:1"></span>
+    <span class="spacer"></span>
     <button data-act="symbols" title="definitions in this file (@)">Symbols</button>
     <button data-act="comment" title="comment on the file as a whole">Comment</button>
     <button data-act="note">Note</button>
@@ -533,19 +552,20 @@ function renderFile() {
     <button data-act="diff" ${st && st !== '?' ? '' : 'disabled'}>Diff vs HEAD</button>
     <button data-act="blame" ${state.hasCommits && st !== '?' ? '' : 'disabled'}>${f.blame ? 'Hide blame' : 'Blame'}</button>`;
   content.appendChild(head);
-  head.querySelector('[data-act=note]').onclick = () => addNote(f.path);
-  head.querySelector('[data-act=comment]').onclick = () => addPathComment(f.path);
-  head.querySelector('[data-act=symbols]').onclick = () => showFileSymbols(f.path);
-  head.querySelector('[data-act=history]').onclick = () => showLog(f.path);
-  head.querySelector('[data-act=diff]').onclick = () => showDiff(
+  on(head, 'note', () => addNote(f.path));
+  on(head, 'comment', () => addPathComment(f.path));
+  on(head, 'symbols', () => showFileSymbols(f.path));
+  on(head, 'history', () => showLog(f.path));
+  on(head, 'diff', () => showDiff(
     { kind: 'working', path: f.path, status: st },
     [{ path: f.path, status: st, old_path: null }],
     0,
-    () => { setTabs('explore'); renderFile(); });
-  head.querySelector('[data-act=blame]').onclick = async () => {
+    () => { setTabs('explore'); renderFile(); },
+  ));
+  on(head, 'blame', async () => {
     if (f.blame) { f.blame = null; renderFile(); return; }
     try { f.blame = await api('/blame?path=' + encodeURIComponent(f.path)); renderFile(); } catch (e) { fail(e); }
-  };
+  });
 
   if (f.notes && f.notes.length) {
     const n = document.createElement('div');
@@ -558,6 +578,8 @@ function renderFile() {
   const table = document.createElement('table');
   table.className = 'code';
   const lines = f.text.split('\n');
+  // Splitting text that ends in a newline leaves an empty last piece that is not a line of
+  // the file. The server counted the real lines, so trust that count over the split.
   if (lines.length && lines[lines.length - 1] === '' && f.lines.length < lines.length) lines.pop();
   const cols = 3 + (f.blame ? 1 : 0);
   const byLine = {};
@@ -586,15 +608,15 @@ function renderFile() {
     tr.querySelector('td.n').onclick = e => {
       $('#content .form')?.closest('tr')?.remove();
       let start = n, end = n;
-      if (e.shiftKey && selectStart) { start = Math.min(selectStart, n); end = Math.max(selectStart, n); }
-      selectStart = n;
+      if (e.shiftKey && commentAnchorLine) { start = Math.min(commentAnchorLine, n); end = Math.max(commentAnchorLine, n); }
+      commentAnchorLine = n;
       table.querySelectorAll('tr.sel').forEach(x => x.classList.remove('sel'));
       for (let k = start; k <= end; k++) table.querySelector(`tr[data-line="${k}"]`)?.classList.add('sel');
       const anchorRow = table.querySelector(`tr[data-line="${end}"]`);
       const form = commentForm(f.path, start, end, lines[start - 1] || '', cols, saved => {
         form.remove();
         table.querySelectorAll('tr.sel').forEach(x => x.classList.remove('sel'));
-        selectStart = null;
+        commentAnchorLine = null;
         if (saved) onChange();
       });
       anchorRow.after(form);
@@ -642,10 +664,11 @@ function showPopover(x, y, name) {
   const p = $('#popover');
   p.innerHTML = `<span class="word">${esc(name)}</span><button class="small" data-act="def">Definition</button><button class="small" data-act="refs">Usages</button>`;
   p.hidden = false;
+  // Keep it on screen: 260 is about as wide as the popover gets with a long name in it.
   p.style.left = Math.min(x + 4, window.innerWidth - 260) + 'px';
   p.style.top = (y + 8) + 'px';
-  p.querySelector('[data-act=def]').onclick = () => { hidePopover(); gotoDefinition(name); };
-  p.querySelector('[data-act=refs]').onclick = () => { hidePopover(); showReferences(name); };
+  on(p, 'def', () => { hidePopover(); gotoDefinition(name); });
+  on(p, 'refs', () => { hidePopover(); showReferences(name); });
 }
 function hidePopover() { $('#popover').hidden = true; }
 document.addEventListener('click', e => { if (!e.target.closest('#popover') && !e.target.closest('table.code td.c')) hidePopover(); });
@@ -691,8 +714,8 @@ function symbolHit(s) {
 function showDrawer(title, hits) {
   const d = $('#drawer');
   d.hidden = false;
-  d.innerHTML = `<div class="filehead"><span class="path">${esc(title)}</span><span style="flex:1"></span><button class="small" data-act="close">✕</button></div><div class="list"></div>`;
-  d.querySelector('[data-act=close]').onclick = () => { d.hidden = true; };
+  d.innerHTML = `<div class="filehead"><span class="path">${esc(title)}</span><span class="spacer"></span><button class="small" data-act="close">✕</button></div><div class="list"></div>`;
+  on(d, 'close', () => { d.hidden = true; });
   const list = d.querySelector('.list');
   for (const h of hits) {
     const el = document.createElement('div');
@@ -790,7 +813,7 @@ function showAgent() {
   setTabs('agent');
   startAgentPolling();
   const content = $('#content');
-  content.innerHTML = `<div id="agent"><div class="filehead"><span class="path">agent</span><span id="agentname" class="dim"></span><span id="agentstatus" class="badge"></span><span id="agentprogress" class="progress"></span><span id="agentusage" class="usage"></span><span style="flex:1"></span>
+  content.innerHTML = `<div id="agent"><div class="filehead"><span class="path">agent</span><span id="agentname" class="dim"></span><span id="agentstatus" class="badge"></span><span id="agentprogress" class="progress"></span><span id="agentusage" class="usage"></span><span class="spacer"></span>
       <label class="dim"><input type="checkbox" id="thoughts"> thoughts</label>
       <label class="dim"><input type="checkbox" id="showlog"> log</label>
       <button data-act="all" title="work through every pending comment in REVIEW.md">Address all pending</button>
@@ -820,6 +843,8 @@ function renderAgent() {
   if (!root) return;
   renderAgentHead();
   const t = root.querySelector('.transcript');
+  // Within a line or so of the end counts as being at the end: a reader who has scrolled
+  // up to read something should not be yanked back down by the next line of output.
   const atBottom = t.scrollTop + t.clientHeight >= t.scrollHeight - 20;
   t.innerHTML = agent.entries.filter(e => (e.kind !== 'thought' || agent.showThoughts) && (e.kind !== 'log' || agent.showLog)).map(e => {
     const who = { user: 'you', agent: agent.name || 'agent', thought: 'thinking', tool: 'tool', system: '', log: 'log' }[e.kind];
@@ -847,8 +872,8 @@ async function showChanges(staged = false) {
     const files = await api('/changes?staged=' + staged);
     const content = $('#content');
     content.innerHTML = `<div class="filehead"><span class="path">${staged ? 'staged' : 'working tree'}</span><span class="dim">${files.length} files</span>
-      <span style="flex:1"></span><button data-act="switch">${staged ? 'Show working tree' : 'Show staged'}</button></div><div class="list"></div>`;
-    content.querySelector('[data-act=switch]').onclick = () => showChanges(!staged);
+      <span class="spacer"></span><button data-act="switch">${staged ? 'Show working tree' : 'Show staged'}</button></div><div class="list"></div>`;
+    on(content, 'switch', () => showChanges(!staged));
     const list = content.querySelector('.list');
     if (!files.length) list.innerHTML = '<div class="center">nothing here</div>';
     files.forEach((f, i) => {
@@ -878,47 +903,47 @@ async function showLog(path = null, keep = false) {
 }
 
 function renderLog() {
-  const L = state.log;
+  const log = state.log;
   const content = $('#content');
-  content.innerHTML = `<div class="split"><div id="commits"><div class="filehead"><span class="path">${L.path ? 'history of ' + esc(L.path) : 'log'}</span><span class="dim">${L.commits.length} commits${L.exhausted ? '' : '+'}</span></div><div class="list"></div></div>
+  content.innerHTML = `<div class="split"><div id="commits"><div class="filehead"><span class="path">${log.path ? 'history of ' + esc(log.path) : 'log'}</span><span class="dim">${log.commits.length} commits${log.exhausted ? '' : '+'}</span></div><div class="list"></div></div>
     <div id="commit"><div class="details"></div><div class="list files"></div></div></div>`;
   const list = content.querySelector('#commits .list');
-  if (!L.commits.length) list.innerHTML = '<div class="center">no commits</div>';
-  L.commits.forEach((c, i) => {
+  if (!log.commits.length) list.innerHTML = '<div class="center">no commits</div>';
+  log.commits.forEach((c, i) => {
     const el = document.createElement('div');
-    el.className = 'item' + (i === L.selected ? ' selected' : '');
+    el.className = 'item' + (i === log.selected ? ' selected' : '');
     el.dataset.i = i;
     el.innerHTML = `<span class="mono dim">${esc(c.short)} ${esc(c.date.slice(0, 10))}</span><span class="grow">${esc(c.subject)}</span><span class="dim">${esc(c.author)}</span>`;
     el.onclick = () => selectCommit(i);
     list.appendChild(el);
   });
-  if (!L.exhausted) {
+  if (!log.exhausted) {
     const more = document.createElement('button');
     more.textContent = 'Load more';
     more.style.margin = '8px';
     more.onclick = async () => {
-      const next = await api('/log?limit=100&skip=' + L.commits.length + (L.path ? '&path=' + encodeURIComponent(L.path) : ''));
-      L.commits.push(...next);
-      if (next.length < 100) L.exhausted = true;
+      const next = await api('/log?limit=100&skip=' + log.commits.length + (log.path ? '&path=' + encodeURIComponent(log.path) : ''));
+      log.commits.push(...next);
+      if (next.length < 100) log.exhausted = true;
       renderLog();
     };
     list.after(more);
   }
-  $('#hint').textContent = L.path ? 'Click a commit, then the file to see what changed. "vs working tree" diffs that version against your checkout.' : 'Click a commit, then a file.';
+  $('#hint').textContent = log.path ? 'Click a commit, then the file to see what changed. "vs working tree" diffs that version against your checkout.' : 'Click a commit, then a file.';
 }
 
 async function selectCommit(i) {
-  const L = state.log;
-  if (!L.commits[i]) return;
-  L.selected = i;
+  const log = state.log;
+  if (!log.commits[i]) return;
+  log.selected = i;
   $('#content #commits .list')?.querySelectorAll('.item').forEach(el => el.classList.toggle('selected', +el.dataset.i === i));
-  const c = L.commits[i];
+  const c = log.commits[i];
   const details = $('#content #commit .details');
   details.innerHTML = `<span style="color:var(--upd-fg)">${esc(c.hash)}</span>\n${esc(c.author)} &lt;${esc(c.email)}&gt;  ${esc(c.date)}\n\n<b>${esc(c.subject)}</b>${c.body ? '\n' + esc(c.body) : ''}`;
   try {
     let files = await api('/commit_files?hash=' + c.hash);
-    if (L.path) files.sort((a, b) => (a.path === L.path ? 0 : 1) - (b.path === L.path ? 0 : 1));
-    L.files = files;
+    if (log.path) files.sort((a, b) => (a.path === log.path ? 0 : 1) - (b.path === log.path ? 0 : 1));
+    log.files = files;
     const list = $('#content #commit .files');
     list.innerHTML = '';
     files.forEach((f, k) => {
@@ -926,10 +951,10 @@ async function selectCommit(i) {
       el.className = 'item';
       const letter = statusLetter(f);
       el.innerHTML = `<span class="status-letter ${letter}">${letter}</span><span class="mono grow">${esc(f.old_path ? f.old_path + ' → ' + f.path : f.path)}</span>
-        ${L.path && f.path === L.path ? '<button class="small" data-act="vs">vs working tree</button>' : ''}`;
-      el.onclick = () => showDiff({ kind: 'commit', hash: c.hash, path: f.path, old_path: f.old_path || '', status: letter }, files, k, () => showLog(L.path, true));
+        ${log.path && f.path === log.path ? '<button class="small" data-act="vs">vs working tree</button>' : ''}`;
+      el.onclick = () => showDiff({ kind: 'commit', hash: c.hash, path: f.path, old_path: f.old_path || '', status: letter }, files, k, () => showLog(log.path, true));
       const vs = el.querySelector('[data-act=vs]');
-      if (vs) vs.onclick = e => { e.stopPropagation(); showDiff({ kind: 'revisions', from: c.hash, to: '', path: f.path, status: 'M' }, [f], 0, () => showLog(L.path, true)); };
+      if (vs) vs.onclick = e => { e.stopPropagation(); showDiff({ kind: 'revisions', from: c.hash, to: '', path: f.path, status: 'M' }, [f], 0, () => showLog(log.path, true)); };
       list.appendChild(el);
     });
   } catch (e) { fail(e); }
@@ -940,7 +965,9 @@ async function selectCommit(i) {
 async function showDiff(params, siblings, index, back) {
   try {
     const data = await api('/diff?' + qs(params));
-    const unified = state.diff ? state.diff.unified : window.innerWidth < 1100;
+    // Side by side needs room for two columns of code; below that it is unreadable. The
+  // choice then sticks, so paging through files with ] and [ does not keep flipping layout.
+  const unified = state.diff ? state.diff.unified : window.innerWidth < 1100;
     state.diff = { params, data, unified, siblings, index, back };
     // A diff is a view of its own, whatever opened it. Without this a diff reached from the
     // explorer left the view as 'explore', where the keys below do nothing and typing in the
@@ -951,42 +978,42 @@ async function showDiff(params, siblings, index, back) {
 }
 
 function renderDiff() {
-  const D = state.diff;
-  const d = D.data;
+  const diff = state.diff;
+  const d = diff.data;
   const content = $('#content');
   content.innerHTML = '';
   const changes = d.before.line_ops.filter(o => o !== 'none').length + '/' + d.after.line_ops.filter(o => o !== 'none').length;
   const head = document.createElement('div');
   head.className = 'filehead';
-  head.innerHTML = `<button data-act="back">← back</button><span class="path">${esc(D.params.old_path ? D.params.old_path + ' → ' + D.params.path : D.params.path)}</span>
+  head.innerHTML = `<button data-act="back">← back</button><span class="path">${esc(diff.params.old_path ? diff.params.old_path + ' → ' + diff.params.path : diff.params.path)}</span>
     <span class="badge">${esc(d.target)}</span><span class="dim">−${d.before.line_ops.filter(o => o !== 'none').length} +${d.after.line_ops.filter(o => o !== 'none').length}</span>
     <span class="dim">${d.structural ? 'structural diff' : 'line diff'}${d.large_residual ? ' · rewritten?' : ''}</span>
-    <span style="flex:1"></span>
+    <span class="spacer"></span>
     <button data-act="prevh" title="previous hunk (p)">▲ hunk</button><button data-act="nexth" title="next hunk (n)">▼ hunk</button>
-    <button data-act="layout">${D.unified ? 'Side by side' : 'Unified'}</button>
-    ${D.siblings.length > 1 ? `<button data-act="prev" ${D.index === 0 ? 'disabled' : ''}>◀ file</button><span class="dim">${D.index + 1}/${D.siblings.length}</span><button data-act="next" ${D.index + 1 >= D.siblings.length ? 'disabled' : ''}>file ▶</button>` : ''}
+    <button data-act="layout">${diff.unified ? 'Side by side' : 'Unified'}</button>
+    ${diff.siblings.length > 1 ? `<button data-act="prev" ${diff.index === 0 ? 'disabled' : ''}>◀ file</button><span class="dim">${diff.index + 1}/${diff.siblings.length}</span><button data-act="next" ${diff.index + 1 >= diff.siblings.length ? 'disabled' : ''}>file ▶</button>` : ''}
     <button data-act="review" title="have the agent review this change into REVIEW.md">Ask agent to review</button>
     <button data-act="open">Open in explorer</button>`;
   content.appendChild(head);
-  head.querySelector('[data-act=back]').onclick = () => D.back();
-  head.querySelector('[data-act=review]').onclick = () => askAgent({ preset: 'review_diff', path: D.params.path, target: d.target });
-  head.querySelector('[data-act=layout]').onclick = () => { D.unified = !D.unified; renderDiff(); };
-  head.querySelector('[data-act=open]').onclick = () => openFile(D.params.path);
+  on(head, 'back', () => diff.back());
+  on(head, 'review', () => askAgent({ preset: 'review_diff', path: diff.params.path, target: d.target }));
+  on(head, 'layout', () => { diff.unified = !diff.unified; renderDiff(); });
+  on(head, 'open', () => openFile(diff.params.path));
   const sibling = k => {
-    const f = D.siblings[k];
+    const f = diff.siblings[k];
     const letter = statusLetter(f);
-    showDiff({ ...D.params, path: f.path, old_path: f.old_path || '', status: letter }, D.siblings, k, D.back);
+    showDiff({ ...diff.params, path: f.path, old_path: f.old_path || '', status: letter }, diff.siblings, k, diff.back);
   };
-  head.querySelector('[data-act=prev]') && (head.querySelector('[data-act=prev]').onclick = () => sibling(D.index - 1));
-  head.querySelector('[data-act=next]') && (head.querySelector('[data-act=next]').onclick = () => sibling(D.index + 1));
-  head.querySelector('[data-act=nexth]').onclick = () => jumpHunk(1);
-  head.querySelector('[data-act=prevh]').onclick = () => jumpHunk(-1);
+  on(head, 'prev', () => sibling(diff.index - 1));
+  on(head, 'next', () => sibling(diff.index + 1));
+  on(head, 'nexth', () => jumpHunk(1));
+  on(head, 'prevh', () => jumpHunk(-1));
 
   const rows = d.rows;
   const bl = d.before.text.split('\n'), al = d.after.text.split('\n');
   const onChange = async () => {
-    const q = qs(D.params);
-    D.data = await api('/diff?' + q);
+    const q = qs(diff.params);
+    diff.data = await api('/diff?' + q);
     state.allComments = await api('/comments');
     await loadState();
     renderDiff();
@@ -1010,7 +1037,7 @@ function renderDiff() {
     tr.innerHTML = `<td class="m">${mk}</td><td class="n">${n}</td><td class="c">${renderSegments(segs || [], s.spans[i], ranges)}</td>`;
     if (side === 'after') tr.querySelector('td.n').onclick = () => {
       $('#content .form')?.closest('tr')?.remove();
-      const form = commentForm(D.params.path, n, n, al[i] || '', 3, saved => { form.remove(); if (saved) onChange().catch(fail); });
+      const form = commentForm(diff.params.path, n, n, al[i] || '', 3, saved => { form.remove(); if (saved) onChange().catch(fail); });
       tr.after(form);
     };
     return tr;
@@ -1023,10 +1050,10 @@ function renderDiff() {
     inHunk = change;
     return change ? hunk : undefined;
   });
-  D.hunks = hunk;
+  diff.hunks = hunk;
   const byLine = {};
   for (const c of d.comments) if (c.line) (byLine[c.end_line] = byLine[c.end_line] || []).push(c);
-  if (!D.unified) {
+  if (!diff.unified) {
     const wrap = document.createElement('div');
     wrap.className = 'sbs';
     const lt = document.createElement('table'), rt = document.createElement('table');
@@ -1063,18 +1090,18 @@ function renderDiff() {
     }
     content.appendChild(t);
   }
-  $('#hint').textContent = `${D.hunks} hunks · n/p jump between hunks · click an after-side line number to comment`;
-  D.currentHunk = 0;
-  if (D.hunks) jumpHunk(1);
+  $('#hint').textContent = `${diff.hunks} hunks · n/p jump between hunks · click an after-side line number to comment`;
+  diff.currentHunk = 0;
+  if (diff.hunks) jumpHunk(1);
 }
 
 function jumpHunk(delta) {
-  const D = state.diff;
-  if (!D || !D.hunks) return;
-  D.currentHunk = ((D.currentHunk - 1 + delta + D.hunks) % D.hunks) + 1;
-  const row = $(`#content tr[data-hunk="${D.currentHunk}"]`);
+  const diff = state.diff;
+  if (!D || !diff.hunks) return;
+  diff.currentHunk = ((diff.currentHunk - 1 + delta + diff.hunks) % diff.hunks) + 1;
+  const row = $(`#content tr[data-hunk="${diff.currentHunk}"]`);
   if (row) row.scrollIntoView({ block: 'center' });
-  $('#hint').textContent = `hunk ${D.currentHunk}/${D.hunks} · n/p jump between hunks · click an after-side line number to comment`;
+  $('#hint').textContent = `hunk ${diff.currentHunk}/${diff.hunks} · n/p jump between hunks · click an after-side line number to comment`;
 }
 
 // ----- review ---------------------------------------------------------------------------------
@@ -1088,11 +1115,11 @@ async function showReview() {
     const items = all.filter(c => show || c.comment.section === 'Pending').sort((x, y) => x.comment.path.localeCompare(y.comment.path) || (x.line || 0) - (y.line || 0));
     const pending = all.filter(c => c.comment.section === 'Pending').length;
     const content = $('#content');
-    content.innerHTML = `<div class="filehead"><span class="path">REVIEW.md</span><span class="dim">${pending} pending, ${all.length - pending} completed</span><span style="flex:1"></span>
+    content.innerHTML = `<div class="filehead"><span class="path">REVIEW.md</span><span class="dim">${pending} pending, ${all.length - pending} completed</span><span class="spacer"></span>
       <button data-act="toggle">${show ? 'Hide completed' : 'Show completed'}</button><button data-act="reanchor" title="rewrite line numbers of moved comments">Re-anchor</button><button data-act="askall" title="have the agent work through every pending comment">Address all with agent</button></div><div class="list"></div>`;
-    content.querySelector('[data-act=toggle]').onclick = () => { state.review.showCompleted = !show; showReview(); };
-    content.querySelector('[data-act=askall]').onclick = () => askAgent({ preset: 'address_all' });
-    content.querySelector('[data-act=reanchor]').onclick = () => api('/reanchor', { post: true }).then(r => { msg(r.moved + ' comment(s) re-anchored'); showReview(); }).catch(fail);
+    on(content, 'toggle', () => { state.review.showCompleted = !show; showReview(); });
+    on(content, 'askall', () => askAgent({ preset: 'address_all' }));
+    on(content, 'reanchor', () => api('/reanchor', { post: true }).then(r => { msg(r.moved + ' comment(s) re-anchored'); showReview(); }).catch(fail));
     const list = content.querySelector('.list');
     if (!items.length) list.innerHTML = '<div class="center">no comments</div>';
     for (const c of items) {
@@ -1104,10 +1131,10 @@ async function showReview() {
         <span class="grow" style="${done ? 'opacity:.6' : ''}">${esc(c.comment.text)}</span><span class="dim">${esc(c.comment.author || '')}</span>
         <span class="actions"><button class="small" data-act="toggle">${done ? 'reopen' : 'done'}</button><button class="small" data-act="edit">edit</button><button class="small" data-act="delete">delete</button><button class="small" data-act="ask">ask agent</button></span>`;
       el.onclick = () => { if (!c.line && !state.files.includes(c.comment.path)) return; openFile(c.comment.path, c.line); };
-      el.querySelector('[data-act=ask]').onclick = e => { e.stopPropagation(); askAgent({ preset: 'address_comment', comment: c.comment }); };
-      el.querySelector('[data-act=toggle]').onclick = e => { e.stopPropagation(); api('/comments/toggle', { body: { comment: c.comment } }).then(showReview).catch(fail); };
-      el.querySelector('[data-act=delete]').onclick = e => { e.stopPropagation(); api('/comments/delete', { body: { comment: c.comment } }).then(showReview).catch(fail); };
-      el.querySelector('[data-act=edit]').onclick = e => { e.stopPropagation(); const t = prompt('Edit comment', c.comment.text); if (t && t.trim()) api('/comments/edit', { body: { comment: c.comment, text: t } }).then(showReview).catch(fail); };
+      on(el, 'ask', e => { e.stopPropagation(); askAgent({ preset: 'address_comment', comment: c.comment }); });
+      on(el, 'toggle', e => { e.stopPropagation(); api('/comments/toggle', { body: { comment: c.comment } }).then(showReview).catch(fail); });
+      on(el, 'delete', e => { e.stopPropagation(); api('/comments/delete', { body: { comment: c.comment } }).then(showReview).catch(fail); });
+      on(el, 'edit', e => { e.stopPropagation(); const t = prompt('Edit comment', c.comment.text); if (t && t.trim()) api('/comments/edit', { body: { comment: c.comment, text: t } }).then(showReview).catch(fail); });
       list.appendChild(el);
     }
     await loadState();
@@ -1143,8 +1170,8 @@ async function showNotes() {
   try {
     const notes = await api('/notes');
     const content = $('#content');
-    content.innerHTML = `<div class="filehead"><span class="path">NOTES.md</span><span class="dim">${notes.length} notes</span><span style="flex:1"></span><button data-act="add">Add general note</button></div><div class="list"></div>`;
-    content.querySelector('[data-act=add]').onclick = () => addNote(null);
+    content.innerHTML = `<div class="filehead"><span class="path">NOTES.md</span><span class="dim">${notes.length} notes</span><span class="spacer"></span><button data-act="add">Add general note</button></div><div class="list"></div>`;
+    on(content, 'add', () => addNote(null));
     const list = content.querySelector('.list');
     if (!notes.length) list.innerHTML = '<div class="center">no notes</div>';
     for (const n of notes) {
@@ -1153,8 +1180,8 @@ async function showNotes() {
       el.innerHTML = `<span class="mono" style="color:var(--accent)">${esc(n.target)}</span><span class="grow" style="white-space:pre-wrap">${esc(n.text)}</span>
         <span class="actions"><button class="small" data-act="edit">edit</button><button class="small" data-act="delete">delete</button></span>`;
       if (n.target !== 'General') el.onclick = () => openFile(n.target);
-      el.querySelector('[data-act=delete]').onclick = e => { e.stopPropagation(); api('/notes/delete', { body: { note: n } }).then(showNotes).catch(fail); };
-      el.querySelector('[data-act=edit]').onclick = e => { e.stopPropagation(); const t = prompt('Edit note', n.text); if (t && t.trim()) api('/notes/edit', { body: { note: n, text: t } }).then(showNotes).catch(fail); };
+      on(el, 'delete', e => { e.stopPropagation(); api('/notes/delete', { body: { note: n } }).then(showNotes).catch(fail); });
+      on(el, 'edit', e => { e.stopPropagation(); const t = prompt('Edit note', n.text); if (t && t.trim()) api('/notes/edit', { body: { note: n, text: t } }).then(showNotes).catch(fail); });
       list.appendChild(el);
     }
     $('#hint').textContent = '';
@@ -1171,8 +1198,25 @@ function setTabs(view) {
   if (view !== 'explore') $('#drawer').hidden = true;
 }
 
+// Draws whatever view is showing, again. Three places need this and they used to each
+// have their own list, which drifted.
+function rerenderCurrentView() {
+  switch (state.view) {
+    case 'changes': return showChanges();
+    case 'log': return showLog(state.log && state.log.path, true);
+    case 'review': return showReview();
+    case 'notes': return showNotes();
+    case 'agent': return showAgent();
+    case 'diff': return state.diff && renderDiff();
+    default:
+      setTabs('explore');
+      return renderFile();
+  }
+}
+
 document.querySelectorAll('header .tabs button').forEach(b => b.onclick = () => {
   const v = b.dataset.view;
+  // A tab always starts its view afresh, rather than redrawing what was there.
   if (v === 'explore') { setTabs('explore'); renderFile(); }
   if (v === 'changes') showChanges();
   if (v === 'log') showLog(null, true);
@@ -1192,11 +1236,7 @@ $('#refresh').onclick = async () => {
     await loadState();
     await loadRepos();
     if (state.view === 'explore' && state.file) await openFile(state.file.path);
-    else if (state.view === 'agent') showAgent();
-    else if (state.view === 'changes') showChanges();
-    else if (state.view === 'log') showLog(state.log && state.log.path);
-    else if (state.view === 'review') showReview();
-    else if (state.view === 'notes') showNotes();
+    else rerenderCurrentView();
     msg('refreshed');
   } catch (e) { fail(e); }
 };
@@ -1256,10 +1296,11 @@ $('#theme').onchange = async e => {
   try {
     await api('/config', { body: { theme: e.target.value } });
     await loadState();
+    // The colours are baked into what the server sends for code, so a diff has to be asked
+    // for again; everything else redraws from what is already here.
+    if (state.view === 'diff' && state.diff) state.diff.data = await api('/diff?' + qs(state.diff.params));
     if (state.view === 'explore' && state.file) await openFile(state.file.path);
-    else if (state.diff && document.querySelector('#content table.code') && state.view !== 'explore') {
-      state.diff.data = await api('/diff?' + qs(state.diff.params)); renderDiff();
-    }
+    else rerenderCurrentView();
     msg('theme saved to the config file');
   } catch (err) { fail(err); }
 };
