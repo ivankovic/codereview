@@ -10,7 +10,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::anchor::AnchorState;
 use crate::session::DiffTarget;
 use crate::theme::Theme;
-use crate::tui::app::{App, EntryKind, Screen};
+use crate::tui::agent_panel;
+use crate::tui::app::{App, Screen};
 use crate::tui::style::{self, comment_style};
 use crate::tui::workspace::Workspace;
 
@@ -41,18 +42,11 @@ fn draw_repo_strip(frame: &mut Frame, ws: &Workspace, area: Rect) {
     let mut labels: Vec<(String, Style)> = Vec::new();
     for (i, app) in ws.apps.iter().enumerate() {
         let mut label = format!(" {} {}", i + 1, app.session.name());
-        if app.agent_state.permission.is_some() {
+        if app.agent.permission.is_some() {
             label.push_str(" ?");
         } else if app.agent_active() {
-            let frame_ = app
-                .agent_state
-                .turn_started
-                .or(app.agent_state.start_began)
-                .map(|t| t.elapsed().as_millis() / 80)
-                .unwrap_or(0) as usize
-                % SPINNER.len();
             label.push(' ');
-            label.push_str(SPINNER[frame_]);
+            label.push_str(app.agent.spinner());
         }
         let pending = app.session.review.pending_count();
         if pending > 0 {
@@ -61,7 +55,7 @@ fn draw_repo_strip(frame: &mut Frame, ws: &Workspace, area: Rect) {
         label.push(' ');
         let style_ = if i == ws.active {
             style::accent(&theme).reversed()
-        } else if app.agent_state.permission.is_some() {
+        } else if app.agent.permission.is_some() {
             style::fg(theme.moved).bold()
         } else {
             style::dim(&theme)
@@ -126,7 +120,7 @@ fn draw_repo_picker(frame: &mut Frame, ws: &Workspace, area: Rect) {
         .take(rows)
         .map(|(i, app)| {
             let pending = app.session.review.pending_count();
-            let agent = if app.agent_state.permission.is_some() {
+            let agent = if app.agent.permission.is_some() {
                 "agent waiting for permission"
             } else if app.agent_active() {
                 "agent working"
@@ -169,7 +163,14 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
         Screen::Review(_) => draw_review(frame, app, main),
         Screen::Notes(_) => draw_notes(frame, app, main),
         Screen::Locations(_) => draw_locations(frame, app, main),
-        Screen::Agent => draw_agent(frame, app, main),
+        Screen::Agent => {
+            let theme = app.theme.clone();
+            let label = app.agent_label();
+            let name = app.agent.name().unwrap_or_else(|| label.clone());
+            let (h, w) = agent_panel::draw(frame, &mut app.agent, &theme, &label, &name, main);
+            app.measured.main_height = h;
+            app.measured.main_width = w;
+        }
     }
     draw_status(frame, app, status);
     if app.show_help {
@@ -180,7 +181,7 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn title_block(theme: &Theme, title: Line<'static>, focused: bool) -> Block<'static> {
+pub(crate) fn title_block(theme: &Theme, title: Line<'static>, focused: bool) -> Block<'static> {
     let block = Block::default().borders(Borders::ALL).title(title);
     if focused {
         block.border_style(style::accent(theme))
@@ -756,7 +757,7 @@ fn draw_locations(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// Wraps `text` to `width` cells per line, breaking at spaces where possible.
-fn wrap_text(text: &str, width: usize) -> Vec<String> {
+pub(crate) fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let width = width.max(8);
     let mut out = Vec::new();
     for raw in text.split('\n') {
@@ -793,160 +794,6 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-fn draw_agent(frame: &mut Frame, app: &mut App, area: Rect) {
-    let theme = app.theme.clone();
-    let name = app
-        .agent
-        .as_ref()
-        .map(|a| a.name().to_string())
-        .unwrap_or_else(|| app.agent_label());
-    let mut title: Vec<Span> = vec![
-        " agent ".into(),
-        name.bold(),
-        format!(" {} ", app.agent_state.status).into(),
-    ];
-    if let Some(progress) = app.agent_progress() {
-        let frame_ = (app
-            .agent_state
-            .turn_started
-            .or(app.agent_state.start_began)
-            .map(|t| t.elapsed().as_millis() / 80)
-            .unwrap_or(0)
-            % SPINNER.len() as u128) as usize;
-        title.push(Span::styled(
-            format!("{} {progress} ", SPINNER[frame_]),
-            style::accent(&theme),
-        ));
-    }
-    if let Some(usage) = app.agent_usage() {
-        title.push(Span::styled(format!("{usage} "), style::dim(&theme)));
-    }
-    let flags = format!(
-        "{}{}",
-        if app.agent_state.show_thoughts {
-            "thoughts shown "
-        } else {
-            ""
-        },
-        if app.agent_state.show_log {
-            ""
-        } else {
-            "log hidden "
-        }
-    );
-    if !flags.is_empty() {
-        title.push(Span::styled(flags, style::dim(&theme)));
-    }
-    let title: Line = title.into();
-    let block = title_block(&theme, title, true);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    let has_permission = app.agent_state.permission.is_some();
-    let [body, ask] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(if has_permission { 2 } else { 0 }),
-    ])
-    .areas(inner);
-    app.measured.main_height = body.height as usize;
-    app.measured.main_width = body.width as usize;
-    let width = body.width.saturating_sub(1) as usize;
-    let mut lines: Vec<Line> = Vec::new();
-    for entry in &app.agent_state.entries {
-        if entry.kind == EntryKind::Thought && !app.agent_state.show_thoughts {
-            continue;
-        }
-        if entry.kind == EntryKind::Log && !app.agent_state.show_log {
-            continue;
-        }
-        let (prefix, style_) = match entry.kind {
-            EntryKind::User => ("you  ", style::accent(&theme).bold()),
-            EntryKind::Agent => ("agent", Style::new()),
-            EntryKind::Thought => ("think", style::dim(&theme)),
-            EntryKind::Tool => ("tool ", style::fg(theme.update_fg)),
-            EntryKind::System => ("     ", style::dim(&theme)),
-            EntryKind::Log => ("log  ", style::dim(&theme)),
-        };
-        let text_style = match entry.kind {
-            EntryKind::Thought | EntryKind::System | EntryKind::Log => style::dim(&theme),
-            EntryKind::Tool => style::fg(theme.update_fg),
-            _ => Style::new(),
-        };
-        for (i, wrapped) in wrap_text(&entry.text, width.saturating_sub(7))
-            .into_iter()
-            .enumerate()
-        {
-            let head = if i == 0 {
-                format!("{prefix} │ ")
-            } else {
-                "      │ ".to_string()
-            };
-            lines.push(
-                vec![
-                    Span::styled(head, style_),
-                    Span::styled(wrapped, text_style),
-                ]
-                .into(),
-            );
-        }
-        if entry.kind != EntryKind::Log {
-            lines.push("".into());
-        }
-    }
-    if app.agent_state.entries.is_empty() {
-        lines.push(
-            "  Nothing yet. Press i to ask something, A to have every pending comment addressed."
-                .dim()
-                .into(),
-        );
-        lines.push("".into());
-        lines.push(
-            format!(
-                "  The agent is `{}`; change [agent] in the config file to use another.",
-                app.agent_label()
-            )
-            .dim()
-            .into(),
-        );
-    }
-    let total = lines.len();
-    let height = body.height as usize;
-    let bottom = total.saturating_sub(height);
-    if app.agent_state.follow {
-        app.agent_state.scroll = bottom;
-    }
-    app.agent_state.scroll = app.agent_state.scroll.min(bottom);
-    // Scrolling back down to the end re-engages following, as `G` does.
-    if app.agent_state.scroll == bottom {
-        app.agent_state.follow = true;
-    }
-    let shown: Vec<Line> = lines
-        .into_iter()
-        .skip(app.agent_state.scroll)
-        .take(height)
-        .collect();
-    frame.render_widget(Paragraph::new(shown), body);
-    if let Some((_, title, options)) = &app.agent_state.permission {
-        let spans: Vec<Span> = vec![
-            Span::styled(" agent asks: ", style::fg(theme.moved).bold()),
-            title.clone().into(),
-        ];
-        let mut choices: Vec<Span> = vec![" ".into()];
-        for (i, o) in options.iter().enumerate() {
-            choices.push(Span::styled(
-                format!("[{}] {}  ", i + 1, o.name),
-                style::accent(&theme),
-            ));
-        }
-        choices.push("y first allow, n first reject".dim());
-        frame.render_widget(
-            Paragraph::new(vec![Line::from(spans), Line::from(choices)]),
-            ask,
-        );
-    }
-}
-
 fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
     if let Some(prompt) = &app.prompt {
         prompt.draw(frame, area);
@@ -963,10 +810,10 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             text.clone().into()
         });
-        if app.agent_state.permission.is_some() && elsewhere {
+        if app.agent.permission.is_some() && elsewhere {
             spans.push("  agent is waiting for permission (A)".into());
         }
-    } else if app.agent_state.permission.is_some() && elsewhere {
+    } else if app.agent.permission.is_some() && elsewhere {
         spans.push(" ".into());
         spans.push(Span::styled(
             "agent is waiting for permission (A)",
@@ -977,7 +824,7 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
         spans.push(Span::styled(
             format!(
                 "agent: {} (A)",
-                app.agent_progress().unwrap_or_else(|| "working".into())
+                app.agent.progress().unwrap_or_else(|| "working".into())
             ),
             style::dim(&app.theme),
         ));

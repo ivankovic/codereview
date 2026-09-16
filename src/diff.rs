@@ -308,10 +308,24 @@ fn side(text: &str, ranges: &[RangeMatch]) -> Side {
         .into_iter()
         .map(|op| Op::from(&op))
         .collect();
+    // Which ranges touch which row, worked out once. Asking every range about every line
+    // is lines times ranges, which on a large structural diff is most of the work.
+    let mut by_row: Vec<Vec<&RangeMatch>> = vec![Vec::new(); lines.len()];
+    for range in ranges.iter().filter(|r| Op::from(&r.operation).is_change()) {
+        let last = range.source.end_row.min(lines.len().saturating_sub(1));
+        for row in by_row
+            .iter_mut()
+            .take(last + 1)
+            .skip(range.source.start_row)
+        {
+            row.push(range);
+        }
+    }
     let spans = lines
         .iter()
+        .zip(&by_row)
         .enumerate()
-        .map(|(row, line)| spans_for_line(ranges, row, line.len()))
+        .map(|(row, (line, here))| spans_for_line(here, row, line.len()))
         .collect();
     Side {
         text: text.to_string(),
@@ -321,13 +335,10 @@ fn side(text: &str, ranges: &[RangeMatch]) -> Side {
 }
 
 /// The changed byte spans of row `row`, clipped to the line, sorted, non-overlapping.
-fn spans_for_line(ranges: &[RangeMatch], row: usize, len: usize) -> Vec<Span> {
+/// `ranges` are only those that touch this row.
+fn spans_for_line(ranges: &[&RangeMatch], row: usize, len: usize) -> Vec<Span> {
     let mut spans: Vec<Span> = ranges
         .iter()
-        .filter(|r| {
-            let op = Op::from(&r.operation);
-            op.is_change() && r.source.start_row <= row && row <= r.source.end_row
-        })
         .map(|r| {
             let start = if r.source.start_row == row {
                 r.source.start_column.min(len)
@@ -451,12 +462,17 @@ mod tests {
             destination: TextRange::new(0, 0, 0, 0),
             operation: op,
         };
-        let ranges = vec![
+        let ranges = [
             r(0, 2, 0, 8, TextOperation::Update),
             r(0, 4, 0, 6, TextOperation::Insert),
             r(0, 0, 2, 0, TextOperation::Identical),
         ];
-        let spans = spans_for_line(&ranges, 0, 10);
+        // `side` hands on only the ranges that change something and touch the row.
+        let touching: Vec<&RangeMatch> = ranges
+            .iter()
+            .filter(|r| Op::from(&r.operation).is_change())
+            .collect();
+        let spans = spans_for_line(&touching, 0, 10);
         assert_eq!(
             spans,
             vec![

@@ -1,22 +1,19 @@
 //! Application state and key handling. Drawing lives in `ui.rs`; nothing here touches the
 //! terminal.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, TryRecvError};
-use std::time::Instant;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use serde_json::Value;
 
-use crate::agent::{Agent, Event as AgentEvent, PermissionOption, Role, prompts};
+use crate::agent::prompts;
 use crate::anchor::Anchored;
 use crate::notes::Note;
 use crate::repo::{ChangedFile, Commit, FileStatus};
 use crate::review::{self, Comment};
 use crate::session::{DiffTarget, Session};
 use crate::theme::Theme;
+use crate::tui::agent_panel;
 use crate::tui::prompt::{Prompt, PromptKind};
 use crate::tui::tree::Tree;
 use crate::tui::viewer::{DiffLayout, DiffView, Viewer};
@@ -65,6 +62,34 @@ impl<T> ListState<T> {
         }
         let max = self.items.len() as isize - 1;
         self.cursor = (self.cursor as isize + delta).clamp(0, max) as usize;
+    }
+
+    /// The keys that move a cursor through a list, the same on every screen that has one.
+    /// Returns whether the key was one of them.
+    pub fn handle_nav(&mut self, key: KeyEvent, page: isize) -> bool {
+        self.handle_nav_within(key, page, self.items.len())
+    }
+
+    /// The same, for a list showing only `rows` of its items: the cursor indexes what is on
+    /// screen, so it must stop at the end of that rather than at the end of the items.
+    pub fn handle_nav_within(&mut self, key: KeyEvent, page: isize, rows: usize) -> bool {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let last = rows.saturating_sub(1) as isize;
+        let mut to = |delta: isize| {
+            self.cursor = (self.cursor as isize + delta).clamp(0, last.max(0)) as usize;
+        };
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => to(1),
+            KeyCode::Char('k') | KeyCode::Up => to(-1),
+            KeyCode::PageDown => to(page),
+            KeyCode::PageUp => to(-page),
+            KeyCode::Char('d') if ctrl => to(page / 2),
+            KeyCode::Char('u') if ctrl => to(-page / 2),
+            KeyCode::Char('g') | KeyCode::Home => self.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.cursor = last.max(0) as usize,
+            _ => return false,
+        }
+        true
     }
 
     pub fn ensure_visible(&mut self, height: usize) {
@@ -127,85 +152,6 @@ pub struct Hit {
 pub struct LocationsState {
     pub title: String,
     pub items: ListState<Hit>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntryKind {
-    User,
-    Agent,
-    Thought,
-    Tool,
-    System,
-    /// Progress and diagnostics from the backend: what started, stderr, what a turn cost.
-    Log,
-}
-
-#[derive(Debug, Clone)]
-pub struct Entry {
-    pub kind: EntryKind,
-    pub text: String,
-}
-
-/// What is known about one tool call, merged from its updates.
-#[derive(Debug, Clone, Default)]
-struct ToolInfo {
-    title: String,
-    kind: Option<String>,
-    status: Option<String>,
-    locations: Vec<String>,
-    output: Option<String>,
-}
-
-impl ToolInfo {
-    fn render(&self) -> String {
-        let mut line = self.title.clone();
-        if let Some(k) = &self.kind {
-            line = format!("{line} ({k})");
-        }
-        if let Some(s) = &self.status {
-            line = format!("{line} [{s}]");
-        }
-        if !self.locations.is_empty() {
-            line = format!("{line} {}", self.locations.join(", "));
-        }
-        if let Some(out) = &self.output {
-            let short: String = out.chars().take(600).collect();
-            line.push('\n');
-            line.push_str(&short);
-            if out.len() > short.len() {
-                line.push('…');
-            }
-        }
-        line
-    }
-}
-
-/// The agent conversation, kept on the app so it survives leaving the screen.
-#[derive(Default)]
-pub struct AgentState {
-    pub entries: Vec<Entry>,
-    pub scroll: usize,
-    /// Keep the view at the bottom as text streams in.
-    pub follow: bool,
-    pub permission: Option<(Value, String, Vec<PermissionOption>)>,
-    /// Tool call id to the entry showing it, for status updates.
-    tools: HashMap<String, (usize, ToolInfo)>,
-    pub status: String,
-    pub show_thoughts: bool,
-    pub show_log: bool,
-    /// What the backend says it is doing right now.
-    pub phase: String,
-    /// When the agent started starting; cleared once it is connected.
-    pub start_began: Option<Instant>,
-    /// When the running turn was sent.
-    pub turn_started: Option<Instant>,
-    /// When the backend last said anything, to show a long silence for what it is.
-    pub last_event: Option<Instant>,
-    /// Tool calls seen in the running turn.
-    pub turn_tools: usize,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cost_usd: Option<f64>,
 }
 
 pub enum Screen {
@@ -286,14 +232,8 @@ pub struct App {
     jumps: Vec<(String, usize, usize)>,
     /// A `g` was pressed and the next key completes the chord.
     pending_g: bool,
-    pub agent: Option<Agent>,
-    /// The agent is starting on another thread; the result arrives here.
-    agent_starting: Option<Receiver<Result<Agent>>>,
-    pub agent_state: AgentState,
-    /// A prompt sent before the agent finished starting.
-    queued_prompt: Option<(String, Vec<(String, String)>)>,
-    /// What the configured agent is called, found out once: the `auto` kind probes PATH.
-    agent_label: Option<String>,
+    /// The agent panel: the conversation, and the agent having it.
+    pub agent: agent_panel::Panel,
 }
 
 impl App {
@@ -324,16 +264,7 @@ impl App {
             last_deleted: None,
             jumps: Vec::new(),
             pending_g: false,
-            agent: None,
-            agent_starting: None,
-            agent_state: AgentState {
-                follow: true,
-                show_log: true,
-                status: "not started".into(),
-                ..AgentState::default()
-            },
-            queued_prompt: None,
-            agent_label: None,
+            agent: agent_panel::Panel::new(),
         };
         if let Some(path) = open {
             app.tree.select(&path);
@@ -622,22 +553,11 @@ impl App {
         let Screen::Locations(state) = self.screens.last_mut().expect("screen") else {
             return;
         };
+        if state.items.handle_nav(key, height) {
+            return;
+        }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
-            KeyCode::Char('j') | KeyCode::Down => state.items.move_by(1),
-            KeyCode::Char('k') | KeyCode::Up => state.items.move_by(-1),
-            KeyCode::PageDown => state.items.move_by(height),
-            KeyCode::PageUp => state.items.move_by(-height),
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                state.items.move_by(height / 2)
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                state.items.move_by(-height / 2)
-            }
-            KeyCode::Char('g') | KeyCode::Home => state.items.cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => {
-                state.items.cursor = state.items.items.len().saturating_sub(1)
-            }
             KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('l') => {
                 if let Some(hit) = state.items.current().cloned() {
                     self.push_jump();
@@ -648,351 +568,6 @@ impl App {
         }
     }
 
-    // ----- agent -----------------------------------------------------------------------------
-
-    /// Starts the configured agent on another thread; `tick` collects the result.
-    fn ensure_agent(&mut self) {
-        if self.agent.is_some() || self.agent_starting.is_some() {
-            return;
-        }
-        let config = self.session.config.agent.clone();
-        let root = self.session.root().to_path_buf();
-        let description = format!("starting {}", self.agent_label());
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(crate::agent::spawn(&config, &root));
-        });
-        self.agent_starting = Some(rx);
-        self.agent_state.status = "starting".into();
-        self.agent_state.start_began = Some(Instant::now());
-        self.system_entry(description);
-    }
-
-    /// Bookkeeping for a prompt that was just sent.
-    fn begin_turn(&mut self) {
-        let state = &mut self.agent_state;
-        state.status = "working".into();
-        state.phase = "prompt sent".into();
-        state.turn_started = Some(Instant::now());
-        state.last_event = Some(Instant::now());
-        state.turn_tools = 0;
-    }
-
-    /// One line of progress for the title and the status bar: the phase, how long the turn
-    /// has run, how long the backend has been silent, tool calls so far. `None` when idle.
-    pub fn agent_progress(&self) -> Option<String> {
-        let state = &self.agent_state;
-        if let Some(t) = state.start_began {
-            return Some(format!("starting · {}s", t.elapsed().as_secs()));
-        }
-        let busy = self.agent.as_ref().is_some_and(|a| a.busy());
-        if !busy && state.permission.is_none() {
-            return None;
-        }
-        let mut parts = Vec::new();
-        if state.permission.is_some() {
-            parts.push("waiting for permission".to_string());
-        } else if !state.phase.is_empty() {
-            parts.push(state.phase.clone());
-        }
-        if let Some(t) = state.turn_started {
-            parts.push(format!("{}s", t.elapsed().as_secs()));
-        }
-        if let Some(t) = state.last_event {
-            let quiet = t.elapsed().as_secs();
-            if quiet >= 5 && state.permission.is_none() {
-                parts.push(format!("silent for {quiet}s"));
-            }
-        }
-        if state.turn_tools > 0 {
-            parts.push(format!(
-                "{} tool call{}",
-                state.turn_tools,
-                if state.turn_tools == 1 { "" } else { "s" }
-            ));
-        }
-        Some(parts.join(" · "))
-    }
-
-    /// `12.3k in / 1.1k out · $0.21` once the backend has reported any usage.
-    pub fn agent_usage(&self) -> Option<String> {
-        let state = &self.agent_state;
-        if state.input_tokens == 0 && state.output_tokens == 0 && state.cost_usd.is_none() {
-            return None;
-        }
-        let mut text = format!(
-            "{} in / {} out",
-            crate::claude::count(state.input_tokens),
-            crate::claude::count(state.output_tokens)
-        );
-        if let Some(cost) = state.cost_usd {
-            text.push_str(&format!(" · ${cost:.2}"));
-        }
-        Some(text)
-    }
-
-    /// The configured agent's name for titles and hints, computed on first use.
-    pub fn agent_label(&mut self) -> String {
-        if self.agent_label.is_none() {
-            self.agent_label = Some(self.session.config.agent.label());
-        }
-        self.agent_label.clone().unwrap_or_default()
-    }
-
-    fn system_entry(&mut self, text: impl Into<String>) {
-        self.agent_state.entries.push(Entry {
-            kind: EntryKind::System,
-            text: text.into(),
-        });
-    }
-
-    pub fn open_agent(&mut self) {
-        self.ensure_agent();
-        if !matches!(self.screen(), Screen::Agent) {
-            self.screens.push(Screen::Agent);
-        }
-        self.agent_state.follow = true;
-    }
-
-    /// Sends `text` (with embedded `context`) to the agent, starting it first if needed.
-    pub fn ask_agent(&mut self, text: String, context: Vec<(String, String)>) {
-        self.agent_state.entries.push(Entry {
-            kind: EntryKind::User,
-            text: text.clone(),
-        });
-        match &mut self.agent {
-            Some(agent) => {
-                if let Err(e) = agent.prompt(&text, &context) {
-                    let msg = format!("{e:#}");
-                    self.system_entry(msg);
-                } else {
-                    self.begin_turn();
-                }
-            }
-            None => {
-                self.queued_prompt = Some((text, context));
-                self.ensure_agent();
-            }
-        }
-        self.open_agent();
-    }
-
-    /// True while there is agent activity worth polling quickly for.
-    pub fn agent_active(&self) -> bool {
-        self.agent_starting.is_some() || self.agent.as_ref().is_some_and(|a| a.busy())
-    }
-
-    /// Collects agent start-up results and events. Returns whether anything changed.
-    pub fn tick(&mut self) -> bool {
-        let mut changed = false;
-        if let Some(rx) = &self.agent_starting {
-            match rx.try_recv() {
-                Ok(Ok(agent)) => {
-                    self.agent_starting = None;
-                    let name = agent.name().to_string();
-                    self.agent = Some(agent);
-                    self.agent_state.status = "idle".into();
-                    self.agent_state.start_began = None;
-                    self.system_entry(format!("connected to {name}"));
-                    if let Some((text, context)) = self.queued_prompt.take() {
-                        let outcome = match &mut self.agent {
-                            Some(agent) => agent.prompt(&text, &context),
-                            None => Ok(()),
-                        };
-                        match outcome {
-                            Ok(()) => self.begin_turn(),
-                            Err(e) => self.system_entry(format!("{e:#}")),
-                        }
-                    }
-                    changed = true;
-                }
-                Ok(Err(e)) => {
-                    self.agent_starting = None;
-                    self.queued_prompt = None;
-                    self.agent_state.status = "failed to start".into();
-                    self.agent_state.start_began = None;
-                    self.system_entry(format!("could not start the agent: {e:#}"));
-                    changed = true;
-                }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => {
-                    self.agent_starting = None;
-                    self.agent_state.status = "failed to start".into();
-                    self.agent_state.start_began = None;
-                    changed = true;
-                }
-            }
-        }
-        let events = match &mut self.agent {
-            Some(agent) => agent.poll(),
-            None => Vec::new(),
-        };
-        for event in events {
-            self.apply_agent_event(event);
-            changed = true;
-        }
-        changed
-    }
-
-    fn apply_agent_event(&mut self, event: AgentEvent) {
-        let state = &mut self.agent_state;
-        state.last_event = Some(Instant::now());
-        match event {
-            AgentEvent::Text { role, text } => {
-                let kind = match role {
-                    Role::Agent => EntryKind::Agent,
-                    Role::Thought => EntryKind::Thought,
-                    Role::User => EntryKind::User,
-                };
-                match state.entries.last_mut() {
-                    Some(last) if last.kind == kind && kind != EntryKind::User => {
-                        last.text.push_str(&text)
-                    }
-                    _ => state.entries.push(Entry { kind, text }),
-                }
-            }
-            AgentEvent::ToolCall {
-                id,
-                title,
-                kind,
-                status,
-                locations,
-                output,
-            } => {
-                if !state.tools.contains_key(&id) {
-                    state.entries.push(Entry {
-                        kind: EntryKind::Tool,
-                        text: String::new(),
-                    });
-                    let i = state.entries.len() - 1;
-                    state.tools.insert(id.clone(), (i, ToolInfo::default()));
-                    state.turn_tools += 1;
-                }
-                let (idx, info) = state.tools.get_mut(&id).expect("present");
-                if let Some(t) = title {
-                    info.title = t;
-                }
-                if kind.is_some() {
-                    info.kind = kind;
-                }
-                if status.is_some() {
-                    info.status = status;
-                }
-                if !locations.is_empty() {
-                    info.locations = locations;
-                }
-                if output.is_some() {
-                    info.output = output;
-                }
-                state.entries[*idx].text = info.render();
-            }
-            AgentEvent::Plan { entries } => {
-                let text = entries
-                    .iter()
-                    .map(|(c, s)| format!("[{s}] {c}"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                state.entries.push(Entry {
-                    kind: EntryKind::System,
-                    text: format!("plan:\n{text}"),
-                });
-            }
-            AgentEvent::Permission {
-                request_id,
-                title,
-                details,
-                options,
-            } => {
-                let names: Vec<String> = options
-                    .iter()
-                    .enumerate()
-                    .map(|(i, o)| format!("{} {}", i + 1, o.name))
-                    .collect();
-                // The whole of what is being approved goes in the transcript: the bar below
-                // has room for one line, and a command's second line is where something
-                // unwanted would hide.
-                let full = match &details {
-                    Some(d) if d.trim() != title.trim() => format!("permission: {title}\n{d}"),
-                    _ => format!("permission: {title}"),
-                };
-                state.entries.push(Entry {
-                    kind: EntryKind::System,
-                    text: format!("{full}\n({})", names.join("  ")),
-                });
-                state.permission = Some((request_id, title, options));
-                state.status = "waiting for permission".into();
-            }
-            AgentEvent::TurnDone { stop_reason } => {
-                state.status = if stop_reason == "end_turn" {
-                    "idle".into()
-                } else {
-                    format!("stopped: {stop_reason}")
-                };
-                state.tools.clear();
-                state.phase.clear();
-                state.turn_started = None;
-            }
-            AgentEvent::Error { message } => {
-                state.status = "error".into();
-                state.entries.push(Entry {
-                    kind: EntryKind::System,
-                    text: format!("error: {message}"),
-                });
-            }
-            AgentEvent::Stderr { text } => state.entries.push(Entry {
-                kind: EntryKind::Log,
-                text: format!("stderr: {text}"),
-            }),
-            AgentEvent::Log { text } => state.entries.push(Entry {
-                kind: EntryKind::Log,
-                text,
-            }),
-            AgentEvent::Status { text } => state.phase = text,
-            AgentEvent::Usage {
-                input_tokens,
-                output_tokens,
-                cost_usd,
-            } => {
-                state.input_tokens += input_tokens;
-                state.output_tokens += output_tokens;
-                if cost_usd.is_some() {
-                    state.cost_usd = cost_usd;
-                }
-            }
-            AgentEvent::Exited { message } => {
-                state.status = "exited".into();
-                state.permission = None;
-                state.phase.clear();
-                state.turn_started = None;
-                state.entries.push(Entry {
-                    kind: EntryKind::System,
-                    text: message,
-                });
-                self.agent = None;
-            }
-        }
-    }
-
-    fn answer_permission(&mut self, choice: Option<usize>) {
-        let Some((id, _, options)) = self.agent_state.permission.take() else {
-            return;
-        };
-        let option = choice.and_then(|i| options.get(i));
-        let Some(agent) = &mut self.agent else {
-            return;
-        };
-        let outcome = agent.respond_permission(&id, option.map(|o| o.option_id.as_str()));
-        let label = option
-            .map(|o| o.name.clone())
-            .unwrap_or_else(|| "cancelled".into());
-        self.agent_state.status = "working".into();
-        match outcome {
-            Ok(()) => self.system_entry(format!("answered: {label}")),
-            Err(e) => self.system_entry(format!("{e:#}")),
-        }
-    }
-
-    /// `a` outside the agent screen: a prompt about what is under the cursor.
     fn ask_about_context(&mut self) {
         match self.screen() {
             Screen::Review(r) => {
@@ -1069,104 +644,41 @@ impl App {
         }
     }
 
-    fn handle_agent_key(&mut self, key: KeyEvent) {
-        let height = self.measured.main_height.max(1);
-        match key.code {
-            KeyCode::Char('q') => self.pop_screen(),
-            KeyCode::Esc => {
-                if self.agent.as_ref().is_some_and(|a| a.busy()) {
-                    if let Some(agent) = &mut self.agent {
-                        let outcome = agent.cancel();
-                        self.report(outcome);
-                        self.info("cancelling");
-                    }
-                } else {
-                    self.pop_screen();
-                }
-            }
-            KeyCode::Char('i') | KeyCode::Char('a') | KeyCode::Enter => {
-                if self.agent_state.permission.is_some() {
-                    self.info("answer the permission request first (1-9, y, n)");
-                    return;
-                }
-                self.prompt = Some(Prompt::new(
-                    PromptKind::Agent {
-                        context: Vec::new(),
-                    },
-                    "ask the agent",
-                    "",
-                ));
-            }
-            KeyCode::Char(c @ '1'..='9') if self.agent_state.permission.is_some() => {
-                self.answer_permission(Some(c as usize - '1' as usize));
-            }
-            KeyCode::Char('y') if self.agent_state.permission.is_some() => {
-                let i = self
-                    .agent_state
-                    .permission
-                    .as_ref()
-                    .and_then(|(_, _, o)| o.iter().position(|x| x.kind.starts_with("allow")));
-                self.answer_permission(i);
-            }
-            KeyCode::Char('n') if self.agent_state.permission.is_some() => {
-                let i = self
-                    .agent_state
-                    .permission
-                    .as_ref()
-                    .and_then(|(_, _, o)| o.iter().position(|x| x.kind.starts_with("reject")));
-                self.answer_permission(i);
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.agent_state.scroll += 1;
-                self.agent_state.follow = false;
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.agent_state.scroll = self.agent_state.scroll.saturating_sub(1);
-                self.agent_state.follow = false;
-            }
-            KeyCode::PageDown | KeyCode::Char('d')
-                if key.code == KeyCode::PageDown
-                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.agent_state.scroll += height / 2;
-                self.agent_state.follow = false;
-            }
-            KeyCode::PageUp | KeyCode::Char('u')
-                if key.code == KeyCode::PageUp || key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.agent_state.scroll = self.agent_state.scroll.saturating_sub(height / 2);
-                self.agent_state.follow = false;
-            }
-            KeyCode::Char('G') | KeyCode::End => self.agent_state.follow = true,
-            KeyCode::Char('g') | KeyCode::Home => {
-                self.agent_state.scroll = 0;
-                self.agent_state.follow = false;
-            }
-            KeyCode::Char('t') => self.agent_state.show_thoughts = !self.agent_state.show_thoughts,
-            KeyCode::Char('l') => self.agent_state.show_log = !self.agent_state.show_log,
-            KeyCode::Char('C') => {
-                self.agent_state.entries.clear();
-                self.agent_state.tools.clear();
-                self.agent_state.scroll = 0;
-            }
-            KeyCode::Char('R') => {
-                self.agent = None;
-                self.agent_state.permission = None;
-                self.system_entry("restarting");
-                self.ensure_agent();
-            }
-            KeyCode::Char('A') => {
-                let text = prompts::address_all().to_string();
-                self.prompt = Some(Prompt::new(
-                    PromptKind::Agent {
-                        context: Vec::new(),
-                    },
-                    "ask the agent",
-                    &text,
-                ));
-            }
-            _ => {}
+    // ----- agent -----------------------------------------------------------------------------
+
+    /// Brings up the agent panel, starting the agent if it is not running.
+    pub fn open_agent(&mut self) {
+        let config = self.session.config.agent.clone();
+        let root = self.session.root().to_path_buf();
+        self.agent.start(&config, &root);
+        if !matches!(self.screen(), Screen::Agent) {
+            self.screens.push(Screen::Agent);
         }
+        self.agent.follow = true;
+    }
+
+    /// Sends `text` to the agent and shows the panel.
+    pub fn ask_agent(&mut self, text: String, context: Vec<(String, String)>) {
+        let config = self.session.config.agent.clone();
+        let root = self.session.root().to_path_buf();
+        self.agent.ask(text, context, &config, &root);
+        self.open_agent();
+    }
+
+    /// True while there is agent activity worth polling quickly for.
+    pub fn agent_active(&self) -> bool {
+        self.agent.active()
+    }
+
+    /// Collects the agent's events. Returns whether anything changed.
+    pub fn tick(&mut self) -> bool {
+        self.agent.tick()
+    }
+
+    /// The configured agent's name, for a title or a hint.
+    pub fn agent_label(&mut self) -> String {
+        let config = self.session.config.agent.clone();
+        self.agent.label(&config)
     }
 
     // ----- screens ---------------------------------------------------------------------------
@@ -1195,46 +707,47 @@ impl App {
             focus_files: false,
             exhausted,
         };
-        self.load_commit_files(&mut state);
+        let outcome = Self::load_commit_files(&mut self.session, &mut state);
+        self.report(outcome);
         self.screens.push(Screen::Log(state));
     }
 
-    fn load_commit_files(&mut self, state: &mut LogState) {
+    /// The files of the commit under the cursor. Takes the session rather than the whole
+    /// app, so a caller holding the screen it belongs to can still call it: the two are
+    /// different fields.
+    fn load_commit_files(session: &mut Session, state: &mut LogState) -> Result<()> {
         let Some(commit) = state.commits.current() else {
-            return;
+            return Ok(());
         };
         if state.files_of.as_deref() == Some(commit.hash.as_str()) {
-            return;
+            return Ok(());
         }
         let hash = commit.hash.clone();
-        match self.session.commit_files(&hash) {
-            Ok(mut files) => {
-                if let Some(path) = &state.path {
-                    // Put the file whose history this is first.
-                    files.sort_by_key(|f| f.path != *path);
-                }
-                state.files = ListState::new(files);
-                state.files_of = Some(hash);
-            }
-            Err(e) => self.error(format!("{e:#}")),
+        let mut files = session.commit_files(&hash)?;
+        if let Some(path) = &state.path {
+            // Put the file whose history this is first.
+            files.sort_by_key(|f| f.path != *path);
         }
+        state.files = ListState::new(files);
+        state.files_of = Some(hash);
+        Ok(())
     }
 
-    fn load_more_commits(&mut self, state: &mut LogState) {
+    /// The next page of commits, when the cursor has reached the end of what is loaded.
+    fn load_more_commits(session: &mut Session, state: &mut LogState) -> Result<()> {
         if state.exhausted {
-            return;
+            return Ok(());
         }
         let skip = state.commits.items.len();
         let more = match &state.path {
-            Some(p) => self.session.file_log(p, skip, LOG_PAGE),
-            None => self.session.log(skip, LOG_PAGE),
+            Some(p) => session.file_log(p, skip, LOG_PAGE)?,
+            None => session.log(skip, LOG_PAGE)?,
         };
-        if let Some(more) = self.report(more) {
-            if more.len() < LOG_PAGE {
-                state.exhausted = true;
-            }
-            state.commits.items.extend(more);
+        if more.len() < LOG_PAGE {
+            state.exhausted = true;
         }
+        state.commits.items.extend(more);
+        Ok(())
     }
 
     fn push_changes(&mut self, target: DiffTarget) {
@@ -1316,7 +829,10 @@ impl App {
                     .then_with(|| a.line.cmp(&b.line))
             });
             r.items = ListState::new(items);
-            r.items.cursor = cursor.min(r.items.items.len().saturating_sub(1));
+            // The cursor indexes the rows on screen, which is fewer than the items when
+            // completed comments are hidden.
+            let visible = Self::review_visible(r).len();
+            r.items.cursor = cursor.min(visible.saturating_sub(1));
         }
     }
 
@@ -1861,7 +1377,7 @@ impl App {
             }
             KeyCode::Char('i') if !matches!(self.screen(), Screen::Agent) => {
                 self.open_agent();
-                if self.agent_state.permission.is_none() {
+                if self.agent.permission.is_none() {
                     self.prompt = Some(Prompt::new(
                         PromptKind::Agent {
                             context: Vec::new(),
@@ -1917,7 +1433,25 @@ impl App {
             Screen::Review(_) => self.handle_review_key(key),
             Screen::Notes(_) => self.handle_notes_key(key),
             Screen::Locations(_) => self.handle_locations_key(key),
-            Screen::Agent => self.handle_agent_key(key),
+            Screen::Agent => {
+                let height = self.measured.main_height;
+                let config = self.session.config.agent.clone();
+                let root = self.session.root().to_path_buf();
+                match self.agent.handle_key(key, height, &config, &root) {
+                    agent_panel::Action::Nothing => {}
+                    agent_panel::Action::Close => self.pop_screen(),
+                    agent_panel::Action::Say(text) => self.info(text),
+                    agent_panel::Action::Ask(text) => {
+                        self.prompt = Some(Prompt::new(
+                            PromptKind::Agent {
+                                context: Vec::new(),
+                            },
+                            "ask the agent",
+                            &text,
+                        ));
+                    }
+                }
+            }
         }
     }
 
@@ -2163,162 +1697,120 @@ impl App {
 
     fn handle_log_key(&mut self, key: KeyEvent) {
         let height = self.measured.list_height.max(1) as isize;
+        let mut load_more = false;
         let Screen::Log(state) = self.screens.last_mut().expect("screen") else {
             return;
         };
-        let mut state_owned = None;
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => {
-                if state.focus_files {
-                    state.focus_files = false;
-                } else {
-                    self.pop_screen();
-                }
-                return;
-            }
-            KeyCode::Tab => {
-                if !state.files.items.is_empty() {
-                    state.focus_files = !state.focus_files;
-                }
-                return;
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                if state.focus_files {
-                    state.files.move_by(1);
-                } else {
-                    let at_end = state.commits.cursor + 1 >= state.commits.items.len();
-                    state.commits.move_by(1);
-                    if at_end {
-                        state_owned = Some(self.screens.pop());
+        // One of the two lists has the keys; which one is what Tab switches.
+        let moved = if state.focus_files {
+            state.files.handle_nav(key, height)
+        } else {
+            let was_at_end = state.commits.cursor + 1 >= state.commits.items.len();
+            let moved = state.commits.handle_nav(key, height);
+            // Only a key that goes down can reach past the end and want another page.
+            load_more = moved
+                && was_at_end
+                && matches!(
+                    key.code,
+                    KeyCode::Char('j')
+                        | KeyCode::Down
+                        | KeyCode::Char('G')
+                        | KeyCode::End
+                        | KeyCode::PageDown
+                );
+            moved
+        };
+        if !moved {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    if state.focus_files {
+                        state.focus_files = false;
+                    } else {
+                        self.pop_screen();
                     }
+                    return;
                 }
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                if state.focus_files {
-                    state.files.move_by(-1);
-                } else {
-                    state.commits.move_by(-1);
+                KeyCode::Tab => {
+                    if !state.files.items.is_empty() {
+                        state.focus_files = !state.focus_files;
+                    }
+                    return;
                 }
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if state.focus_files {
-                    state.files.move_by(height / 2)
-                } else {
-                    state.commits.move_by(height / 2)
+                KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                    if state.focus_files || state.path.is_some() {
+                        let Some(commit) = state.commits.current() else {
+                            return;
+                        };
+                        let hash = commit.hash.clone();
+                        let siblings = state.files.items.clone();
+                        let index = if state.path.is_some() && !state.focus_files {
+                            0
+                        } else {
+                            state.files.cursor
+                        };
+                        self.push_diff(DiffTarget::Commit { hash }, siblings, index);
+                    } else if !state.files.items.is_empty() {
+                        state.focus_files = true;
+                    }
+                    return;
                 }
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if state.focus_files {
-                    state.files.move_by(-height / 2)
-                } else {
-                    state.commits.move_by(-height / 2)
-                }
-            }
-            KeyCode::PageDown => {
-                if state.focus_files {
-                    state.files.move_by(height)
-                } else {
-                    state.commits.move_by(height)
-                }
-            }
-            KeyCode::PageUp => {
-                if state.focus_files {
-                    state.files.move_by(-height)
-                } else {
-                    state.commits.move_by(-height)
-                }
-            }
-            KeyCode::Char('g') | KeyCode::Home => {
-                if state.focus_files {
-                    state.files.cursor = 0
-                } else {
-                    state.commits.cursor = 0
-                }
-            }
-            KeyCode::Char('G') | KeyCode::End => {
-                if state.focus_files {
-                    state.files.cursor = state.files.items.len().saturating_sub(1);
-                } else {
-                    state.commits.cursor = state.commits.items.len().saturating_sub(1);
-                    state_owned = Some(self.screens.pop());
-                }
-            }
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
-                if state.focus_files || state.path.is_some() {
+                KeyCode::Char('w') => {
+                    // The file at this commit against the working tree.
                     let Some(commit) = state.commits.current() else {
                         return;
                     };
                     let hash = commit.hash.clone();
-                    let siblings = state.files.items.clone();
-                    let index = if state.path.is_some() && !state.focus_files {
-                        0
+                    let file = if state.focus_files {
+                        state.files.current().cloned()
                     } else {
-                        state.files.cursor
+                        state.path.as_ref().map(|p| ChangedFile {
+                            status: FileStatus::Modified,
+                            path: p.clone(),
+                            old_path: None,
+                        })
                     };
-                    self.push_diff(DiffTarget::Commit { hash }, siblings, index);
-                } else if !state.files.items.is_empty() {
-                    state.focus_files = true;
+                    let Some(file) = file else {
+                        self.info("pick a file first");
+                        return;
+                    };
+                    self.push_diff(
+                        DiffTarget::Revisions {
+                            from: hash,
+                            to: String::new(),
+                        },
+                        vec![file],
+                        0,
+                    );
+                    return;
                 }
-                return;
-            }
-            KeyCode::Char('w') => {
-                // The file at this commit against the working tree.
-                let Some(commit) = state.commits.current() else {
-                    return;
-                };
-                let hash = commit.hash.clone();
-                let file = if state.focus_files {
-                    state.files.current().cloned()
-                } else {
-                    state.path.as_ref().map(|p| ChangedFile {
-                        status: FileStatus::Modified,
-                        path: p.clone(),
-                        old_path: None,
-                    })
-                };
-                let Some(file) = file else {
-                    self.info("pick a file first");
-                    return;
-                };
-                self.push_diff(
-                    DiffTarget::Revisions {
-                        from: hash,
-                        to: String::new(),
-                    },
-                    vec![file],
-                    0,
-                );
-                return;
-            }
-            KeyCode::Char('H') => {
-                if state.focus_files {
-                    if let Some(f) = state.files.current() {
-                        let path = f.path.clone();
-                        self.push_log(Some(path));
+                KeyCode::Char('H') => {
+                    if state.focus_files {
+                        if let Some(f) = state.files.current() {
+                            let path = f.path.clone();
+                            self.push_log(Some(path));
+                        }
                     }
+                    return;
                 }
-                return;
+                _ => return,
             }
-            _ => return,
         }
-        // Selection moved: reload the file list and, at the end of the list, the next page.
-        match state_owned {
-            Some(Some(Screen::Log(mut st))) => {
-                self.load_more_commits(&mut st);
-                self.load_commit_files(&mut st);
-                self.screens.push(Screen::Log(st));
-            }
-            Some(other) => {
-                if let Some(s) = other {
-                    self.screens.push(s);
+        // What is under the cursor decides which files are shown, and reaching the end of
+        // the list asks git for the next page. Both want the session, which is a different
+        // field from the screen stack, so neither has to take the screen apart to get it.
+        let mut failed = None;
+        if let Some(Screen::Log(state)) = self.screens.last_mut() {
+            if load_more {
+                if let Err(e) = Self::load_more_commits(&mut self.session, state) {
+                    failed = Some(e);
                 }
             }
-            None => {
-                if let Some(Screen::Log(mut st)) = self.screens.pop() {
-                    self.load_commit_files(&mut st);
-                    self.screens.push(Screen::Log(st));
-                }
+            if let Err(e) = Self::load_commit_files(&mut self.session, state) {
+                failed = failed.or(Some(e));
             }
+        }
+        if let Some(e) = failed {
+            self.error(format!("{e:#}"));
         }
     }
 
@@ -2327,16 +1819,11 @@ impl App {
         let Screen::Changes(state) = self.screens.last_mut().expect("screen") else {
             return;
         };
+        if state.files.handle_nav(key, height) {
+            return;
+        }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
-            KeyCode::Char('j') | KeyCode::Down => state.files.move_by(1),
-            KeyCode::Char('k') | KeyCode::Up => state.files.move_by(-1),
-            KeyCode::PageDown => state.files.move_by(height),
-            KeyCode::PageUp => state.files.move_by(-height),
-            KeyCode::Char('g') | KeyCode::Home => state.files.cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => {
-                state.files.cursor = state.files.items.len().saturating_sub(1)
-            }
             KeyCode::Char('s') => {
                 let target = if state.target == DiffTarget::Staged {
                     DiffTarget::Working
@@ -2457,19 +1944,11 @@ impl App {
             return;
         };
         let visible = Self::review_visible(state).len();
-        let clamp = |c: isize| c.clamp(0, visible.saturating_sub(1) as isize) as usize;
+        if state.items.handle_nav_within(key, height, visible) {
+            return;
+        }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
-            KeyCode::Char('j') | KeyCode::Down => {
-                state.items.cursor = clamp(state.items.cursor as isize + 1)
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                state.items.cursor = clamp(state.items.cursor as isize - 1)
-            }
-            KeyCode::PageDown => state.items.cursor = clamp(state.items.cursor as isize + height),
-            KeyCode::PageUp => state.items.cursor = clamp(state.items.cursor as isize - height),
-            KeyCode::Char('g') | KeyCode::Home => state.items.cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => state.items.cursor = clamp(isize::MAX / 2),
             KeyCode::Char('s') => {
                 state.show_completed = !state.show_completed;
                 state.items.cursor = 0;
@@ -2514,16 +1993,11 @@ impl App {
         let Screen::Notes(state) = self.screens.last_mut().expect("screen") else {
             return;
         };
+        if state.items.handle_nav(key, height) {
+            return;
+        }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
-            KeyCode::Char('j') | KeyCode::Down => state.items.move_by(1),
-            KeyCode::Char('k') | KeyCode::Up => state.items.move_by(-1),
-            KeyCode::PageDown => state.items.move_by(height),
-            KeyCode::PageUp => state.items.move_by(-height),
-            KeyCode::Char('g') | KeyCode::Home => state.items.cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => {
-                state.items.cursor = state.items.items.len().saturating_sub(1)
-            }
             KeyCode::Char('d') => self.delete_note(),
             KeyCode::Char('e') => self.edit_note(),
             KeyCode::Char('n') => {
@@ -2570,9 +2044,8 @@ impl App {
             Screen::Changes(c) => c.files.move_by(delta),
             Screen::Locations(l) => l.items.move_by(delta),
             Screen::Agent => {
-                self.agent_state.scroll =
-                    (self.agent_state.scroll as isize + delta).max(0) as usize;
-                self.agent_state.follow = false;
+                self.agent.scroll = (self.agent.scroll as isize + delta).max(0) as usize;
+                self.agent.follow = false;
             }
             Screen::Review(r) => {
                 let n = Self::review_visible(r).len();

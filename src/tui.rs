@@ -1,5 +1,6 @@
 //! The terminal front end: terminal setup, the event loop, and `$EDITOR` hand-off.
 
+pub mod agent_panel;
 pub mod app;
 pub mod prompt;
 pub mod style;
@@ -401,34 +402,34 @@ mod tests {
         press(&mut app, &[KeyCode::Enter]);
         assert!(matches!(app.screen(), Screen::Agent));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while app.agent_state.permission.is_none() && std::time::Instant::now() < deadline {
+        while app.agent.permission.is_none() && std::time::Instant::now() < deadline {
             app.tick();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(
-            app.agent_state.permission.is_some(),
+            app.agent.permission.is_some(),
             "status: {}",
-            app.agent_state.status
+            app.agent.status
         );
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("agent asks: Read a.rs"));
         assert!(screen.contains("what is this?"));
         press(&mut app, &[KeyCode::Char('1')]);
-        while app.agent_state.status != "idle" && std::time::Instant::now() < deadline {
+        while app.agent.status != "idle" && std::time::Instant::now() < deadline {
             app.tick();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("Hello from fake, 1 resources"), "{screen}");
         assert!(screen.contains("Read a.rs (read) [completed]"));
-        assert_eq!(app.agent_state.status, "idle");
-        assert!(app.agent_progress().is_none());
+        assert_eq!(app.agent.status, "idle");
+        assert!(app.agent.progress().is_none());
         // The backend's log lines are in the transcript and `l` hides them.
         let logs: Vec<&str> = app
-            .agent_state
+            .agent
             .entries
             .iter()
-            .filter(|e| e.kind == crate::tui::app::EntryKind::Log)
+            .filter(|e| e.kind == crate::tui::agent_panel::EntryKind::Log)
             .map(|e| e.text.as_str())
             .collect();
         assert!(
@@ -453,40 +454,35 @@ mod tests {
         // Scrolling up stops following; scrolling back to the bottom resumes it.
         term = Terminal::new(TestBackend::new(100, 8)).unwrap();
         draw(&mut term, &mut app);
-        assert!(app.agent_state.follow);
-        let bottom = app.agent_state.scroll;
+        assert!(app.agent.follow);
+        let bottom = app.agent.scroll;
         assert!(bottom > 0);
         press(&mut app, &[KeyCode::Char('k')]);
         draw(&mut term, &mut app);
-        assert!(!app.agent_state.follow);
-        assert_eq!(app.agent_state.scroll, bottom - 1);
+        assert!(!app.agent.follow);
+        assert_eq!(app.agent.scroll, bottom - 1);
         press(&mut app, &[KeyCode::Char('j')]);
         draw(&mut term, &mut app);
-        assert!(app.agent_state.follow);
-        assert_eq!(app.agent_state.scroll, bottom);
+        assert!(app.agent.follow);
+        assert_eq!(app.agent.scroll, bottom);
         // `R` restarts the agent from inside the panel instead of opening the review list.
         press(&mut app, &[KeyCode::Char('R')]);
         assert!(matches!(app.screen(), Screen::Agent));
-        assert!(
-            app.agent_state
-                .entries
-                .iter()
-                .any(|e| e.text == "restarting")
-        );
-        while app.agent.is_none() && std::time::Instant::now() < deadline {
+        assert!(app.agent.entries.iter().any(|e| e.text == "restarting"));
+        while !app.agent.running() && std::time::Instant::now() < deadline {
             app.tick();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(app.agent.is_some(), "restart: {}", app.agent_state.status);
+        assert!(app.agent.running(), "restart: {}", app.agent.status);
         // Escape leaves the panel when idle; the transcript is kept.
         press(&mut app, &[KeyCode::Esc]);
         assert!(matches!(app.screen(), Screen::Explorer));
-        assert!(!app.agent_state.entries.is_empty());
+        assert!(!app.agent.entries.is_empty());
         // `A` and `i` reach the panel from the explorer too; `t` inside it toggles thoughts.
         press(&mut app, &[KeyCode::Char('A')]);
         assert!(matches!(app.screen(), Screen::Agent));
         press(&mut app, &[KeyCode::Char('t')]);
-        assert!(app.agent_state.show_thoughts);
+        assert!(app.agent.show_thoughts);
         assert!(app.theme_picker.is_none());
         press(&mut app, &[KeyCode::Char('q'), KeyCode::Char('i')]);
         assert!(matches!(app.screen(), Screen::Agent));
@@ -649,6 +645,66 @@ mod tests {
         app.error("something went wrong");
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("something went wrong"), "{screen}");
+    }
+
+    /// Moving through the log reloads the file list for whatever commit is under the
+    /// cursor, and Tab hands the keys to that list.
+    #[test]
+    fn the_log_follows_the_cursor() {
+        let dir = scratch_repo();
+        let session = scratch_session(dir.path());
+        let mut app = App::new(session, None);
+        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        press(&mut app, &[KeyCode::Char('L')]);
+        assert!(matches!(app.screen(), Screen::Log(_)));
+        let screen = draw(&mut term, &mut app);
+        assert!(
+            screen.contains("second"),
+            "the newest commit first: {screen}"
+        );
+        assert!(
+            screen.contains("a.rs"),
+            "the files of that commit: {screen}"
+        );
+
+        // Down to the first commit: the file list follows.
+        press(&mut app, &[KeyCode::Char('j')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("first"), "{screen}");
+        let Screen::Log(state) = app.screen() else {
+            panic!("not the log")
+        };
+        assert_eq!(state.commits.cursor, 1);
+        assert_eq!(
+            state.files.items.len(),
+            1,
+            "the first commit added one file"
+        );
+
+        // G goes to the end, which is also where another page would be asked for.
+        press(&mut app, &[KeyCode::Char('G')]);
+        let Screen::Log(state) = app.screen() else {
+            panic!("not the log")
+        };
+        assert_eq!(state.commits.cursor, state.commits.items.len() - 1);
+        assert!(state.exhausted, "a short history is all there is");
+
+        // Tab hands the keys to the file list, and Enter opens the diff of that file.
+        press(&mut app, &[KeyCode::Tab]);
+        let Screen::Log(state) = app.screen() else {
+            panic!("not the log")
+        };
+        assert!(state.focus_files);
+        press(&mut app, &[KeyCode::Enter]);
+        assert!(matches!(app.screen(), Screen::Diff(_)), "no diff opened");
+        draw(&mut term, &mut app);
+        press(&mut app, &[KeyCode::Char('q')]);
+        assert!(matches!(app.screen(), Screen::Log(_)));
+        // q in the file list goes back to the commits, and again leaves the log.
+        press(&mut app, &[KeyCode::Char('q')]);
+        assert!(matches!(app.screen(), Screen::Log(_)), "still in the log");
+        press(&mut app, &[KeyCode::Char('q')]);
+        assert!(matches!(app.screen(), Screen::Explorer));
     }
 
     #[test]
