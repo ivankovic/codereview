@@ -126,6 +126,9 @@ table.code tr.cur-sym td.c { outline: 1px solid var(--accent); }
 #agent .entry.log { margin-bottom: 2px; }
 #agent .entry.log .body { color: var(--dim); font-family: ui-monospace, monospace; font-size: 11px; }
 #agent .progress { color: var(--accent); font-size: 12px; }
+/* A server started with --no-agent offers no way to one. */
+body.no-agent [data-view=agent], body.no-agent [data-act=ask], body.no-agent [data-act=askall],
+body.no-agent [data-act=review] { display: none !important; }
 #agent .usage { color: var(--dim); font-size: 12px; }
 #agent .compose { border-top: 1px solid var(--border); padding: 8px 12px; background: var(--panel); }
 #agent .compose textarea { min-height: 2.6em; }
@@ -168,7 +171,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 const state = {
-  repo: 0, repos: [],
+  repo: 0, repos: [], agentEnabled: true,
   view: 'explore', files: [], status: {}, pending: 0, hasCommits: true,
   tree: { collapsed: new Set(), filter: '' },
   file: null,      // { path, lines, text, comments, notes, line_ops, blame }
@@ -230,6 +233,8 @@ function applyTheme(t) {
 
 async function loadState() {
   const s = await api('/state');
+  state.agentEnabled = s.agent !== false;
+  document.body.classList.toggle('no-agent', !state.agentEnabled);
   state.files = s.files;
   state.theme = s.theme;
   const sel = $('#theme');
@@ -721,8 +726,8 @@ function applyAgentEvent(e) {
 }
 
 function startAgentPolling() {
-  if (agent.timer) return;
-  agent.timer = setInterval(() => { if (state.view === 'agent' || agent.running) agentPoll(); }, 500);
+  if (agent.timer || !state.agentEnabled) return;
+  agent.timer = setInterval(() => { if (state.agentEnabled && (state.view === 'agent' || agent.running)) agentPoll(); }, 500);
 }
 
 async function agentStart() {
@@ -772,9 +777,14 @@ async function agentSend(body) {
   } catch (err) { fail(err); }
 }
 
-function askAgent(body) { showAgent(); agentSend(body); }
+function askAgent(body) {
+  if (!state.agentEnabled) { msg('this server runs without an agent', true); return; }
+  showAgent();
+  agentSend(body);
+}
 
 function showAgent() {
+  if (!state.agentEnabled) { msg('this server runs without an agent', true); return; }
   setTabs('agent');
   startAgentPolling();
   const content = $('#content');

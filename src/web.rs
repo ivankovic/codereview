@@ -13,9 +13,9 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use axum::extract::{FromRequestParts, Query, Request, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -32,10 +32,33 @@ use crate::symbols::{Location, Symbol};
 
 const INDEX_HTML: &str = include_str!("web/index.html");
 
+/// The cookie that keeps a browser signed in, so the token is in the address bar once
+/// rather than on every request a reverse proxy logs.
+const COOKIE: &str = "codereview_token";
+
+/// How long that cookie lasts: long enough that a bookmark of the bare domain keeps
+/// working, short enough that an abandoned browser forgets.
+const COOKIE_MAX_AGE: u32 = 30 * 24 * 60 * 60;
+
+/// A token given through the environment must be worth having; a short one is a typo or a
+/// password, and both are guessable.
+const MIN_TOKEN_LEN: usize = 16;
+
+/// The page carries its own script and styles and fetches nothing else, so everything but
+/// same-origin requests can be refused.
+const CSP: &str = "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; \
+                   style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; \
+                   base-uri 'none'; form-action 'none'";
+
 #[derive(Clone)]
 struct AppState {
     repos: Arc<Vec<RepoState>>,
     token: Arc<String>,
+    /// Mark the session cookie `Secure`: set when the page is published over HTTPS.
+    secure_cookie: bool,
+    /// Whether the agent is available at all. When it is off the routes are not registered
+    /// and the page hides every way of reaching them.
+    agent: bool,
 }
 
 /// One served repository: its session and its agent.
@@ -62,6 +85,7 @@ impl RepoState {
 struct Ctx {
     repos: Arc<Vec<RepoState>>,
     index: usize,
+    agent: bool,
 }
 
 impl Deref for Ctx {
@@ -100,6 +124,7 @@ impl FromRequestParts<AppState> for Ctx {
         Ok(Ctx {
             repos: state.repos.clone(),
             index,
+            agent: state.agent,
         })
     }
 }
@@ -189,42 +214,138 @@ type ApiResult<T> = std::result::Result<Json<T>, ApiError>;
 
 /// Serves the page and the API for `sessions`, one repository each; the page switches
 /// between them.
-pub fn run(sessions: Vec<Session>, host: &str, port: u16, open_browser: bool) -> Result<()> {
+/// How to serve: where to listen, whether to open a browser, the address the page is
+/// reached at from outside, and whether the agent may run.
+pub struct Serve {
+    pub host: String,
+    pub port: u16,
+    pub open_browser: bool,
+    /// What a reverse proxy publishes, `https://review.example.com`: the URL to print, and
+    /// an HTTPS one also marks the session cookie `Secure`.
+    pub public_url: Option<String>,
+    pub agent: bool,
+}
+
+pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
     anyhow::ensure!(!sessions.is_empty(), "no repository to serve");
+    let public = match serve.public_url.as_deref() {
+        Some(url) => {
+            let url = url.trim_end_matches('/');
+            anyhow::ensure!(
+                url.starts_with("http://") || url.starts_with("https://"),
+                "--public-url must start with http:// or https://, got {url:?}"
+            );
+            Some(url.to_string())
+        }
+        None => None,
+    };
+    let token = session_token()?;
     let runtime = tokio::runtime::Runtime::new().context("tokio runtime")?;
     runtime.block_on(async {
-        let token = random_token();
         let state = AppState {
             repos: Arc::new(sessions.into_iter().map(RepoState::new).collect()),
             token: Arc::new(token.clone()),
+            secure_cookie: public.as_deref().is_some_and(|u| u.starts_with("https://")),
+            agent: serve.agent,
         };
-        let addr: SocketAddr = format!("{host}:{port}")
+        let addr: SocketAddr = format!("{}:{}", serve.host, serve.port)
             .parse()
-            .with_context(|| format!("bad address {host}:{port}"))?;
+            .with_context(|| format!("bad address {}:{}", serve.host, serve.port))?;
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .with_context(|| format!("cannot listen on {addr}"))?;
         let local = listener.local_addr()?;
         let url = format!("http://{local}/?t={token}");
-        println!("codereview web UI at {url}");
-        if !local.ip().is_loopback() {
+        match &public {
+            Some(public) => {
+                println!("codereview web UI at {public}/?t={token}");
+                println!("listening on {local}");
+            }
+            None => println!("codereview web UI at {url}"),
+        }
+        if !serve.agent {
+            println!("the agent is off; its routes are not served");
+        }
+        if !local.ip().is_loopback() && public.is_none() {
             eprintln!(
                 "warning: listening on {}; anyone who can reach it can read this repository",
                 local.ip()
             );
         }
-        if open_browser {
+        if serve.open_browser {
             if let Err(e) = open::that(&url) {
                 eprintln!("could not open a browser: {e}");
             }
         }
         axum::serve(listener, router(state))
-            .with_graceful_shutdown(async {
-                let _ = tokio::signal::ctrl_c().await;
-            })
+            .with_graceful_shutdown(shutdown_signal())
             .await
             .context("server")
     })
+}
+
+/// Ctrl-C, and SIGTERM as well, which is how a service manager asks a server to stop.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = ctrl_c => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(_) => ctrl_c.await,
+        }
+    }
+    #[cfg(not(unix))]
+    ctrl_c.await;
+}
+
+/// The token this run accepts: `CODEREVIEW_TOKEN` when it is set, so a proxied deployment
+/// keeps one URL across restarts, otherwise a fresh random one.
+fn session_token() -> Result<String> {
+    match std::env::var("CODEREVIEW_TOKEN") {
+        Ok(token) => {
+            let token = token.trim().to_string();
+            anyhow::ensure!(
+                token.len() >= MIN_TOKEN_LEN,
+                "CODEREVIEW_TOKEN must be at least {MIN_TOKEN_LEN} characters; \
+                 `openssl rand -hex 32` makes a good one"
+            );
+            Ok(token)
+        }
+        Err(_) => Ok(random_token()),
+    }
+}
+
+/// Compares a token without stopping at the first wrong byte, so timing cannot be used to
+/// guess it one byte at a time. Its length is not a secret.
+fn token_eq(given: &str, want: &str) -> bool {
+    let (given, want) = (given.as_bytes(), want.as_bytes());
+    given.len() == want.len()
+        && given
+            .iter()
+            .zip(want)
+            .fold(0u8, |differences, (a, b)| differences | (a ^ b))
+            == 0
+}
+
+/// The session cookie's value, when the request carries one.
+fn cookie_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .find_map(|pair| {
+            let (name, value) = pair.split_once('=')?;
+            (name.trim() == COOKIE).then_some(value.trim())
+        })
 }
 
 fn random_token() -> String {
@@ -235,7 +356,7 @@ fn random_token() -> String {
 }
 
 fn router(state: AppState) -> Router {
-    let api = Router::new()
+    let mut api = Router::new()
         .route("/repos", get(get_repos))
         .route("/state", get(get_state))
         .route("/file", get(get_file))
@@ -259,17 +380,21 @@ fn router(state: AppState) -> Router {
         .route("/definitions", get(get_definitions))
         .route("/references", get(get_references))
         .route("/symbol_search", get(get_symbol_search))
-        .route("/identifier", get(get_identifier))
-        .route("/agent/start", post(post_agent_start))
-        .route("/agent/events", get(get_agent_events))
-        .route("/agent/prompt", post(post_agent_prompt))
-        .route("/agent/permission", post(post_agent_permission))
-        .route("/agent/cancel", post(post_agent_cancel))
-        .route("/agent/stop", post(post_agent_stop))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
+        .route("/identifier", get(get_identifier));
+    if state.agent {
+        api = api
+            .route("/agent/start", post(post_agent_start))
+            .route("/agent/events", get(get_agent_events))
+            .route("/agent/prompt", post(post_agent_prompt))
+            .route("/agent/permission", post(post_agent_permission))
+            .route("/agent/cancel", post(post_agent_cancel))
+            .route("/agent/stop", post(post_agent_stop));
+    }
+    let api = api.route_layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
         .route("/", get(index))
         .nest("/api", api)
+        .layer(middleware::from_fn(security_headers))
         .with_state(state)
 }
 
@@ -279,11 +404,14 @@ async fn require_token(
     req: Request,
     next: Next,
 ) -> Response {
+    // The API takes the token in a header, never the cookie: a page on another site cannot
+    // set that header without a preflight this server never answers, so it cannot act as
+    // the signed-in browser.
     let ok = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|t| t == state.token.as_str());
+        .is_some_and(|t| token_eq(t, &state.token));
     if ok {
         next.run(req).await
     } else {
@@ -291,21 +419,73 @@ async fn require_token(
     }
 }
 
+/// Nothing the server sends may be stored by a proxy or a browser, embedded in a frame, or
+/// used as a referrer; the page itself carries the token.
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    if let Ok(csp) = HeaderValue::from_str(CSP) {
+        headers.insert(header::CONTENT_SECURITY_POLICY, csp);
+    }
+    response
+}
+
 #[derive(Deserialize)]
 struct IndexQuery {
     t: Option<String>,
 }
 
-async fn index(State(state): State<AppState>, Query(q): Query<IndexQuery>) -> Response {
-    if q.t.as_deref() != Some(state.token.as_str()) {
-        return (
-            StatusCode::FORBIDDEN,
-            "open the URL codereview printed, token included",
-        )
-            .into_response();
+/// The page, for a browser that proves it knows the token. `?t=` proves it once and leaves
+/// a cookie behind, then redirects so that the token is not left in the address bar, in the
+/// browser's history, or in the access log of every later request.
+async fn index(
+    State(state): State<AppState>,
+    Query(q): Query<IndexQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(given) = q.t.as_deref() {
+        if !token_eq(given, &state.token) {
+            return forbidden();
+        }
+        let cookie = session_cookie(&state.token, state.secure_cookie);
+        let mut response = Redirect::to("/").into_response();
+        if let Ok(value) = HeaderValue::from_str(&cookie) {
+            response.headers_mut().insert(header::SET_COOKIE, value);
+        }
+        return response;
     }
-    let page = INDEX_HTML.replace("__TOKEN__", &state.token);
-    Html(page).into_response()
+    if cookie_token(&headers).is_some_and(|t| token_eq(t, &state.token)) {
+        return Html(INDEX_HTML.replace("__TOKEN__", &state.token)).into_response();
+    }
+    forbidden()
+}
+
+/// The cookie that keeps this browser signed in. `Secure` only over HTTPS, since a browser
+/// throws away a `Secure` cookie that arrives over plain HTTP.
+fn session_cookie(token: &str, secure: bool) -> String {
+    let mut cookie =
+        format!("{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={COOKIE_MAX_AGE}");
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    cookie
+}
+
+fn forbidden() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        "open the URL codereview printed, token included",
+    )
+        .into_response()
 }
 
 /// Runs `f` with the session on a blocking thread; diffs and git calls are not async.
@@ -366,6 +546,8 @@ async fn get_repos(State(state): State<AppState>) -> ApiResult<Vec<RepoSummary>>
 
 #[derive(Serialize)]
 struct StateResponse {
+    /// Whether this server runs an agent at all; the page hides every way to one when not.
+    agent: bool,
     name: String,
     root: String,
     branch: String,
@@ -383,13 +565,15 @@ struct StateResponse {
 }
 
 async fn get_state(state: Ctx) -> ApiResult<StateResponse> {
-    let r = with_session(&state, |s| {
+    let agent = state.agent;
+    let r = with_session(&state, move |s| {
         let status = s
             .files
             .iter()
             .filter_map(|p| s.status_letter(p).map(|c| (p.clone(), c)))
             .collect();
         Ok(StateResponse {
+            agent,
             name: s.name(),
             root: s.root().display().to_string(),
             branch: s.repo.head_label(),
@@ -1106,7 +1290,7 @@ async fn post_reanchor(state: Ctx) -> ApiResult<Reanchored> {
 
 /// For tests: the router bound to a scratch session, with its token.
 #[cfg(test)]
-pub(crate) fn test_router(roots: &[&Path]) -> Result<(Router, String)> {
+pub(crate) fn test_router(roots: &[&Path], agent: bool) -> Result<(Router, String)> {
     let token = random_token();
     let state = AppState {
         repos: Arc::new(
@@ -1116,6 +1300,8 @@ pub(crate) fn test_router(roots: &[&Path]) -> Result<(Router, String)> {
                 .collect(),
         ),
         token: Arc::new(token.clone()),
+        secure_cookie: false,
+        agent,
     };
     Ok((router(state), token))
 }
@@ -1133,7 +1319,11 @@ mod tests {
 
     /// Serves the router on a random port and returns its address.
     fn serve(roots: &[&Path]) -> (SocketAddr, String, tokio::runtime::Runtime) {
-        let (router, token) = test_router(roots).unwrap();
+        serve_with(roots, true)
+    }
+
+    fn serve_with(roots: &[&Path], agent: bool) -> (SocketAddr, String, tokio::runtime::Runtime) {
+        let (router, token) = test_router(roots, agent).unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let addr = rt.block_on(async {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1151,11 +1341,27 @@ mod tests {
         token: Option<&str>,
         body: Option<&str>,
     ) -> (u16, String) {
+        let extra: Vec<(String, String)> = token
+            .map(|t| ("Authorization".to_string(), format!("Bearer {t}")))
+            .into_iter()
+            .collect();
+        let (status, _, body) = request_full(addr, method, path, &extra, body);
+        (status, body)
+    }
+
+    /// The same, with arbitrary request headers and the response's headers kept.
+    fn request_full(
+        addr: SocketAddr,
+        method: &str,
+        path: &str,
+        extra: &[(String, String)],
+        body: Option<&str>,
+    ) -> (u16, String, String) {
         let mut stream = TcpStream::connect(addr).unwrap();
         let mut req =
             format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
-        if let Some(t) = token {
-            req.push_str(&format!("Authorization: Bearer {t}\r\n"));
+        for (name, value) in extra {
+            req.push_str(&format!("{name}: {value}\r\n"));
         }
         if let Some(b) = body {
             req.push_str(&format!(
@@ -1171,8 +1377,101 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         let status: u16 = response[9..12].parse().unwrap();
-        let body = response.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
-        (status, body)
+        let (head, body) = response.split_once("\r\n\r\n").unwrap_or((&response, ""));
+        (status, head.to_string(), body.to_string())
+    }
+
+    /// The page is reached with the token once, then by the cookie it leaves behind; the
+    /// API takes the token in a header only.
+    #[test]
+    fn the_token_opens_the_page_once_and_then_a_cookie_does() {
+        let dir = scratch_repo();
+        let (addr, token, _rt) = serve(&[dir.path()]);
+        // A wrong token is refused, for the page and for the API.
+        let (status, _, _) = request_full(addr, "GET", "/?t=wrong", &[], None);
+        assert_eq!(status, 403);
+        assert_eq!(
+            request(addr, "GET", "/api/state", Some("wrong"), None).0,
+            403
+        );
+        assert_eq!(request(addr, "GET", "/api/state", None, None).0, 403);
+        // The right one redirects and leaves a cookie behind, so the address bar and every
+        // later request are free of it.
+        let (status, head, body) = request_full(addr, "GET", &format!("/?t={token}"), &[], None);
+        assert_eq!(status, 303, "{head}");
+        assert!(
+            !body.contains(&token),
+            "the redirect body carries the token"
+        );
+        let cookie = head
+            .lines()
+            .find_map(|l| l.strip_prefix("set-cookie: "))
+            .expect("a session cookie")
+            .to_string();
+        assert!(cookie.starts_with(&format!("{COOKIE}={token}")), "{cookie}");
+        assert!(
+            cookie.contains("HttpOnly") && cookie.contains("SameSite=Lax"),
+            "{cookie}"
+        );
+        assert!(!cookie.contains("Secure"), "plain HTTP: {cookie}");
+        assert!(head.contains("cache-control: no-store"), "{head}");
+        assert!(head.contains("referrer-policy: no-referrer"), "{head}");
+        assert!(
+            head.contains("content-security-policy: default-src 'none'"),
+            "{head}"
+        );
+        // The cookie alone serves the page, which carries the token for the API.
+        let sent = vec![(
+            "Cookie".to_string(),
+            cookie.split(';').next().unwrap().to_string(),
+        )];
+        let (status, _, page) = request_full(addr, "GET", "/", &sent, None);
+        assert_eq!(status, 200);
+        assert!(page.contains(&token));
+        // A cookie is not enough for the API, so another site cannot act as this browser.
+        let (status, _, _) = request_full(addr, "GET", "/api/state", &sent, None);
+        assert_eq!(status, 403);
+        // No cookie, no token: the page says where to look.
+        let (status, _, body) = request_full(addr, "GET", "/", &[], None);
+        assert_eq!(status, 403);
+        assert!(body.contains("token"), "{body}");
+    }
+
+    /// `--no-agent`: the routes are gone and the page is told, so it hides every way to one.
+    #[test]
+    fn the_agent_can_be_turned_off() {
+        let dir = scratch_repo();
+        let (addr, token, _rt) = serve_with(&[dir.path()], false);
+        let t = Some(token.as_str());
+        let (status, body) = request(addr, "GET", "/api/state", t, None);
+        assert_eq!(status, 200);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["agent"], false);
+        assert_eq!(request(addr, "GET", "/api/agent/events", t, None).0, 404);
+        assert_eq!(request(addr, "POST", "/api/agent/start", t, None).0, 404);
+        let prompt = serde_json::json!({ "text": "hello" }).to_string();
+        assert_eq!(
+            request(addr, "POST", "/api/agent/prompt", t, Some(&prompt)).0,
+            404
+        );
+        // Everything else still works.
+        assert_eq!(request(addr, "GET", "/api/repos", t, None).0, 200);
+    }
+
+    #[test]
+    fn tokens_compare_whole_and_cookies_parse() {
+        assert!(token_eq("abcd", "abcd"));
+        assert!(!token_eq("abcd", "abce"));
+        assert!(!token_eq("abcd", "abcde"));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("other=1; codereview_token=abc; x=2"),
+        );
+        assert_eq!(cookie_token(&headers), Some("abc"));
+        assert_eq!(cookie_token(&HeaderMap::new()), None);
+        assert!(session_cookie("t", false).ends_with(&format!("Max-Age={COOKIE_MAX_AGE}")));
+        assert!(session_cookie("t", true).ends_with("; Secure"));
     }
 
     #[test]
@@ -1183,9 +1482,11 @@ mod tests {
 
         assert_eq!(request(addr, "GET", "/", None, None).0, 403);
         assert_eq!(request(addr, "GET", "/api/state", None, None).0, 403);
-        let (status, page) = request(addr, "GET", &format!("/?t={token}"), None, None);
-        assert_eq!(status, 200);
-        assert!(page.contains(&token));
+        // The page itself is reached with the token; see the cookie test below.
+        assert_eq!(
+            request(addr, "GET", &format!("/?t={token}"), None, None).0,
+            303
+        );
 
         let (status, body) = request(addr, "GET", "/api/state", t, None);
         assert_eq!(status, 200);

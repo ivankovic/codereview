@@ -87,22 +87,22 @@ or on a non-identifier node it is the word there.
 
 ## Several repositories
 
-Every path on the command line names a repository (a directory inside one counts), a file,
-which opens its repository at that file, or a directory that is not inside a repository, in
-which case every child directory with a `.git` entry (hidden names left out, sorted by name)
-is opened and a line on stderr says how many; a directory that is neither is an error. The
-same repository named twice is opened once, in first-seen order, and nothing named means the
-current directory (or `-C`), resolved the same way. The TUI keeps one full app per repository (tree, viewer, screens, agent) and shows one
-at a time; with more than one open, a strip on the top line names them with their number,
-a `?` while that repository's agent waits for permission, a spinner while it works, and the
-pending comment count. `gt` and `gT` cycle, `W` opens a picker (j/k, Enter, 1-9). Agents in
-the other repositories keep running and are polled every tick. A theme or diff layout saved
-in one app is adopted by the others without another write of the config file, so no app
-later saves a stale copy. The web server holds one session and one agent per repository;
-every `/api` call takes `?repo=N` (0-based, command-line order, default 0), `/api/repos` lists
-them with name, root, branch and pending count, and the page's header dropdown (shown only
-with several) switches, resetting the per-repository page state and rebuilding the agent
-transcript from that repository's events.
+Every path on the command line names a repository (a directory inside one counts), a file, which
+opens its repository at that file, or a directory that is not inside a repository, in which case
+every child directory with a `.git` entry (hidden names left out, sorted by name) is opened and a
+line on stderr says how many; a directory that is neither is an error. The same repository named
+twice is opened once, in first-seen order, and nothing named means the current directory (or
+`-C`), resolved the same way. The TUI keeps one full app per repository (tree, viewer, screens,
+agent) and shows one at a time; with more than one open, a strip on the top line names them with
+their number, a `?` while that repository's agent waits for permission, a spinner while it works,
+and the pending comment count. `gt` and `gT` cycle, `W` opens a picker (j/k, Enter, 1-9). Agents
+in the other repositories keep running and are polled every tick. A theme or diff layout saved in
+one app is adopted by the others without another write of the config file, so no app later saves
+a stale copy. The web server holds one session and one agent per repository; every `/api` call
+takes `?repo=N` (0-based, command-line order, default 0), `/api/repos` lists them with name,
+root, branch and pending count, and the page's header dropdown (shown only with several)
+switches, resetting the per-repository page state and rebuilding the agent transcript from that
+repository's events.
 
 ## Agent
 
@@ -206,8 +206,18 @@ thread so the interface never waits for it. `o` suspends the UI and runs `$VISUA
 ## Browser UI
 
 One embedded page served by an axum server on a loopback address (by default) with a random
-port. The page URL carries a token; every API request must send it as a bearer header, and
-the page itself is only served with the token. The API mirrors the session: state, file with
+port. The token is `CODEREVIEW_TOKEN` when that is set, which keeps one URL across restarts
+and must be at least sixteen characters, otherwise a fresh random one. The page is served to
+a browser that carries the token in the query, which redirects to the bare path after leaving
+a cookie that lasts thirty days, or to one that carries that cookie; the token therefore
+leaves the address bar, the history and the proxy's log of later requests. Every API request
+must send the token as a bearer header instead, never the cookie, so a page on another site
+cannot act as the signed-in browser. Tokens are compared without stopping at the first wrong
+byte. Every response forbids storing, referrers and framing, and restricts the page to its
+own origin. `--public-url` names what a reverse proxy publishes: it is the URL printed at
+start-up, and an HTTPS one marks the cookie `Secure`. `--no-agent` leaves the agent routes
+unregistered and tells the page, which then offers no way to one. The server stops on SIGTERM
+as well as on Ctrl-C. The API mirrors the session: state, file with
 highlighting and change markers, blame, log, commit files, changes, diff with highlighting on
 both sides and anchored comments, comments and notes (list, add, toggle, edit, delete),
 refresh and re-anchor, the theme list and config, symbols (file symbols, definitions,

@@ -99,8 +99,16 @@ between automatic, side-by-side and unified layout, `c` comments on the after-si
 
 `codereview web` prints a URL that includes a session token and opens it. Only that URL works:
 the server binds a loopback address and rejects requests without the token, so no other page
-in the browser can read the repository or write to `REVIEW.md`. Passing `--host` to listen on
-another address exposes the repository to whoever can reach it.
+in the browser can read the repository or write to `REVIEW.md`. The token opens the page once
+and leaves a cookie behind, so it does not stay in the address bar; API requests carry it in a
+header instead, which no other site can set. Set `CODEREVIEW_TOKEN` to keep one URL across
+restarts. Passing `--host` to listen on another address exposes the repository to whoever can
+reach it.
+
+To reach the page from another machine, put nginx in front of it rather than opening the port:
+[docs/deploy.md](docs/deploy.md) has a TLS site on a custom domain, a systemd unit, and what to
+weigh first. `--no-agent` serves everything except the agent, which is the right default for
+anything reachable from outside the machine, since an agent runs commands in the repository.
 
 Click a line number to comment, shift-click to extend the range; the Comment button in the
 file header comments on the whole file, and the `+` on a directory in the tree on the

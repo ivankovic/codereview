@@ -52,6 +52,9 @@ enum Command {
         paths: Vec<String>,
     },
     /// Serve the browser UI on localhost and open it.
+    ///
+    /// Set CODEREVIEW_TOKEN to keep one URL across restarts; without it every run prints a
+    /// new one. Behind a reverse proxy, see docs/deploy.md.
     #[cfg(feature = "web")]
     Web {
         #[arg(long, default_value = "127.0.0.1")]
@@ -62,6 +65,14 @@ enum Command {
         /// Do not open a browser.
         #[arg(long)]
         no_open: bool,
+        /// The address a reverse proxy publishes, `https://review.example.com`: the URL to
+        /// print, and over HTTPS the session cookie is marked `Secure`.
+        #[arg(long, value_name = "URL")]
+        public_url: Option<String>,
+        /// Do not serve the agent: no routes, and the page offers no way to one. Sensible
+        /// whenever the page can be reached from outside the machine.
+        #[arg(long)]
+        no_agent: bool,
         /// Repositories to serve; the page switches between them.
         paths: Vec<String>,
     },
@@ -136,6 +147,8 @@ fn main() -> Result<()> {
             host,
             port,
             no_open,
+            public_url,
+            no_agent,
             paths,
         }) => {
             let all: Vec<String> = cli.paths.iter().chain(&paths).cloned().collect();
@@ -143,7 +156,16 @@ fn main() -> Result<()> {
                 .into_iter()
                 .map(|(s, _)| s)
                 .collect();
-            codereview::web::run(sessions, &host, port, !no_open)
+            codereview::web::run(
+                sessions,
+                codereview::web::Serve {
+                    host,
+                    port,
+                    open_browser: !no_open,
+                    public_url,
+                    agent: !no_agent,
+                },
+            )
         }
         Some(Command::List { all, path, json }) => list(&from, all, path.as_deref(), json),
         Some(Command::Add {

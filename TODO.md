@@ -2,7 +2,8 @@
 
 - Jump from a blame line to that commit's diff.
 - Language-server backend for symbol navigation, for repositories that have one running.
-- Agent: turn a review the agent writes into REVIEW.md comments automatically when it answers in prose instead.
+- Agent: turn a review the agent writes into REVIEW.md comments automatically when it answers
+  in prose instead.
 - Agent: sessions that survive a restart (`session/load`), and picking the agent's mode.
 - Author name override in the config file (today it is always git's user.name).
 - Comment replies, if a readable Markdown form for them exists.
