@@ -144,6 +144,8 @@ in. codereview slows repeated wrong passwords itself, but a limit here costs not
 covers everything else:
 
 ```nginx
+# `$uri` and not `$request_uri`: the first is the path alone, the second carries
+# the query, which is where a token would be on a first visit.
 log_format noquery '$remote_addr - $remote_user [$time_local] '
                    '"$request_method $uri $server_protocol" $status $body_bytes_sent '
                    '"$http_referer" "$http_user_agent"';

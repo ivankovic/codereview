@@ -85,8 +85,24 @@ fn wait_for_port(port: u16, what: &str) {
     panic!("{what} never started listening on {port}");
 }
 
-/// A request through the proxy. Returns the status, the headers in lower case, and the body.
-fn curl(ca: &Path, args: &[&str]) -> (u16, String, String) {
+/// What came back. The headers are lower-cased whole, values included, which is what lets
+/// the checks below look for `secure` and `no-store` without minding how nginx spelled them.
+struct Response {
+    status: u16,
+    headers: String,
+    body: String,
+}
+
+impl Response {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .lines()
+            .find_map(|l| l.strip_prefix(&format!("{name}: ")))
+    }
+}
+
+/// A request through the proxy.
+fn curl(ca: &Path, args: &[&str]) -> Response {
     let resolve_https = format!("{HOST}:{HTTPS_PORT}:127.0.0.1");
     let resolve_http = format!("{HOST}:{HTTP_PORT}:127.0.0.1");
     let mut all: Vec<String> = vec![
@@ -116,16 +132,15 @@ fn curl(ca: &Path, args: &[&str]) -> (u16, String, String) {
         .and_then(|l| l.split_whitespace().nth(1))
         .and_then(|c| c.parse().ok())
         .unwrap_or_else(|| panic!("no status in {head:?}"));
-    (status, head.to_lowercase(), body.to_string())
+    Response {
+        status,
+        headers: head.to_lowercase(),
+        body: body.to_string(),
+    }
 }
 
 fn url(path: &str) -> String {
     format!("https://{HOST}:{HTTPS_PORT}{path}")
-}
-
-fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
-    head.lines()
-        .find_map(|l| l.strip_prefix(&format!("{name}: ")))
 }
 
 /// A repository with something in it to serve.
@@ -169,31 +184,7 @@ fn the_browser_ui_works_behind_nginx() {
     std::fs::create_dir_all(&conf).unwrap();
     scratch_repo(&repo);
 
-    // The site under test is the one in docs/deploy.md; the fixture is what that document
-    // says, with this test's ports. If the document loses a directive the test exercises,
-    // the two have drifted and one of them is wrong.
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/nginx/site.conf");
-    let site = std::fs::read_to_string(&fixture).unwrap();
-    let doc =
-        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/deploy.md"))
-            .unwrap();
-    for directive in [
-        "log_format noquery",
-        "limit_req_zone",
-        "limit_req_status 429",
-        "server_tokens off",
-        "ssl_protocols TLSv1.2 TLSv1.3",
-        "add_header Strict-Transport-Security",
-        "proxy_set_header X-Forwarded-Proto",
-        "client_max_body_size 1m",
-        "proxy_pass http://127.0.0.1:",
-    ] {
-        assert!(site.contains(directive), "the fixture lost {directive:?}");
-        assert!(
-            doc.contains(directive),
-            "docs/deploy.md no longer has {directive:?}, which this test exercises"
-        );
-    }
     std::fs::copy(&fixture, conf.join("site.conf")).unwrap();
 
     run(
@@ -256,7 +247,7 @@ fn the_browser_ui_works_behind_nginx() {
         .stdout(Stdio::null())
         .spawn()
         .expect("codereview web");
-    let harness = Harness {
+    let _harness = Harness {
         server,
         _work: work,
     };
@@ -284,38 +275,44 @@ fn the_browser_ui_works_behind_nginx() {
     let ca = certs.join("cert.pem");
 
     // The plain port sends the browser to the encrypted one.
-    let (status, head, _) = curl(&ca, &[&format!("http://{HOST}:{HTTP_PORT}/api/state")]);
+    let r = curl(&ca, &[&format!("http://{HOST}:{HTTP_PORT}/api/state")]);
+    let (status, head) = (r.status, &r.headers);
     assert_eq!(status, 301, "{head}");
     assert_eq!(
-        header(&head, "location"),
+        r.header("location"),
         Some(format!("https://{HOST}:{HTTPS_PORT}/api/state").as_str())
     );
 
     // The page is the sign-in form, and the headers survive the proxy.
-    let (status, head, body) = curl(&ca, &[&url("/")]);
+    let r = curl(&ca, &[&url("/")]);
+    let (status, head, body) = (r.status, &r.headers, &r.body);
     assert_eq!(status, 200, "{head}");
     assert!(body.contains("name=\"password\""), "not the sign-in form");
     assert!(!body.contains("const TOKEN"), "a secret before signing in");
-    assert_eq!(header(&head, "cache-control"), Some("no-store"));
-    assert_eq!(header(&head, "referrer-policy"), Some("no-referrer"));
+    assert_eq!(r.header("cache-control"), Some("no-store"));
+    assert_eq!(r.header("referrer-policy"), Some("no-referrer"));
     assert!(head.contains("content-security-policy: default-src 'none'"));
     assert!(head.contains("strict-transport-security: max-age=31536000"));
     assert_eq!(
-        header(&head, "server"),
+        r.header("server"),
         Some("nginx"),
         "server_tokens off should hide the version"
     );
 
     // A wrong password opens nothing.
-    let (status, head, _) = curl(&ca, &["-X", "POST", "-d", "password=wrong", &url("/login")]);
+    let r = curl(&ca, &["-X", "POST", "-d", "password=wrong", &url("/login")]);
+    let (status, head) = (r.status, &r.headers);
     assert_eq!(status, 401, "{head}");
-    assert!(header(&head, "set-cookie").is_none(), "{head}");
+    assert!(r.header("set-cookie").is_none(), "{head}");
 
     // The right one does, and the cookie is marked Secure because the site is HTTPS.
+    // A form body is urlencoded, where a space is a plus.
     let form = format!("password={}", PASSWORD.replace(' ', "+"));
-    let (status, head, _) = curl(&ca, &["-X", "POST", "-d", &form, &url("/login")]);
+    let r = curl(&ca, &["-X", "POST", "-d", &form, &url("/login")]);
+    let (status, head) = (r.status, &r.headers);
     assert_eq!(status, 303, "{head}");
-    let cookie = header(&head, "set-cookie")
+    let cookie = r
+        .header("set-cookie")
         .expect("a session cookie")
         .to_string();
     assert!(cookie.contains("secure"), "{cookie}");
@@ -323,17 +320,20 @@ fn the_browser_ui_works_behind_nginx() {
     let cookie = cookie.split(';').next().unwrap().to_string();
 
     // The page then carries the API token, and the API answers for it.
-    let (status, _, page) = curl(&ca, &["-H", &format!("Cookie: {cookie}"), &url("/")]);
+    let r = curl(&ca, &["-H", &format!("Cookie: {cookie}"), &url("/")]);
+    let (status, page) = (r.status, &r.body);
     assert_eq!(status, 200);
-    let start = page.find("const TOKEN = ").expect("a token in the page") + 14;
-    let rest = &page[start..];
-    let token: String =
-        serde_json::from_str(rest[..rest.find(';').unwrap()].trim()).expect("a JSON string");
+    let (_, rest) = page
+        .split_once("const TOKEN = ")
+        .expect("a token in the page");
+    let (literal, _) = rest.split_once(';').expect("the end of the statement");
+    let token: String = serde_json::from_str(literal.trim()).expect("a JSON string");
     let bearer = format!("Authorization: Bearer {token}");
 
-    let (status, _, body) = curl(&ca, &["-H", &bearer, &url("/api/state")]);
+    let r = curl(&ca, &["-H", &bearer, &url("/api/state")]);
+    let (status, body) = (r.status, &r.body);
     assert_eq!(status, 200, "{body}");
-    let state: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let state: serde_json::Value = serde_json::from_str(body).unwrap();
     assert_eq!(state["agent"], false, "started with --no-agent");
     assert!(
         state["files"]
@@ -344,9 +344,9 @@ fn the_browser_ui_works_behind_nginx() {
     );
 
     // Without the token, nothing; and the agent is not there to be reached.
-    assert_eq!(curl(&ca, &[&url("/api/state")]).0, 403);
+    assert_eq!(curl(&ca, &[&url("/api/state")]).status, 403);
     assert_eq!(
-        curl(&ca, &["-H", &bearer, &url("/api/agent/events")]).0,
+        curl(&ca, &["-H", &bearer, &url("/api/agent/events")]).status,
         404
     );
     // The cookie alone does not drive the API, whatever the proxy forwards.
@@ -355,13 +355,13 @@ fn the_browser_ui_works_behind_nginx() {
             &ca,
             &["-H", &format!("Cookie: {cookie}"), &url("/api/state")]
         )
-        .0,
+        .status,
         403
     );
 
     // Writing a comment through the proxy reaches the file on disk.
     let comment = r#"{"path":"a.rs","line":1,"text":"through the proxy"}"#;
-    let (status, _, body) = curl(
+    let r = curl(
         &ca,
         &[
             "-H",
@@ -373,6 +373,7 @@ fn the_browser_ui_works_behind_nginx() {
             &url("/api/comments"),
         ],
     );
+    let (status, body) = (r.status, &r.body);
     assert_eq!(status, 200, "{body}");
     let review = std::fs::read_to_string(repo.join("REVIEW.md")).unwrap();
     assert!(review.contains("through the proxy"), "{review}");
@@ -387,9 +388,12 @@ fn the_browser_ui_works_behind_nginx() {
     assert!(!log.contains(&token), "the log kept the token");
 
     // Guessing is stopped by the proxy before it reaches the server.
+    // The zone allows ten a minute with a burst of five, so a dozen in a row must run into
+    // it whatever the earlier requests used up.
     let mut stopped_by_nginx = false;
     for _ in 0..12 {
-        let (status, _, body) = curl(&ca, &["-X", "POST", "-d", "password=wrong", &url("/login")]);
+        let r = curl(&ca, &["-X", "POST", "-d", "password=wrong", &url("/login")]);
+        let (status, body) = (r.status, &r.body);
         if status == 429 && body.contains("nginx") {
             stopped_by_nginx = true;
             break;
@@ -400,5 +404,34 @@ fn the_browser_ui_works_behind_nginx() {
         "nginx never rate-limited the sign-in form"
     );
 
-    drop(harness);
+    // `_harness` goes out of scope here, which is what stops the container and the server.
+    // The same happens on a panic, so a failing assertion does not leave either behind.
+}
+
+/// The site under test is the one `docs/deploy.md` tells a reader to write. If the document
+/// loses a directive this test exercises, the two have drifted and one of them is wrong.
+/// Needs nothing installed, so it runs with the ordinary suite.
+#[test]
+fn the_fixture_and_the_document_agree() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let site = std::fs::read_to_string(root.join("tests/nginx/site.conf")).unwrap();
+    let doc = std::fs::read_to_string(root.join("docs/deploy.md")).unwrap();
+    for directive in [
+        "log_format noquery",
+        "$uri $server_protocol",
+        "limit_req_zone",
+        "limit_req_status 429",
+        "server_tokens off",
+        "ssl_protocols TLSv1.2 TLSv1.3",
+        "add_header Strict-Transport-Security",
+        "proxy_set_header X-Forwarded-Proto",
+        "client_max_body_size 1m",
+        "proxy_pass http://127.0.0.1:",
+    ] {
+        assert!(site.contains(directive), "the fixture lost {directive:?}");
+        assert!(
+            doc.contains(directive),
+            "docs/deploy.md no longer has {directive:?}, which the proxy test exercises"
+        );
+    }
 }
