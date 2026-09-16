@@ -302,7 +302,9 @@ impl std::error::Error for Conflict {}
 
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
-        if let Some(conflict) = e.downcast_ref::<Conflict>() {
+        // Anywhere in the chain: a conflict with context added over it is still a
+        // conflict, and `downcast_ref` alone only looks at the outermost error.
+        if let Some(conflict) = e.chain().find_map(|c| c.downcast_ref::<Conflict>()) {
             return ApiError(StatusCode::CONFLICT, conflict.0.clone());
         }
         // The whole chain holds git command lines, raw git stderr and absolute paths. The
@@ -1841,6 +1843,42 @@ mod tests {
         );
         // Everything else still works.
         assert_eq!(request(addr, "GET", "/api/repos", t, None).0, 200);
+    }
+
+    /// The limit on requests in flight must give a permit back every time, including on
+    /// the paths that answer early. If one ever leaks, the API stops answering after
+    /// sixteen requests and nothing says why.
+    #[test]
+    fn the_limit_on_requests_in_flight_releases_every_permit() {
+        let dir = scratch_repo();
+        let (addr, token, _rt) = serve(&[dir.path()]);
+        let t = Some(token.as_str());
+        let far_more_than_the_limit = MAX_IN_FLIGHT * 3;
+        for i in 0..far_more_than_the_limit {
+            // A mix of answers: found, refused, not found. Each takes a permit.
+            assert_eq!(request(addr, "GET", "/api/state", t, None).0, 200, "at {i}");
+            assert_eq!(
+                request(addr, "GET", "/api/state", None, None).0,
+                403,
+                "at {i}"
+            );
+            assert_eq!(
+                request(addr, "GET", "/api/nothing", t, None).0,
+                404,
+                "at {i}"
+            );
+        }
+    }
+
+    /// A conflict keeps its status through a context chain.
+    #[test]
+    fn a_conflict_is_answered_with_409() {
+        let plain: anyhow::Error = Conflict("no".into()).into();
+        assert_eq!(ApiError::from(plain).0, StatusCode::CONFLICT);
+        let wrapped = anyhow::Error::from(Conflict("no".into())).context("while trying");
+        assert_eq!(ApiError::from(wrapped).0, StatusCode::CONFLICT);
+        let other = anyhow::anyhow!("something else");
+        assert_eq!(ApiError::from(other).0, StatusCode::BAD_REQUEST);
     }
 
     #[test]

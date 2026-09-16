@@ -711,6 +711,9 @@ mod tests {
             ("Stra\u{df}e", "stra\u{df}e"),
             ("nothing", "foo"),
             ("Foo", ""),
+            // An ASCII name against a query whose byte length is not its character count.
+            ("foo", "f\u{f6}o"),
+            ("f\u{f6}o", "foo"),
         ] {
             let lower = name.to_lowercase();
             assert_eq!(eq_fold(name, query), lower == query, "eq {name} {query}");
