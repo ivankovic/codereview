@@ -193,6 +193,11 @@ impl Panel {
             self.transcript.apply(event);
             changed = true;
         }
+        if changed {
+            // A long session with a talkative agent would otherwise grow without end; one
+            // entry can hold a whole file.
+            self.transcript.trim_to(MAX_TRANSCRIPT);
+        }
         changed
     }
 
@@ -336,6 +341,10 @@ impl Panel {
         Action::Nothing
     }
 }
+
+/// How much of the conversation the panel keeps. Older lines have been read, and what
+/// matters after a long turn is the end of it.
+const MAX_TRANSCRIPT: usize = 4 * 1024 * 1024;
 
 pub(crate) const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
