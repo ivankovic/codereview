@@ -6,7 +6,8 @@ use std::path::Path;
 use anyhow::Result;
 use serde_json::Value;
 
-pub use crate::acp::{Event, PermissionOption, Role, prompts};
+pub use crate::acp::{Event, PermissionOption, Role};
+pub use crate::prompts;
 
 /// Keeps this server's own secrets out of the agent's environment. The agent runs commands
 /// of its own, and anything it inherits it can pass on.

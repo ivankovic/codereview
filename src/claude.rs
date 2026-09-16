@@ -17,8 +17,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
-use crate::acp::{Event, PermissionOption, Raw, Role, Transport};
+use crate::acp::{Event, PermissionOption, Role};
 use crate::agent::strip_secrets;
+use crate::transport::{Raw, Transport};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(120);
 

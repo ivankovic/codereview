@@ -16,9 +16,10 @@ use crate::theme::Theme;
 mod screens;
 
 use crate::tui::agent_panel;
+use crate::tui::diff_view::{DiffLayout, DiffView};
 use crate::tui::prompt::{Prompt, PromptKind};
 use crate::tui::tree::Tree;
-use crate::tui::viewer::{DiffLayout, DiffView, Viewer};
+use crate::tui::viewer::Viewer;
 
 /// Commits fetched per page of a log.
 const LOG_PAGE: usize = 200;

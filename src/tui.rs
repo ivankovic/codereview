@@ -2,6 +2,7 @@
 
 pub mod agent_panel;
 pub mod app;
+pub mod diff_view;
 pub mod prompt;
 pub mod style;
 pub mod tree;

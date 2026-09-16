@@ -29,12 +29,14 @@ mod fakes;
 pub mod highlight;
 pub mod markdown;
 pub mod notes;
+pub mod prompts;
 pub mod repo;
 pub mod review;
 pub mod session;
 pub mod symbols;
 pub mod theme;
 pub mod transcript;
+pub(crate) mod transport;
 
 #[cfg(feature = "tui")]
 pub mod tui;

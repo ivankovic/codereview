@@ -17,7 +17,7 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use serde_json::{Value, json};
 
-use crate::acp::{Raw, Transport};
+use crate::transport::{Raw, Transport};
 
 /// The fake's side of the pipes: lines in, messages out.
 struct Wire {
