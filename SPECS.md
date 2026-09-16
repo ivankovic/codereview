@@ -232,8 +232,11 @@ and change markers, blame, log, commit files, changes, diff with highlighting on
 anchored comments, comments and notes (list, add, toggle, edit, delete), refresh and re-anchor,
 the theme list and config, symbols (file symbols, definitions, occurrences, search, identifier at
 a position), and the agent (start, poll for events since a sequence number, prompt with text or a
-preset, answer a permission, cancel, stop). The server drains the agent into a buffer on every
-poll, so a reloaded page rebuilds the transcript. The page has the same views as the terminal UI:
+preset, answer a permission, cancel, stop, clear). The server writes the transcript itself, the
+same way the terminal does, and answers a poll with the entries that changed since the version
+the page names, each with the position it belongs at: a tool call is one entry, filled in as it
+runs, so entries are not append-only. It also sends what the turn is doing and what it has cost,
+already worded, so the page only draws. The page has the same views as the terminal UI:
 explorer with tree and file, changes, log and history, diff, review, notes, and the agent tab;
 clicking a name in code offers its definition and usages in a side drawer. A comment on a whole
 file comes from the Comment button in the file header and is shown above the first line; one on a
