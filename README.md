@@ -120,9 +120,15 @@ To reach the page from another machine, put nginx in front of it rather than ope
 weigh first. `--no-agent` serves everything except the agent, which is the right default for
 anything reachable from outside the machine, since an agent runs commands in the repository.
 
-Click a line number to comment, shift-click to extend the range; the Comment button in the
-file header comments on the whole file, and the `+` on a directory in the tree on the
-directory. Everything the terminal UI does is a button or a tab.
+Click a line number to comment, shift-click to extend the range (or the form's Extend range
+button and another line number, on a phone); the Comment button in the file header comments
+on the whole file, and the `+` on a directory in the tree on the directory. Everything the
+terminal UI does is a button or a tab. Every view has an address, so the browser's back
+returns to the previous view and a file, a diff or a commit can be linked to.
+
+The page works on a phone: one pane at a time, the tabs along the bottom, and it can be added
+to the home screen as an app. Review comments, diffs and the agent's transcript are what a
+phone is good for; symbol navigation is there but is desk work.
 
 ### Symbols
 

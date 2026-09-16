@@ -263,6 +263,10 @@ deny all;
 
 - Anyone signed in sees the filesystem path of every repository, in the page header and in
   the repository list. Serve from a directory whose name you do not mind showing.
+- On a phone, "Add to Home Screen" in the browser's share or menu gives the page an icon and
+  a window of its own. The session cookie lasts a week, so the app opens signed in until
+  then. The manifest and the icons are served without a session; they name the app and
+  nothing else.
 - Each repository keeps its own agent process, started the first time somebody asks for one,
   and its own symbol index, built the first time somebody looks a name up. A directory of
   many large checkouts is cheap to start and grows as it is used.

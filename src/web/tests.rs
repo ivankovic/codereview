@@ -129,6 +129,48 @@ fn request_full(
     (status, head.to_string(), body.to_string())
 }
 
+/// A browser fetches the manifest and the icons without the session cookie, so they are
+/// served to anyone; they name the app and nothing else.
+#[test]
+fn the_home_screen_files_need_no_session() {
+    let dir = scratch_repo();
+    let (addr, _token, _rt) = serve(&[dir.path()]);
+    for (path, kind) in [
+        ("/manifest.json", "application/manifest+json"),
+        ("/icon.svg", "image/svg+xml"),
+    ] {
+        let (status, head, body) = request_full(addr, "GET", path, &[], None);
+        assert_eq!(status, 200, "{path}");
+        assert!(
+            head.contains(&format!("content-type: {kind}")),
+            "{path}: {head}"
+        );
+        assert!(
+            !body.contains(&dir.path().display().to_string()),
+            "{path} names the repository"
+        );
+    }
+    let (_, _, manifest) = request_full(addr, "GET", "/manifest.json", &[], None);
+    assert!(manifest.contains("\"start_url\": \"/\""), "{manifest}");
+    // The PNG is binary, so it is read as bytes.
+    let mut stream = TcpStream::connect(addr).unwrap();
+    stream
+        .write_all(b"GET /icon.png HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).unwrap();
+    let head = String::from_utf8_lossy(&raw[..raw.len().min(600)]).to_lowercase();
+    assert!(head.starts_with("http/1.1 200"), "{head}");
+    assert!(head.contains("content-type: image/png"), "{head}");
+    assert!(raw.ends_with(b"IEND\xaeB`\x82"), "a whole PNG");
+    // The policy lets the browser follow the page's links to them.
+    let (_, head, _) = request_full(addr, "GET", "/", &[], None);
+    assert!(
+        head.contains("manifest-src 'self'") && head.contains("img-src 'self'"),
+        "{head}"
+    );
+}
+
 /// A token run: the URL opens a session once, the cookie keeps it, and the API takes
 /// the session's own secret in a header.
 #[test]

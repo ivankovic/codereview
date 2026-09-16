@@ -1,0 +1,14 @@
+{
+  "name": "codereview",
+  "short_name": "codereview",
+  "description": "Explore and review a repository; comments go to REVIEW.md",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#15171c",
+  "theme_color": "#1b1e24",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ]
+}

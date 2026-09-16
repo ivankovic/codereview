@@ -2,7 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- `interactive-widget=resizes-content` shrinks the layout when the soft keyboard opens,
+     so what is being typed into (the agent's compose box, a comment) stays in view. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" id="themecolor" content="#1b1e24">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="codereview">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.png">
 <title>codereview</title>
 <style>
 :root {
@@ -19,7 +28,11 @@
 /* Elements with their own `display` (the popover, the drawer) must still honour `hidden`. */
 [hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
+/* The dynamic viewport unit follows a phone browser's collapsing toolbars; plain 100% does not. */
+@supports (height: 100dvh) { body { height: 100dvh; } }
 body { background: var(--bg); color: var(--fg); font: 13px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; }
+/* Shown on a phone only; see the narrow-screen rules at the end. */
+.phone { display: none; }
 a { color: var(--accent); }
 button { background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; cursor: pointer; font: inherit; }
 button:hover { border-color: var(--accent); }
@@ -27,7 +40,9 @@ button.primary { border-color: var(--accent); color: var(--accent); }
 button.small { padding: 1px 6px; font-size: 11px; }
 input, textarea, select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font: inherit; }
 textarea { width: 100%; min-height: 3.2em; font-family: ui-monospace, Menlo, Consolas, monospace; }
-header { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
+header { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; position: relative; z-index: 6; }
+/* On a wide screen the tools sit in the header row as if the wrapper were not there. */
+header .tools { display: contents; }
 header .brand { font-weight: 700; color: var(--accent); }
 header #branch { max-width: 28vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 header .tabs button { border-radius: 0; border: none; border-bottom: 2px solid transparent; background: none; }
@@ -36,6 +51,7 @@ header .tabs button.active { border-bottom-color: var(--accent); color: var(--ac
 .dim { color: var(--dim); }
 main { flex: 1; display: flex; min-height: 0; }
 aside#tree { width: 280px; min-width: 180px; max-width: 50vw; overflow: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 6px 0; resize: horizontal; }
+body:not([data-view=explore]) #tree { display: none; }
 aside#tree .row { padding: 1px 8px; cursor: pointer; white-space: nowrap; display: flex; gap: 4px; align-items: center; }
 aside#tree .row:hover { background: var(--cursor); }
 aside#tree .row.selected { background: var(--visual); }
@@ -74,7 +90,11 @@ span.s-insert { background: var(--ins-strong); } span.s-delete { background: var
 span.s-update { background: var(--upd-strong); } span.s-move { background: var(--mov-strong); }
 mark { background: var(--search); color: inherit; }
 tr.comment td { background: var(--panel); padding: 4px 12px; white-space: normal; font-family: -apple-system, "Segoe UI", sans-serif; border-bottom: 1px solid var(--border); }
-.cmt { display: flex; gap: 8px; align-items: baseline; }
+/* A comment row spans the table, which is as wide as the longest line of code. The comment
+   itself stays as wide as the panel and sticks to its left edge, so the text and the buttons
+   are in view however far the code has been scrolled sideways. `--panel-w` is measured. */
+.cmt, tr.form .form { position: sticky; left: 12px; width: var(--panel-w, 100%); box-sizing: border-box; }
+.cmt { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .cmt .who { font-weight: 600; }
 .cmt.exact .who { color: var(--exact); } .cmt.moved .who { color: var(--moved); } .cmt.stale .who { color: var(--stale); }
 .cmt.done { opacity: .6; }
@@ -105,6 +125,12 @@ footer .msg.error { color: var(--del-fg); }
 #help h3 { margin: 8px 0 4px; color: var(--accent); }
 #help table td { padding: 1px 12px 1px 0; }
 #help kbd { font-family: ui-monospace, monospace; background: var(--bg); padding: 0 4px; border-radius: 3px; border: 1px solid var(--border); }
+/* The text editor: what used to be the browser's prompt(). A sheet on a phone. */
+#editor { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
+#editor .sheet { background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; padding: 12px 16px; width: min(560px, calc(100vw - 32px)); }
+#editor .title { font-weight: 600; margin-bottom: 6px; }
+#editor textarea { min-height: 5em; }
+.hunknav { display: contents; }
 #popover { position: fixed; z-index: 20; max-width: 90vw; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
 #popover .word { font-family: ui-monospace, monospace; font-weight: 600; margin-right: 4px; }
 #drawer { width: 380px; min-width: 200px; max-width: 60vw; border-left: 1px solid var(--border); background: var(--panel); overflow: auto; display: flex; flex-direction: column; }
@@ -136,40 +162,97 @@ body.no-agent [data-act=review] { display: none !important; }
 #agent .compose textarea { min-height: 2.6em; }
 #agent .permission { padding: 8px 12px; background: var(--upd); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 @media (max-width: 800px) {
-  aside#tree { width: 160px; }
-  .sbs { grid-template-columns: 1fr; }
-  #drawer { width: 200px; }
   #help { inset: 4%; padding: 12px; }
+}
+/* Touch: no hover, and a finger needs more room than a pointer. */
+@media (hover: none) {
+  aside#tree .add { visibility: visible; }
+  input, textarea, select { font-size: 16px; }  /* below 16px iOS zooms the page into a focused field */
+  button { padding: 8px 12px; }
+  button.small { padding: 6px 10px; font-size: 13px; }
+  header .tabs button { min-height: 44px; }
+  aside#tree .row { min-height: 40px; }
+  .list .item { min-height: 44px; }
+  table.code { font-size: 13px; line-height: 1.7; }
+  table.code td.n { min-width: 44px; padding: 0 8px; }
+  #drawer .list .item { min-height: 48px; }
+  aside#tree { resize: none; }
+}
+/* A phone, upright or on its side: one header row, the tabs along the bottom edge, and one
+   pane at a time. */
+@media (max-width: 700px), (max-height: 500px) {
+  .phone { display: revert; }
+  body { padding-bottom: calc(46px + env(safe-area-inset-bottom)); }
+  header { padding: 6px 10px; gap: 8px; }
+  header #branch { max-width: 40vw; }
+  header #more { padding: 4px 10px; font-size: 16px; line-height: 1; }
+  header .tools { display: none; }
+  header.open .tools { display: flex; flex-direction: column; gap: 8px; position: absolute; top: 100%; left: 0; right: 0; padding: 10px 12px 12px; background: var(--panel); border-bottom: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+  header.open .tools input, header.open .tools select, header.open .tools button { width: 100%; }
+  header .tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; background: var(--panel); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
+  header .tabs button { flex: 1; min-width: 0; padding: 6px 2px; font-size: 12px; border-bottom: none; border-top: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header .tabs button.active { border-top-color: var(--accent); }
+  header .tabs .badge { padding: 0 4px; }
+  /* Explore is the tree, or the file, never both. */
+  aside#tree { width: auto; min-width: 0; max-width: none; flex: 1; border-right: none; }
+  body[data-view=explore]:not(.showfile) #content { display: none; }
+  body[data-view=explore].showfile #tree { display: none; }
+  /* Log: the commits, or one commit. */
+  .split > div:first-child { max-width: none; border-right: none; }
+  .split:not(.detail) > div:last-child { display: none; }
+  .split.detail > div:first-child { display: none; }
+  /* Lists become cards: the text on its own line, the buttons under it. */
+  .list .item { flex-wrap: wrap; row-gap: 4px; }
+  .list .item .grow:not(.mono) { flex-basis: 100%; order: 2; }
+  .list .item .actions { flex-basis: 100%; order: 3; }
+  .cmt .text { flex-basis: 100%; }
+  #drawer { position: fixed; left: 0; right: 0; bottom: calc(46px + env(safe-area-inset-bottom)); height: 50vh; width: auto; min-width: 0; max-width: none; border-left: none; border-top: 1px solid var(--accent); z-index: 4; box-shadow: 0 -8px 24px rgba(0,0,0,.3); }
+  .sbs { grid-template-columns: 1fr; }
+  [data-act=layout] { display: none; }
+  .hunknav { display: flex; flex-direction: column; gap: 6px; position: fixed; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 4; }
+  .hunknav button { min-width: 44px; min-height: 44px; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+  footer { gap: 8px; }
+  footer span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #editor { align-items: flex-end; }
+  #editor .sheet { width: 100%; border-radius: 10px 10px 0 0; border-bottom: none; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  #popover { max-width: calc(100vw - 16px); }
+  #agent .transcript { padding: 10px 12px; }
+  #agent .entry .who { width: 44px; }
 }
 </style>
 </head>
-<body>
+<body data-view="explore">
 <header>
   <span class="brand">codereview</span>
   <select id="repo" title="which repository the page shows" hidden></select>
   <span id="branch" class="dim"></span>
-  <span class="tabs">
+  <nav class="tabs">
     <button data-view="explore" class="active">Explore</button>
     <button data-view="changes">Changes</button>
     <button data-view="log">Log</button>
     <button data-view="review">Review <span id="pending" class="badge"></span></button>
     <button data-view="notes">Notes</button>
     <button data-view="agent">Agent <span id="agentdot" class="badge" hidden></span></button>
-  </span>
+  </nav>
   <span class="spacer"></span>
-  <input id="symbol" placeholder="find symbol (#)" size="16" title="definitions whose name contains this">
-  <input id="search" placeholder="search in file (/)" size="20">
-  <select id="theme" title="colour scheme, saved to the config file"></select>
-  <button id="refresh" title="re-read the repository and both Markdown files">Refresh</button>
-  <button id="signout" title="end this session in this browser">Sign out</button>
-  <button id="helpbtn">?</button>
+  <button id="more" class="phone" title="search, colour scheme, and more">⋯</button>
+  <div class="tools">
+    <input id="symbol" placeholder="find symbol (#)" size="16" title="definitions whose name contains this">
+    <input id="search" placeholder="search in file (/)" size="20">
+    <select id="theme" title="colour scheme, saved to the config file"></select>
+    <button id="refresh" title="re-read the repository and both Markdown files">Refresh</button>
+    <button id="signout" title="end this session in this browser">Sign out</button>
+    <button id="helpbtn">?</button>
+  </div>
 </header>
 <main>
   <aside id="tree"></aside>
-  <section id="content"><div class="center">Pick a file on the left.</div></section>
+  <section id="content"><div class="center">Pick a file from the tree.</div></section>
   <aside id="drawer" hidden></aside>
 </main>
 <div id="popover" hidden></div>
+<div id="editor" hidden><div class="sheet"><div class="title"></div><textarea></textarea>
+  <div class="form"><div class="row"><button class="primary" data-act="ok">Save</button><button data-act="cancel">Cancel</button></div></div></div></div>
 <footer><span id="hint" class="dim"></span><span id="msg" class="msg"></span></footer>
 <div id="help" hidden></div>
 <script>
@@ -242,6 +325,46 @@ function msg(text, isError = false) {
 }
 function fail(e) { console.error(e); msg(e.message || String(e), true); }
 
+// A pointer that cannot hover is a finger: hints then say "tap", and never mention a key.
+const TOUCH = window.matchMedia && window.matchMedia('(hover: none)').matches;
+// A narrow or a short screen shows one pane at a time; the stylesheet draws the same line.
+const phone = () => window.matchMedia && window.matchMedia('(max-width: 700px), (max-height: 500px)').matches;
+function hint(mouse, touch) { $('#hint').textContent = TOUCH ? (touch === undefined ? mouse : touch) : mouse; }
+
+// Asks for a piece of text in a sheet of the page's own, with a real textarea: the
+// browser's prompt() is one line and looks foreign on a phone. Resolves to null on cancel.
+function askText(title, initial = '', okLabel = 'Save') {
+  return new Promise(resolve => {
+    const ed = $('#editor');
+    const ta = ed.querySelector('textarea');
+    ed.querySelector('.title').textContent = title;
+    ed.querySelector('[data-act=ok]').textContent = okLabel;
+    ta.value = initial;
+    ed.hidden = false;
+    const done = value => { ed.hidden = true; ed.onclick = null; resolve(value); };
+    ed.querySelector('[data-act=ok]').onclick = () => done(ta.value.trim() ? ta.value : null);
+    ed.querySelector('[data-act=cancel]').onclick = () => done(null);
+    ed.onclick = e => { if (e.target === ed) done(null); };
+    ta.onkeydown = e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(ta.value.trim() ? ta.value : null); }
+      if (e.key === 'Escape') { e.preventDefault(); done(null); }
+    };
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
+  });
+}
+
+// The header's tools live behind one button on a phone.
+$('#more').onclick = e => { e.stopPropagation(); document.querySelector('header').classList.toggle('open'); };
+document.addEventListener('click', e => { if (!e.target.closest('header') || e.target.closest('header .tools button')) document.querySelector('header').classList.remove('open'); });
+
+// Comment rows are as wide as the panel that scrolls the code, not as wide as the code; the
+// width is measured, since the tree and the drawer change it.
+const panelWatcher = window.ResizeObserver && new ResizeObserver(entries => {
+  for (const en of entries) en.target.style.setProperty('--panel-w', Math.max(0, en.target.clientWidth - 24) + 'px');
+});
+function watchPanel(el) { if (panelWatcher) panelWatcher.observe(el); }
+watchPanel($('#content'));
+
 // ----- state ----------------------------------------------------------------------------------
 
 function applyTheme(t) {
@@ -265,6 +388,8 @@ function applyTheme(t) {
   r.setProperty('--ins-fg', t.insert_fg); r.setProperty('--del-fg', t.delete_fg);
   r.setProperty('--upd-fg', t.update_fg); r.setProperty('--mov-fg', t.move_fg);
   document.documentElement.style.colorScheme = t.dark ? 'dark' : 'light';
+  // The browser's own chrome around a home-screen app follows the scheme too.
+  $('#themecolor').setAttribute('content', t.panel);
 }
 
 async function loadState() {
@@ -310,13 +435,14 @@ async function switchRepo(index) {
   state.allComments = await api('/comments');
   await loadState();
   setTabs('explore');
-  $('#content').innerHTML = '<div class="center">Pick a file on the left.</div>';
+  document.body.classList.remove('showfile');
+  $('#content').innerHTML = '<div class="center">Pick a file from the tree.</div>';
   $('#agentdot').hidden = true;
   agentPoll();
   msg('repository ' + (state.repos[index] ? state.repos[index].name : index));
 }
 
-$('#repo').onchange = e => switchRepo(Number(e.target.value)).catch(fail);
+$('#repo').onchange = e => switchRepo(Number(e.target.value)).then(() => navigate(routes.tree())).catch(fail);
 
 // ----- tree -----------------------------------------------------------------------------------
 
@@ -469,22 +595,27 @@ function commentRow(c, colspan, onChange) {
   on(tr, 'ask', () => askAgent({ preset: 'address_comment', comment: c.comment }));
   on(tr, 'toggle', () => api('/comments/toggle', { body: { comment: c.comment } }).then(onChange).catch(fail));
   on(tr, 'delete', () => api('/comments/delete', { body: { comment: c.comment } }).then(onChange).catch(fail));
-  on(tr, 'edit', () => {
-    const text = prompt('Edit comment', c.comment.text);
-    if (text && text.trim()) api('/comments/edit', { body: { comment: c.comment, text } }).then(onChange).catch(fail);
+  on(tr, 'edit', async () => {
+    const text = await askText('Edit comment', c.comment.text);
+    if (text) api('/comments/edit', { body: { comment: c.comment, text } }).then(onChange).catch(fail);
   });
   return tr;
 }
 
-// `line` of null comments on the whole file or directory, with no line range.
-function commentForm(path, line, endLine, sourceLine, colspan, onDone) {
+// `line` of null comments on the whole file or directory, with no line range. `onExtend`,
+// when given, puts an "extend" button on the form: the next line number tapped becomes the
+// other end of the range, which is what shift-click does with a keyboard. `initial` keeps
+// what was typed when the form is rebuilt for the new range.
+function commentForm(path, line, endLine, sourceLine, colspan, onDone, onExtend, initial = '') {
   const tr = document.createElement('tr');
   tr.className = 'form';
   const label = line ? ':' + (endLine > line ? `${line}-${endLine}` : `${line}`) : '';
   tr.innerHTML = `<td colspan="${colspan}"><div class="form"><div class="dim">comment on ${esc(path)}${label}</div>
-    <textarea placeholder="Enter saves, Esc cancels; Shift-Enter for a new line"></textarea>
-    <div class="row"><button class="primary" data-act="save">Add to REVIEW.md</button><button data-act="ask" title="send the text as a question about these lines instead">Ask agent</button><button data-act="cancel">Cancel</button></div></div></td>`;
+    <textarea placeholder="${TOUCH ? 'Your comment' : 'Enter saves, Esc cancels; Shift-Enter for a new line'}"></textarea>
+    <div class="row"><button class="primary" data-act="save">Add to REVIEW.md</button><button data-act="ask" title="send the text as a question about these lines instead">Ask agent</button>${onExtend ? '<button data-act="extend" title="the next line number you tap ends the range">Extend range</button>' : ''}<button data-act="cancel">Cancel</button></div></div></td>`;
   const ta = tr.querySelector('textarea');
+  ta.value = initial;
+  on(tr, 'extend', () => onExtend(ta.value));
   const save = () => {
     const text = ta.value.trim();
     if (!text) return;
@@ -507,17 +638,33 @@ function commentForm(path, line, endLine, sourceLine, colspan, onDone) {
 
 // ----- explore --------------------------------------------------------------------------------
 
-let commentAnchorLine = null;
+// The first line of the comment being written, and whether the next tap on a line number
+// extends the range to that line rather than starting over.
+let commentAnchorLine = null, extending = false;
 
 async function openFile(path, line) {
   try {
     const f = await api('/file?path=' + encodeURIComponent(path));
     state.file = { ...f, blame: null };
     state.view = 'explore';
+    navigate(routes.file(path, line));
+    // On a phone the file replaces the tree.
+    document.body.classList.add('showfile');
     renderFile();
     renderTree();
     if (line) scrollToLine(line);
   } catch (e) { fail(e); }
+}
+
+function fileHint() {
+  hint('Click a line number to comment; shift-click extends the range.', 'Tap a line number to comment, or a name in the code for its definition.');
+}
+
+// Back to the tree, on a phone; on a wide screen the tree never left.
+function showTree() {
+  setTabs('explore');
+  document.body.classList.remove('showfile');
+  navigate(routes.tree());
 }
 
 async function refreshFileComments() {
@@ -539,12 +686,12 @@ function renderFile() {
   const f = state.file;
   const content = $('#content');
   content.innerHTML = '';
-  if (!f) { content.innerHTML = '<div class="center">Pick a file on the left.</div>'; return; }
+  if (!f) { content.innerHTML = '<div class="center">Pick a file from the tree.</div>'; return; }
   setTabs('explore');
   const st = state.statusLetters[f.path] || '';
   const head = document.createElement('div');
   head.className = 'panelhead';
-  head.innerHTML = `<span class="path">${esc(f.path)}</span>
+  head.innerHTML = `<button class="phone" data-act="up" title="back to the file tree">‹ files</button><span class="path">${esc(f.path)}</span>
     ${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
     <span class="dim">${f.lines.length} lines</span>
     <span class="spacer"></span>
@@ -555,16 +702,12 @@ function renderFile() {
     <button data-act="diff" ${st && st !== '?' ? '' : 'disabled'}>Diff vs HEAD</button>
     <button data-act="blame" ${state.hasCommits && st !== '?' ? '' : 'disabled'}>${f.blame ? 'Hide blame' : 'Blame'}</button>`;
   content.appendChild(head);
+  on(head, 'up', showTree);
   on(head, 'note', () => addNote(f.path));
   on(head, 'comment', () => addPathComment(f.path));
   on(head, 'symbols', () => showFileSymbols(f.path));
   on(head, 'history', () => showLog(f.path));
-  on(head, 'diff', () => showDiff(
-    { kind: 'working', path: f.path, status: st },
-    [{ path: f.path, status: st, old_path: null }],
-    0,
-    () => { setTabs('explore'); renderFile(); },
-  ));
+  on(head, 'diff', () => showDiff({ kind: 'working', path: f.path, status: st }, [{ path: f.path, status: st, old_path: null }], 0));
   on(head, 'blame', async () => {
     if (f.blame) { f.blame = null; renderFile(); return; }
     try { f.blame = await api('/blame?path=' + encodeURIComponent(f.path)); renderFile(); } catch (e) { fail(e); }
@@ -588,6 +731,27 @@ function renderFile() {
   const byLine = {};
   for (const c of f.comments) if (c.line) (byLine[c.end_line] = byLine[c.end_line] || []).push(c);
   const onChange = () => refreshFileComments().catch(fail);
+  // Opens the comment form under line `n`, or under the far end of the range when the
+  // click extends one (shift held, or the form's own extend button pressed first).
+  const beginComment = (n, extend, text = '') => {
+    const open = $('#content .form textarea');
+    if (open) { text = text || open.value; open.closest('tr').remove(); }
+    extending = false;
+    fileHint();
+    let start = n, end = n;
+    if (extend && commentAnchorLine) { start = Math.min(commentAnchorLine, n); end = Math.max(commentAnchorLine, n); }
+    else commentAnchorLine = n;
+    table.querySelectorAll('tr.sel').forEach(x => x.classList.remove('sel'));
+    for (let k = start; k <= end; k++) table.querySelector(`tr[data-line="${k}"]`)?.classList.add('sel');
+    const anchorRow = table.querySelector(`tr[data-line="${end}"]`);
+    const form = commentForm(f.path, start, end, lines[start - 1] || '', cols, saved => {
+      form.remove();
+      table.querySelectorAll('tr.sel').forEach(x => x.classList.remove('sel'));
+      commentAnchorLine = null;
+      if (saved) onChange();
+    }, () => { extending = true; hint('Now click the last line of the range.', 'Now tap the last line of the range.'); }, text);
+    anchorRow.after(form);
+  };
   // Comments on the file as a whole have no line; they head the file.
   for (const c of f.comments) if (!c.line) table.appendChild(commentRow(c, cols, onChange));
   let firstMatch = null;
@@ -608,29 +772,14 @@ function renderFile() {
     }
     tr.innerHTML = `<td class="m">${mk}</td>${blame}<td class="n" title="click to comment, shift-click to extend">${n}</td><td class="c">${renderSegments(segs, [], ranges)}</td>`;
     tr.querySelector('td.c').onclick = e => codeClick(e, f.path, i, lines[i] || '');
-    tr.querySelector('td.n').onclick = e => {
-      $('#content .form')?.closest('tr')?.remove();
-      let start = n, end = n;
-      if (e.shiftKey && commentAnchorLine) { start = Math.min(commentAnchorLine, n); end = Math.max(commentAnchorLine, n); }
-      commentAnchorLine = n;
-      table.querySelectorAll('tr.sel').forEach(x => x.classList.remove('sel'));
-      for (let k = start; k <= end; k++) table.querySelector(`tr[data-line="${k}"]`)?.classList.add('sel');
-      const anchorRow = table.querySelector(`tr[data-line="${end}"]`);
-      const form = commentForm(f.path, start, end, lines[start - 1] || '', cols, saved => {
-        form.remove();
-        table.querySelectorAll('tr.sel').forEach(x => x.classList.remove('sel'));
-        commentAnchorLine = null;
-        if (saved) onChange();
-      });
-      anchorRow.after(form);
-    };
+    tr.querySelector('td.n').onclick = e => beginComment(n, e.shiftKey || extending);
     table.appendChild(tr);
     for (const c of byLine[n] || []) table.appendChild(commentRow(c, cols, onChange));
   });
   // Comments past the end of the file.
   for (const c of f.comments) if (c.line && c.end_line > f.lines.length) table.appendChild(commentRow(c, cols, onChange));
   content.appendChild(table);
-  $('#hint').textContent = 'Click a line number to comment; shift-click extends the range.';
+  fileHint();
   if (state.search && firstMatch) scrollToLine(firstMatch);
 }
 
@@ -766,7 +915,10 @@ async function agentPoll() {
 
 function startAgentPolling() {
   if (agent.timer || !state.agentEnabled) return;
-  agent.timer = setInterval(() => { if (state.agentEnabled && (state.view === 'agent' || agent.running)) agentPoll(); }, 500);
+  // A page in a background tab, or a phone in a pocket, does not poll; it catches up when
+  // it is looked at again.
+  agent.timer = setInterval(() => { if (state.agentEnabled && !document.hidden && (state.view === 'agent' || agent.running)) agentPoll(); }, 500);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && state.agentEnabled && (state.view === 'agent' || agent.running)) agentPoll(); });
 }
 
 async function agentStart() {
@@ -814,6 +966,7 @@ function askAgent(body) {
 function showAgent() {
   if (!state.agentEnabled) { msg('this server runs without an agent', true); return; }
   setTabs('agent');
+  navigate(routes.view('agent'));
   startAgentPolling();
   const content = $('#content');
   content.innerHTML = `<div id="agent"><div class="panelhead"><span class="path">agent</span><span id="agentname" class="dim"></span><span id="agentstatus" class="badge"></span><span id="agentprogress" class="progress"></span><span id="agentusage" class="usage"></span><span class="spacer"></span>
@@ -838,7 +991,7 @@ function showAgent() {
   $('#showlog').onchange = e => { agent.showLog = e.target.checked; renderAgent(); };
   renderAgent();
   agentPoll();
-  $('#hint').textContent = 'Enter sends. The agent asks before doing anything that needs permission.';
+  hint('Enter sends. The agent asks before doing anything that needs permission.', 'The agent asks before doing anything that needs permission.');
 }
 
 function renderAgent() {
@@ -871,6 +1024,7 @@ function renderAgent() {
 
 async function showChanges(staged = false) {
   setTabs('changes');
+  navigate(routes.changes(staged));
   try {
     const files = await api('/changes?staged=' + staged);
     const content = $('#content');
@@ -884,24 +1038,29 @@ async function showChanges(staged = false) {
       el.className = 'item';
       const letter = statusLetter(f);
       el.innerHTML = `<span class="status-letter ${letter === '?' ? 'q' : letter}">${letter}</span><span class="mono grow">${esc(f.old_path ? f.old_path + ' → ' + f.path : f.path)}</span>`;
-      el.onclick = () => showDiff({ kind: staged ? 'staged' : 'working', path: f.path, old_path: f.old_path || '', status: letter }, files, i, () => showChanges(staged));
+      el.onclick = () => showDiff({ kind: staged ? 'staged' : 'working', path: f.path, old_path: f.old_path || '', status: letter }, files, i);
       list.appendChild(el);
     });
-    $('#hint').textContent = 'Click a file to see its diff.';
+    hint('Click a file to see its diff.', 'Tap a file to see its diff.');
   } catch (e) { fail(e); }
 }
 
 // ----- log and history ------------------------------------------------------------------------
 
-async function showLog(path = null, keep = false) {
+// `commit` names one to open, as a page address does; without it the first is shown beside
+// the list on a wide screen, and on a phone the list alone.
+async function showLog(path = null, keep = false, commit = null) {
   setTabs('log');
   try {
     if (!keep || !state.log || state.log.path !== path) {
       const commits = await api('/log?limit=100' + (path ? '&path=' + encodeURIComponent(path) : ''));
       state.log = { path, commits, selected: 0, files: [], exhausted: commits.length < 100 };
     }
+    const wanted = commit ? state.log.commits.findIndex(c => c.hash === commit) : -1;
+    if (wanted >= 0) state.log.selected = wanted;
+    navigate(routes.log(path, wanted >= 0 ? commit : null));
     renderLog();
-    await selectCommit(state.log.selected);
+    await selectCommit(state.log.selected, wanted >= 0);
   } catch (e) { fail(e); }
 }
 
@@ -909,7 +1068,8 @@ function renderLog() {
   const log = state.log;
   const content = $('#content');
   content.innerHTML = `<div class="split"><div id="commits"><div class="panelhead"><span class="path">${log.path ? 'history of ' + esc(log.path) : 'log'}</span><span class="dim">${log.commits.length} commits${log.exhausted ? '' : '+'}</span></div><div class="list"></div></div>
-    <div id="commit"><div class="details"></div><div class="list files"></div></div></div>`;
+    <div id="commit"><div class="panelhead phone"><button data-act="up">‹ commits</button></div><div class="details"></div><div class="list files"></div></div></div>`;
+  on(content, 'up', () => { content.querySelector('.split').classList.remove('detail'); navigate(routes.log(log.path, null)); });
   const list = content.querySelector('#commits .list');
   if (!log.commits.length) list.innerHTML = '<div class="center">no commits</div>';
   log.commits.forEach((c, i) => {
@@ -917,7 +1077,7 @@ function renderLog() {
     el.className = 'item' + (i === log.selected ? ' selected' : '');
     el.dataset.i = i;
     el.innerHTML = `<span class="mono dim">${esc(c.short)} ${esc(c.date.slice(0, 10))}</span><span class="grow">${esc(c.subject)}</span><span class="dim">${esc(c.author)}</span>`;
-    el.onclick = () => selectCommit(i);
+    el.onclick = () => selectCommit(i, true);
     list.appendChild(el);
   });
   if (!log.exhausted) {
@@ -932,13 +1092,20 @@ function renderLog() {
     };
     list.after(more);
   }
-  $('#hint').textContent = log.path ? 'Click a commit, then the file to see what changed. "vs working tree" diffs that version against your checkout.' : 'Click a commit, then a file.';
+  hint(log.path ? 'Click a commit, then the file to see what changed. "vs working tree" diffs that version against your checkout.' : 'Click a commit, then a file.',
+    log.path ? 'Tap a commit, then the file to see what changed.' : 'Tap a commit, then a file.');
 }
 
-async function selectCommit(i) {
+// `chosen` is a commit the reader picked, as opposed to the one shown by default: on a phone
+// that opens the commit's own screen, and the page address names it.
+async function selectCommit(i, chosen = false) {
   const log = state.log;
   if (!log.commits[i]) return;
   log.selected = i;
+  if (chosen) {
+    $('#content .split')?.classList.add('detail');
+    navigate(routes.log(log.path, log.commits[i].hash));
+  }
   $('#content #commits .list')?.querySelectorAll('.item').forEach(el => el.classList.toggle('selected', +el.dataset.i === i));
   const c = log.commits[i];
   const details = $('#content #commit .details');
@@ -955,9 +1122,9 @@ async function selectCommit(i) {
       const letter = statusLetter(f);
       el.innerHTML = `<span class="status-letter ${letter}">${letter}</span><span class="mono grow">${esc(f.old_path ? f.old_path + ' → ' + f.path : f.path)}</span>
         ${log.path && f.path === log.path ? '<button class="small" data-act="vs">vs working tree</button>' : ''}`;
-      el.onclick = () => showDiff({ kind: 'commit', hash: c.hash, path: f.path, old_path: f.old_path || '', status: letter }, files, k, () => showLog(log.path, true));
+      el.onclick = () => showDiff({ kind: 'commit', hash: c.hash, path: f.path, old_path: f.old_path || '', status: letter }, files, k);
       const vs = el.querySelector('[data-act=vs]');
-      if (vs) vs.onclick = e => { e.stopPropagation(); showDiff({ kind: 'revisions', from: c.hash, to: '', path: f.path, status: 'M' }, [f], 0, () => showLog(log.path, true)); };
+      if (vs) vs.onclick = e => { e.stopPropagation(); showDiff({ kind: 'revisions', from: c.hash, to: '', path: f.path, status: 'M' }, [f], 0); };
       list.appendChild(el);
     });
   } catch (e) { fail(e); }
@@ -965,19 +1132,33 @@ async function selectCommit(i) {
 
 // ----- diff -----------------------------------------------------------------------------------
 
-async function showDiff(params, siblings, index, back) {
+// `siblings` are the other files of the same change, for paging; a diff opened from its
+// address alone has none. Paging replaces the address rather than adding one, so the
+// browser's back goes to whatever opened the diff, not through every file paged past.
+async function showDiff(params, siblings, index, { replace = false } = {}) {
   try {
     const data = await api('/diff?' + qs(params));
     // Side by side needs room for two columns of code; below that it is unreadable. The
-  // choice then sticks, so paging through files with ] and [ does not keep flipping layout.
-  const unified = state.diff ? state.diff.unified : window.innerWidth < 1100;
-    state.diff = { params, data, unified, siblings, index, back };
+    // choice then sticks, so paging through files with ] and [ does not keep flipping layout.
+    const unified = state.diff ? state.diff.unified : window.innerWidth < 1100;
+    state.diff = { params, data, unified, siblings, index };
     // A diff is a view of its own, whatever opened it. Without this a diff reached from the
     // explorer left the view as 'explore', where the keys below do nothing and typing in the
     // search box would put the file back.
     setTabs('diff');
+    navigate(routes.diff(params), { replace });
     renderDiff();
   } catch (e) { fail(e); }
+}
+
+// Where the diff's back button goes: to the page before it when this page put it there,
+// otherwise to the list the diff belongs to.
+function leaveDiff() {
+  if (navigated > 0) { history.back(); return; }
+  const p = state.diff.params;
+  if (p.kind === 'commit' || p.kind === 'revisions') showLog(null, true);
+  else if (p.kind === 'staged') showChanges(true);
+  else showChanges(false);
 }
 
 function renderDiff() {
@@ -992,20 +1173,20 @@ function renderDiff() {
     <span class="badge">${esc(d.target)}</span><span class="dim">−${d.before.line_ops.filter(o => o !== 'none').length} +${d.after.line_ops.filter(o => o !== 'none').length}</span>
     <span class="dim">${d.structural ? 'structural diff' : 'line diff'}${d.large_residual ? ' · rewritten?' : ''}</span>
     <span class="spacer"></span>
-    <button data-act="prevh" title="previous hunk (p)">▲ hunk</button><button data-act="nexth" title="next hunk (n)">▼ hunk</button>
+    <span class="hunknav"><button data-act="prevh" title="previous hunk (p)">▲ hunk</button><button data-act="nexth" title="next hunk (n)">▼ hunk</button></span>
     <button data-act="layout">${diff.unified ? 'Side by side' : 'Unified'}</button>
     ${diff.siblings.length > 1 ? `<button data-act="prev" ${diff.index === 0 ? 'disabled' : ''}>◀ file</button><span class="dim">${diff.index + 1}/${diff.siblings.length}</span><button data-act="next" ${diff.index + 1 >= diff.siblings.length ? 'disabled' : ''}>file ▶</button>` : ''}
     <button data-act="review" title="have the agent review this change into REVIEW.md">Ask agent to review</button>
     <button data-act="open">Open in explorer</button>`;
   content.appendChild(head);
-  on(head, 'back', () => diff.back());
+  on(head, 'back', leaveDiff);
   on(head, 'review', () => askAgent({ preset: 'review_diff', path: diff.params.path, target: d.target }));
   on(head, 'layout', () => { diff.unified = !diff.unified; renderDiff(); });
   on(head, 'open', () => openFile(diff.params.path));
   const sibling = k => {
     const f = diff.siblings[k];
     const letter = statusLetter(f);
-    showDiff({ ...diff.params, path: f.path, old_path: f.old_path || '', status: letter }, diff.siblings, k, diff.back);
+    showDiff({ ...diff.params, path: f.path, old_path: f.old_path || '', status: letter }, diff.siblings, k, { replace: true });
   };
   on(head, 'prev', () => sibling(diff.index - 1));
   on(head, 'next', () => sibling(diff.index + 1));
@@ -1070,6 +1251,8 @@ function renderDiff() {
     l.appendChild(lt); rr.appendChild(rt);
     wrap.appendChild(l); wrap.appendChild(rr);
     content.appendChild(wrap);
+    // Each side scrolls on its own, so each is a panel for the sticky comment rows.
+    watchPanel(l); watchPanel(rr);
   } else {
     const t = document.createElement('table');
     t.className = 'code';
@@ -1093,7 +1276,7 @@ function renderDiff() {
     }
     content.appendChild(t);
   }
-  $('#hint').textContent = `${diff.hunks} hunks · n/p jump between hunks · click an after-side line number to comment`;
+  hint(`${diff.hunks} hunks · n/p jump between hunks · click an after-side line number to comment`, `${diff.hunks} hunks · tap an after-side line number to comment`);
   diff.currentHunk = 0;
   if (diff.hunks) jumpHunk(1);
 }
@@ -1104,13 +1287,14 @@ function jumpHunk(delta) {
   diff.currentHunk = ((diff.currentHunk - 1 + delta + diff.hunks) % diff.hunks) + 1;
   const row = $(`#content tr[data-hunk="${diff.currentHunk}"]`);
   if (row) row.scrollIntoView({ block: 'center' });
-  $('#hint').textContent = `hunk ${diff.currentHunk}/${diff.hunks} · n/p jump between hunks · click an after-side line number to comment`;
+  hint(`hunk ${diff.currentHunk}/${diff.hunks} · n/p jump between hunks · click an after-side line number to comment`, `hunk ${diff.currentHunk}/${diff.hunks} · tap an after-side line number to comment`);
 }
 
 // ----- review ---------------------------------------------------------------------------------
 
 async function showReview() {
   setTabs('review');
+  navigate(routes.view('review'));
   try {
     const all = await api('/comments');
     state.allComments = all;
@@ -1137,11 +1321,11 @@ async function showReview() {
       on(el, 'ask', e => { e.stopPropagation(); askAgent({ preset: 'address_comment', comment: c.comment }); });
       on(el, 'toggle', e => { e.stopPropagation(); api('/comments/toggle', { body: { comment: c.comment } }).then(showReview).catch(fail); });
       on(el, 'delete', e => { e.stopPropagation(); api('/comments/delete', { body: { comment: c.comment } }).then(showReview).catch(fail); });
-      on(el, 'edit', e => { e.stopPropagation(); const t = prompt('Edit comment', c.comment.text); if (t && t.trim()) api('/comments/edit', { body: { comment: c.comment, text: t } }).then(showReview).catch(fail); });
+      on(el, 'edit', async e => { e.stopPropagation(); const t = await askText('Edit comment', c.comment.text); if (t) api('/comments/edit', { body: { comment: c.comment, text: t } }).then(showReview).catch(fail); });
       list.appendChild(el);
     }
     await loadState();
-    $('#hint').textContent = 'Click a comment to open the file at its line.';
+    hint('Click a comment to open the file at its line.', 'Tap a comment to open the file at its line.');
   } catch (e) { fail(e); }
 }
 
@@ -1149,8 +1333,8 @@ async function showReview() {
 
 // A comment on a whole file or directory, from the tree or the file header.
 async function addPathComment(path) {
-  const text = prompt('Comment on ' + path);
-  if (!text || !text.trim()) return;
+  const text = await askText('Comment on ' + path, '', 'Add to REVIEW.md');
+  if (!text) return;
   try {
     await api('/comments', { body: { path, line: null, end_line: null, text } });
     msg('comment added to REVIEW.md');
@@ -1162,14 +1346,15 @@ async function addPathComment(path) {
   } catch (e) { fail(e); }
 }
 
-function addNote(path) {
-  const text = prompt(path ? 'Note on ' + path : 'General note');
-  if (!text || !text.trim()) return;
+async function addNote(path) {
+  const text = await askText(path ? 'Note on ' + path : 'General note', '', 'Add to NOTES.md');
+  if (!text) return;
   api('/notes', { body: { path: path || null, text } }).then(() => { msg('note added to NOTES.md'); if (state.view === 'notes') showNotes(); else if (state.file && state.file.path === path) refreshFileComments(); }).catch(fail);
 }
 
 async function showNotes() {
   setTabs('notes');
+  navigate(routes.view('notes'));
   try {
     const notes = await api('/notes');
     const content = $('#content');
@@ -1184,7 +1369,7 @@ async function showNotes() {
         <span class="actions"><button class="small" data-act="edit">edit</button><button class="small" data-act="delete">delete</button></span>`;
       if (n.target !== 'General') el.onclick = () => openFile(n.target);
       on(el, 'delete', e => { e.stopPropagation(); api('/notes/delete', { body: { note: n } }).then(showNotes).catch(fail); });
-      on(el, 'edit', e => { e.stopPropagation(); const t = prompt('Edit note', n.text); if (t && t.trim()) api('/notes/edit', { body: { note: n, text: t } }).then(showNotes).catch(fail); });
+      on(el, 'edit', async e => { e.stopPropagation(); const t = await askText('Edit note', n.text); if (t) api('/notes/edit', { body: { note: n, text: t } }).then(showNotes).catch(fail); });
       list.appendChild(el);
     }
     $('#hint').textContent = '';
@@ -1196,7 +1381,9 @@ async function showNotes() {
 function setTabs(view) {
   state.view = view;
   document.querySelectorAll('header .tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
-  $('#tree').style.display = view === 'explore' ? '' : 'none';
+  // The stylesheet shows the tree for the explorer only, and on a phone either it or the file.
+  document.body.dataset.view = view;
+  document.querySelector('header').classList.remove('open');
   hidePopover();
   if (view !== 'explore') $('#drawer').hidden = true;
 }
@@ -1219,8 +1406,12 @@ function rerenderCurrentView() {
 
 document.querySelectorAll('header .tabs button').forEach(b => b.onclick = () => {
   const v = b.dataset.view;
-  // A tab always starts its view afresh, rather than redrawing what was there.
-  if (v === 'explore') { setTabs('explore'); renderFile(); }
+  // A tab always starts its view afresh, rather than redrawing what was there. Explore
+  // goes back to the open file, or, tapped again on a phone while a file is up, to the tree.
+  if (v === 'explore') {
+    if (!state.file || (phone() && state.view === 'explore' && document.body.classList.contains('showfile'))) showTree();
+    else { setTabs('explore'); navigate(routes.file(state.file.path)); renderFile(); }
+  }
   if (v === 'changes') showChanges();
   if (v === 'log') showLog(null, true);
   if (v === 'review') showReview();
@@ -1248,7 +1439,7 @@ $('#search').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; s
 
 const HELP = `
 <h3>Explore</h3><table>
-<tr><td><kbd>click line number</kbd></td><td>comment on that line; shift-click extends the range</td></tr>
+<tr><td><kbd>click line number</kbd></td><td>comment on that line; shift-click, or the form's <kbd>Extend range</kbd> and another line number, extends the range</td></tr>
 <tr><td><kbd>Comment</kbd></td><td>a comment on the whole file; <kbd>+</kbd> on a directory in the tree comments on it</td></tr>
 <tr><td><kbd>/</kbd></td><td>search in the file (smart case)</td></tr>
 <tr><td><kbd>Note</kbd></td><td>a note on the file, kept in NOTES.md</td></tr>
@@ -1273,7 +1464,7 @@ const HELP = `
 <tr><td><span class="s-update">yellow</span></td><td>updated</td></tr>
 <tr><td><span class="s-move">grey</span></td><td>moved</td></tr>
 <tr><td><span style="color:var(--exact)">●</span> <span style="color:var(--moved)">●</span> <span style="color:var(--stale)">●</span></td><td>comment; yellow when its line moved, red when the line is gone</td></tr></table>
-<p class="dim">Comments live in REVIEW.md, notes in NOTES.md, both at the repository root. Esc closes this.</p>`;
+<p class="dim">Comments live in REVIEW.md, notes in NOTES.md, both at the repository root. Every view has an address, so the browser's back returns to the previous one and a file or a diff can be linked to. Esc closes this.</p>`;
 $('#help').innerHTML = HELP;
 $('#helpbtn').onclick = () => { $('#help').hidden = !$('#help').hidden; };
 
@@ -1308,6 +1499,60 @@ $('#theme').onchange = async e => {
   } catch (err) { fail(err); }
 };
 
+// ----- addresses ------------------------------------------------------------------------------
+
+// Every view has an address in the fragment, so the browser's back goes to the previous
+// view, a reload keeps the place, and a file or a comment can be linked to. The fragment
+// never reaches the server. With several repositories, `/r<N>` leads.
+const routes = {
+  prefix: () => state.repo ? `#/r${state.repo}` : '#',
+  tree: () => routes.prefix() + '/',
+  file: (path, line) => routes.prefix() + '/file/' + encodeURIComponent(path).replace(/%2F/g, '/') + (line ? '?line=' + line : ''),
+  changes: staged => routes.prefix() + '/changes' + (staged ? '?staged=1' : ''),
+  log: (path, commit) => routes.prefix() + '/log' + (path || commit ? '?' + qs({ path, commit }) : ''),
+  diff: params => routes.prefix() + '/diff?' + qs(params),
+  view: name => routes.prefix() + '/' + name,
+};
+let currentRoute = null, navigated = 0;
+function navigate(hash, { replace = false } = {}) {
+  if (currentRoute === hash) return;
+  currentRoute = hash;
+  navigated++;
+  if (location.hash === hash) return;
+  if (replace) location.replace(hash); else location.hash = hash;
+}
+
+// Shows the view the address names. Each view records its own address, which is the one
+// being shown, so nothing here loops.
+async function route() {
+  const full = location.hash || '#/';
+  currentRoute = full;
+  // The first view gets an address too, so that back from the next one returns here and
+  // not to the page that signed in.
+  if (!location.hash) location.replace(full);
+  let rest = full.slice(1);
+  const repo = rest.match(/^\/r(\d+)(\/.*)?$/);
+  if (repo) {
+    rest = repo[2] || '/';
+    const n = Number(repo[1]);
+    if (n !== state.repo && state.repos[n]) { await switchRepo(n); currentRoute = full; }
+  }
+  const q = rest.indexOf('?');
+  const params = Object.fromEntries(new URLSearchParams(q >= 0 ? rest.slice(q + 1) : ''));
+  const path = q >= 0 ? rest.slice(0, q) : rest;
+  if (path.startsWith('/file/')) return openFile(decodeURIComponent(path.slice(6)), params.line ? Number(params.line) : undefined);
+  if (path === '/changes') return showChanges(params.staged === '1');
+  if (path === '/log') return showLog(params.path || null, true, params.commit || null);
+  if (path === '/diff' && params.path) return showDiff(params, [{ path: params.path, old_path: params.old_path || null, status: params.status || 'M' }], 0);
+  if (path === '/review') return showReview();
+  if (path === '/notes') return showNotes();
+  if (path === '/agent') return showAgent();
+  setTabs('explore');
+  document.body.classList.remove('showfile');
+  renderFile();
+}
+window.addEventListener('hashchange', () => { if (location.hash !== currentRoute) route().catch(fail); });
+
 startAgentPolling();
 (async () => {
   try {
@@ -1315,7 +1560,8 @@ startAgentPolling();
     await loadRepos();
     state.allComments = await api('/comments');
     await loadState();
-    $('#hint').textContent = 'Pick a file on the left. ? shows the keys.';
+    hint('Pick a file on the left. ? shows the keys.', 'Pick a file from the tree.');
+    await route();
   } catch (e) { fail(e); }
 })();
 </script>

@@ -45,8 +45,15 @@ const LOGIN_HTML: &str = include_str!("web/login.html");
 /// The page carries its own script and styles and fetches nothing else, so everything but
 /// same-origin requests can be refused. `form-action` is for the sign-in form.
 const CSP: &str = "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; \
-                   style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; \
-                   base-uri 'none'; form-action 'self'";
+                   style-src 'unsafe-inline'; img-src 'self' data:; manifest-src 'self'; \
+                   frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+/// What a phone needs to put the page on its home screen: the app's name and icons, and
+/// nothing about any repository. Served to anyone, like the sign-in page, since a browser
+/// fetches a manifest without the session cookie.
+const MANIFEST_JSON: &str = include_str!("web/manifest.json");
+const ICON_SVG: &str = include_str!("web/icon.svg");
+const ICON_PNG: &[u8] = include_bytes!("web/icon.png");
 
 /// How many API requests may be working at once. Each one can take a repository's lock and
 /// do git work on a blocking thread, so letting them pile up without bound only moves the
@@ -432,6 +439,9 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/login", post(post_login))
+        .route("/manifest.json", get(manifest))
+        .route("/icon.svg", get(icon_svg))
+        .route("/icon.png", get(icon_png))
         .nest("/api", api)
         .layer(middleware::from_fn(security_headers))
         .with_state(state)
@@ -522,6 +532,21 @@ async fn index(
         "open the URL codereview printed, token included",
     )
         .into_response()
+}
+
+async fn manifest() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/manifest+json")],
+        MANIFEST_JSON,
+    )
+}
+
+async fn icon_svg() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "image/svg+xml")], ICON_SVG)
+}
+
+async fn icon_png() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "image/png")], ICON_PNG)
 }
 
 /// The API token of the session this request's cookie names, if it names a live one.

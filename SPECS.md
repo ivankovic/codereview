@@ -240,7 +240,31 @@ already worded, so the page only draws. The page has the same views as the termi
 explorer with tree and file, changes, log and history, diff, review, notes, and the agent tab;
 clicking a name in code offers its definition and usages in a side drawer. A comment on a whole
 file comes from the Comment button in the file header and is shown above the first line; one on a
-directory from the `+` on its row in the tree.
+directory from the `+` on its row in the tree. A range is chosen with shift-click, or with the
+comment form's Extend range button followed by the line number at the other end, which keeps the
+text typed so far. Editing a comment or a note, and commenting on a file or a directory, opens a
+text sheet of the page's own rather than the browser's prompt.
+
+Every view has an address in the URL fragment, which never reaches the server: the tree, a file
+with an optional line, the working tree or staged changes, the log with an optional path and
+commit, a diff with its parameters, and the review, notes and agent tabs, prefixed with the
+repository's number when it is not the first. The browser's back returns to the previous view, a
+reload keeps the place, and a diff's back button goes to whatever opened it. Paging through the
+files of one change replaces the address instead of adding to the history.
+
+**On a phone.** Below 700 pixels of width, or 500 of height, the header is one row with the
+tools (symbol and file search, colour scheme, refresh, sign out, help) behind one button, the
+tabs run along the bottom edge, and views show one pane at a time: the tree or the file, the
+commits or one commit, each with a back button, and the symbol drawer as a sheet over the lower
+half. Lists lay each item out as a card with its buttons underneath. The diff is unified, with
+the hunk buttons floating at the bottom right. A comment row, and the comment form, stay as wide
+as the panel and stick to its left edge while the code scrolls sideways, so a comment's text and
+buttons are in view whatever the line length; this holds on every screen size. On a screen that
+cannot hover, the directory `+` is always visible, tap targets are larger, inputs are 16 pixels
+so iOS does not zoom into them, and the footer's hints say tap rather than click and name no
+keys. The page declares a web app manifest and icons, served without a session, so a phone can
+put it on its home screen as a standalone app whose title bar follows the colour scheme; the
+agent panel stops polling while the page is hidden and catches up when it is shown again.
 
 ## Command line
 
