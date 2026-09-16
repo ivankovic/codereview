@@ -51,8 +51,8 @@ aside#tree .row.dir:hover .add { visibility: visible; }
 aside#tree .add:hover { color: var(--fg); }
 aside#tree input { width: calc(100% - 16px); margin: 0 8px 6px; }
 section#content { flex: 1; overflow: auto; min-width: 0; }
-.filehead { position: sticky; top: 0; z-index: 2; display: flex; gap: 8px; align-items: center; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.filehead .path { font-weight: 600; font-family: ui-monospace, monospace; }
+.panelhead { position: sticky; top: 0; z-index: 2; display: flex; gap: 8px; align-items: center; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.panelhead .path { font-weight: 600; font-family: ui-monospace, monospace; }
 .badge { padding: 0 6px; border-radius: 8px; font-size: 11px; border: 1px solid var(--border); }
 .badge.M { color: var(--upd-fg); } .badge.A, .badge.q { color: var(--ins-fg); } .badge.D { color: var(--del-fg); }
 table.code { border-collapse: collapse; width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; background: var(--code-bg); }
@@ -108,7 +108,7 @@ footer .msg.error { color: var(--del-fg); }
 #popover { position: fixed; z-index: 20; max-width: 90vw; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
 #popover .word { font-family: ui-monospace, monospace; font-weight: 600; margin-right: 4px; }
 #drawer { width: 380px; min-width: 200px; max-width: 60vw; border-left: 1px solid var(--border); background: var(--panel); overflow: auto; display: flex; flex-direction: column; }
-#drawer .filehead { position: static; }
+#drawer .panelhead { position: static; }
 /* The list scrolls, not the drawer, so the close button in its header stays put. */
 #drawer .list { flex: 1; overflow: auto; }
 #drawer .list .item { flex-direction: column; align-items: stretch; gap: 2px; }
@@ -180,7 +180,10 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>'
 
 const state = {
   repo: 0, repos: [], agentEnabled: true,
-  view: 'explore', files: [], status: {}, pending: 0, hasCommits: true,
+  view: 'explore', files: [],
+  // path -> the one-letter change mark, which is not the same shape as a ChangedFile's
+  // `status`, a word.
+  statusLetters: {}, pending: 0, hasCommits: true,
   tree: { collapsed: new Set(), filter: '' },
   file: null,      // { path, lines, text, comments, notes, line_ops, blame }
   diff: null,      // { params, data, unified, siblings, index, back }
@@ -277,7 +280,7 @@ async function loadState() {
   }
   sel.value = s.theme.name;
   applyTheme(s.theme);
-  state.status = Object.fromEntries(s.status);
+  state.statusLetters = Object.fromEntries(s.status);
   state.pending = s.pending;
   state.hasCommits = s.has_commits;
   $('#branch').textContent = s.branch + ' · ' + s.root;
@@ -346,7 +349,7 @@ function renderTree() {
       if (!collapsed) walk(d, depth + 1);
     }
     for (const f of node.files.sort((a, b) => a.name.localeCompare(b.name))) {
-      const st = state.status[f.path] || '';
+      const st = state.statusLetters[f.path] || '';
       const cls = st === '?' ? 'q' : st;
       const sel = state.file && state.file.path === f.path ? ' selected' : '';
       const cnt = counts[f.path] ? `<span class="cnt">●${esc(counts[f.path])}</span>` : '';
@@ -538,9 +541,9 @@ function renderFile() {
   content.innerHTML = '';
   if (!f) { content.innerHTML = '<div class="center">Pick a file on the left.</div>'; return; }
   setTabs('explore');
-  const st = state.status[f.path] || '';
+  const st = state.statusLetters[f.path] || '';
   const head = document.createElement('div');
-  head.className = 'filehead';
+  head.className = 'panelhead';
   head.innerHTML = `<span class="path">${esc(f.path)}</span>
     ${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
     <span class="dim">${f.lines.length} lines</span>
@@ -714,7 +717,7 @@ function symbolHit(s) {
 function showDrawer(title, hits) {
   const d = $('#drawer');
   d.hidden = false;
-  d.innerHTML = `<div class="filehead"><span class="path">${esc(title)}</span><span class="spacer"></span><button class="small" data-act="close">✕</button></div><div class="list"></div>`;
+  d.innerHTML = `<div class="panelhead"><span class="path">${esc(title)}</span><span class="spacer"></span><button class="small" data-act="close">✕</button></div><div class="list"></div>`;
   on(d, 'close', () => { d.hidden = true; });
   const list = d.querySelector('.list');
   for (const h of hits) {
@@ -813,7 +816,7 @@ function showAgent() {
   setTabs('agent');
   startAgentPolling();
   const content = $('#content');
-  content.innerHTML = `<div id="agent"><div class="filehead"><span class="path">agent</span><span id="agentname" class="dim"></span><span id="agentstatus" class="badge"></span><span id="agentprogress" class="progress"></span><span id="agentusage" class="usage"></span><span class="spacer"></span>
+  content.innerHTML = `<div id="agent"><div class="panelhead"><span class="path">agent</span><span id="agentname" class="dim"></span><span id="agentstatus" class="badge"></span><span id="agentprogress" class="progress"></span><span id="agentusage" class="usage"></span><span class="spacer"></span>
       <label class="dim"><input type="checkbox" id="thoughts"> thoughts</label>
       <label class="dim"><input type="checkbox" id="showlog"> log</label>
       <button data-act="all" title="work through every pending comment in REVIEW.md">Address all pending</button>
@@ -871,7 +874,7 @@ async function showChanges(staged = false) {
   try {
     const files = await api('/changes?staged=' + staged);
     const content = $('#content');
-    content.innerHTML = `<div class="filehead"><span class="path">${staged ? 'staged' : 'working tree'}</span><span class="dim">${files.length} files</span>
+    content.innerHTML = `<div class="panelhead"><span class="path">${staged ? 'staged' : 'working tree'}</span><span class="dim">${files.length} files</span>
       <span class="spacer"></span><button data-act="switch">${staged ? 'Show working tree' : 'Show staged'}</button></div><div class="list"></div>`;
     on(content, 'switch', () => showChanges(!staged));
     const list = content.querySelector('.list');
@@ -905,7 +908,7 @@ async function showLog(path = null, keep = false) {
 function renderLog() {
   const log = state.log;
   const content = $('#content');
-  content.innerHTML = `<div class="split"><div id="commits"><div class="filehead"><span class="path">${log.path ? 'history of ' + esc(log.path) : 'log'}</span><span class="dim">${log.commits.length} commits${log.exhausted ? '' : '+'}</span></div><div class="list"></div></div>
+  content.innerHTML = `<div class="split"><div id="commits"><div class="panelhead"><span class="path">${log.path ? 'history of ' + esc(log.path) : 'log'}</span><span class="dim">${log.commits.length} commits${log.exhausted ? '' : '+'}</span></div><div class="list"></div></div>
     <div id="commit"><div class="details"></div><div class="list files"></div></div></div>`;
   const list = content.querySelector('#commits .list');
   if (!log.commits.length) list.innerHTML = '<div class="center">no commits</div>';
@@ -984,7 +987,7 @@ function renderDiff() {
   content.innerHTML = '';
   const changes = d.before.line_ops.filter(o => o !== 'none').length + '/' + d.after.line_ops.filter(o => o !== 'none').length;
   const head = document.createElement('div');
-  head.className = 'filehead';
+  head.className = 'panelhead';
   head.innerHTML = `<button data-act="back">← back</button><span class="path">${esc(diff.params.old_path ? diff.params.old_path + ' → ' + diff.params.path : diff.params.path)}</span>
     <span class="badge">${esc(d.target)}</span><span class="dim">−${d.before.line_ops.filter(o => o !== 'none').length} +${d.after.line_ops.filter(o => o !== 'none').length}</span>
     <span class="dim">${d.structural ? 'structural diff' : 'line diff'}${d.large_residual ? ' · rewritten?' : ''}</span>
@@ -1097,7 +1100,7 @@ function renderDiff() {
 
 function jumpHunk(delta) {
   const diff = state.diff;
-  if (!D || !diff.hunks) return;
+  if (!diff || !diff.hunks) return;
   diff.currentHunk = ((diff.currentHunk - 1 + delta + diff.hunks) % diff.hunks) + 1;
   const row = $(`#content tr[data-hunk="${diff.currentHunk}"]`);
   if (row) row.scrollIntoView({ block: 'center' });
@@ -1115,7 +1118,7 @@ async function showReview() {
     const items = all.filter(c => show || c.comment.section === 'Pending').sort((x, y) => x.comment.path.localeCompare(y.comment.path) || (x.line || 0) - (y.line || 0));
     const pending = all.filter(c => c.comment.section === 'Pending').length;
     const content = $('#content');
-    content.innerHTML = `<div class="filehead"><span class="path">REVIEW.md</span><span class="dim">${pending} pending, ${all.length - pending} completed</span><span class="spacer"></span>
+    content.innerHTML = `<div class="panelhead"><span class="path">REVIEW.md</span><span class="dim">${pending} pending, ${all.length - pending} completed</span><span class="spacer"></span>
       <button data-act="toggle">${show ? 'Hide completed' : 'Show completed'}</button><button data-act="reanchor" title="rewrite line numbers of moved comments">Re-anchor</button><button data-act="askall" title="have the agent work through every pending comment">Address all with agent</button></div><div class="list"></div>`;
     on(content, 'toggle', () => { state.review.showCompleted = !show; showReview(); });
     on(content, 'askall', () => askAgent({ preset: 'address_all' }));
@@ -1170,7 +1173,7 @@ async function showNotes() {
   try {
     const notes = await api('/notes');
     const content = $('#content');
-    content.innerHTML = `<div class="filehead"><span class="path">NOTES.md</span><span class="dim">${notes.length} notes</span><span class="spacer"></span><button data-act="add">Add general note</button></div><div class="list"></div>`;
+    content.innerHTML = `<div class="panelhead"><span class="path">NOTES.md</span><span class="dim">${notes.length} notes</span><span class="spacer"></span><button data-act="add">Add general note</button></div><div class="list"></div>`;
     on(content, 'add', () => addNote(null));
     const list = content.querySelector('.list');
     if (!notes.length) list.innerHTML = '<div class="center">no notes</div>';
