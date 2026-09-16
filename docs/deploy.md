@@ -55,6 +55,7 @@ User=review
 Group=review
 WorkingDirectory=/srv/review
 EnvironmentFile=/etc/codereview.env
+Environment=CODEREVIEW_CONFIG=/srv/review/config.toml
 ExecStart=/usr/local/bin/codereview web \
     --host 127.0.0.1 --port 8765 --no-open --no-agent \
     --public-url https://review.example.com \
@@ -83,6 +84,9 @@ Notes on that unit:
 
 - The service user must own the repositories, or git refuses to touch them. If it does not,
   add them to `safe.directory` in that user's git config.
+- `CODEREVIEW_CONFIG` matters here: the config file otherwise lives under the service user's
+  home, which `ProtectHome=yes` hides, and picking a colour scheme on the page saves it. Put
+  it somewhere in `ReadWritePaths`, as above.
 - `ProtectHome=yes` hides `/home`, so keep the repositories somewhere else, `/srv/review` here.
   Every path in `ExecStart` is a repository, a directory inside one, or a directory of
   checkouts, whose repositories are all opened. See the main README.
@@ -142,7 +146,7 @@ server {
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
-    http2 on;
+    http2 on;                        # nginx 1.25.1 and later; before that: listen 443 ssl http2;
     server_name review.example.com;
 
     ssl_certificate     /etc/letsencrypt/live/review.example.com/fullchain.pem;
@@ -232,6 +236,7 @@ deny all;
 - Each repository keeps its own agent process, started the first time somebody asks for one,
   and its own symbol index, built the first time somebody looks a name up. A directory of
   many large checkouts is cheap to start and grows as it is used.
-- Logs go to the journal: `journalctl -u codereview -f`.
+- Logs go to the journal: `journalctl -u codereview -f`. The start-up line there holds the
+  token, which is the other copy of it besides `/etc/codereview.env`.
 - To rotate the token, edit `/etc/codereview.env` and `systemctl restart codereview`. Every
   browser has to open the new token URL once.
