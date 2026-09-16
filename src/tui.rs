@@ -402,34 +402,35 @@ mod tests {
         press(&mut app, &[KeyCode::Enter]);
         assert!(matches!(app.screen(), Screen::Agent));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while app.agent.permission.is_none() && std::time::Instant::now() < deadline {
+        while app.agent.permission().is_none() && std::time::Instant::now() < deadline {
             app.tick();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(
-            app.agent.permission.is_some(),
+            app.agent.permission().is_some(),
             "status: {}",
-            app.agent.status
+            app.agent.status()
         );
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("agent asks: Read a.rs"));
         assert!(screen.contains("what is this?"));
         press(&mut app, &[KeyCode::Char('1')]);
-        while app.agent.status != "idle" && std::time::Instant::now() < deadline {
+        while app.agent.status() != "idle" && std::time::Instant::now() < deadline {
             app.tick();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("Hello from fake, 1 resources"), "{screen}");
         assert!(screen.contains("Read a.rs (read) [completed]"));
-        assert_eq!(app.agent.status, "idle");
+        assert_eq!(app.agent.status(), "idle");
         assert!(app.agent.progress().is_none());
         // The backend's log lines are in the transcript and `l` hides them.
         let logs: Vec<&str> = app
             .agent
-            .entries
+            .transcript
+            .entries()
             .iter()
-            .filter(|e| e.kind == crate::tui::agent_panel::EntryKind::Log)
+            .filter(|e| e.kind == crate::transcript::EntryKind::Log)
             .map(|e| e.text.as_str())
             .collect();
         assert!(
@@ -468,16 +469,22 @@ mod tests {
         // `R` restarts the agent from inside the panel instead of opening the review list.
         press(&mut app, &[KeyCode::Char('R')]);
         assert!(matches!(app.screen(), Screen::Agent));
-        assert!(app.agent.entries.iter().any(|e| e.text == "restarting"));
+        assert!(
+            app.agent
+                .transcript
+                .entries()
+                .iter()
+                .any(|e| e.text == "restarting")
+        );
         while !app.agent.running() && std::time::Instant::now() < deadline {
             app.tick();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(app.agent.running(), "restart: {}", app.agent.status);
+        assert!(app.agent.running(), "restart: {}", app.agent.status());
         // Escape leaves the panel when idle; the transcript is kept.
         press(&mut app, &[KeyCode::Esc]);
         assert!(matches!(app.screen(), Screen::Explorer));
-        assert!(!app.agent.entries.is_empty());
+        assert!(!app.agent.transcript.entries().is_empty());
         // `A` and `i` reach the panel from the explorer too; `t` inside it toggles thoughts.
         press(&mut app, &[KeyCode::Char('A')]);
         assert!(matches!(app.screen(), Screen::Agent));

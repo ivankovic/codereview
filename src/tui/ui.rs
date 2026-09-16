@@ -42,7 +42,7 @@ fn draw_repo_strip(frame: &mut Frame, ws: &Workspace, area: Rect) {
     let mut labels: Vec<(String, Style)> = Vec::new();
     for (i, app) in ws.apps.iter().enumerate() {
         let mut label = format!(" {} {}", i + 1, app.session.name());
-        if app.agent.permission.is_some() {
+        if app.agent.permission().is_some() {
             label.push_str(" ?");
         } else if app.agent_active() {
             label.push(' ');
@@ -55,7 +55,7 @@ fn draw_repo_strip(frame: &mut Frame, ws: &Workspace, area: Rect) {
         label.push(' ');
         let style_ = if i == ws.active {
             style::accent(&theme).reversed()
-        } else if app.agent.permission.is_some() {
+        } else if app.agent.permission().is_some() {
             style::fg(theme.moved).bold()
         } else {
             style::dim(&theme)
@@ -120,7 +120,7 @@ fn draw_repo_picker(frame: &mut Frame, ws: &Workspace, area: Rect) {
         .take(rows)
         .map(|(i, app)| {
             let pending = app.session.review.pending_count();
-            let agent = if app.agent.permission.is_some() {
+            let agent = if app.agent.permission().is_some() {
                 "agent waiting for permission"
             } else if app.agent_active() {
                 "agent working"
@@ -810,10 +810,10 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             text.clone().into()
         });
-        if app.agent.permission.is_some() && elsewhere {
+        if app.agent.permission().is_some() && elsewhere {
             spans.push("  agent is waiting for permission (A)".into());
         }
-    } else if app.agent.permission.is_some() && elsewhere {
+    } else if app.agent.permission().is_some() && elsewhere {
         spans.push(" ".into());
         spans.push(Span::styled(
             "agent is waiting for permission (A)",

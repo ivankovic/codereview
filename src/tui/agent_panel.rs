@@ -3,7 +3,6 @@
 //! enough to do; the app keeps one of these, hands it keys while its screen is up, and ticks
 //! it so that an agent in a repository nobody is looking at still makes progress.
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
@@ -14,64 +13,12 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use serde_json::Value;
 
-use crate::agent::{Agent, Event as AgentEvent, PermissionOption, Role};
+use crate::agent::Agent;
 use crate::config::AgentConfig;
 use crate::theme::Theme;
+use crate::transcript::{EntryKind, Transcript};
 use crate::tui::style;
-
-/// Who said a line of the transcript.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntryKind {
-    User,
-    Agent,
-    Thought,
-    Tool,
-    System,
-    /// Progress and diagnostics from the backend: what started, stderr, what a turn cost.
-    Log,
-}
-
-#[derive(Debug, Clone)]
-pub struct Entry {
-    pub kind: EntryKind,
-    pub text: String,
-}
-
-/// What is known about one tool call, merged from its updates.
-#[derive(Debug, Clone, Default)]
-struct ToolInfo {
-    title: String,
-    kind: Option<String>,
-    status: Option<String>,
-    locations: Vec<String>,
-    output: Option<String>,
-}
-
-impl ToolInfo {
-    fn render(&self) -> String {
-        let mut line = self.title.clone();
-        if let Some(k) = &self.kind {
-            line = format!("{line} ({k})");
-        }
-        if let Some(s) = &self.status {
-            line = format!("{line} [{s}]");
-        }
-        if !self.locations.is_empty() {
-            line = format!("{line} {}", self.locations.join(", "));
-        }
-        if let Some(out) = &self.output {
-            let short: String = out.chars().take(600).collect();
-            line.push('\n');
-            line.push_str(&short);
-            if out.len() > short.len() {
-                line.push('…');
-            }
-        }
-        line
-    }
-}
 
 /// What a key press wants the app to do, when it is not something the panel can do itself.
 pub enum Action {
@@ -88,29 +35,15 @@ pub enum Action {
 /// the screen, and so that each repository has its own.
 #[derive(Default)]
 pub struct Panel {
-    pub entries: Vec<Entry>,
+    /// What has been said, and what the turn is costing.
+    pub transcript: Transcript,
     pub scroll: usize,
     /// Keep the view at the bottom as text streams in.
     pub follow: bool,
-    pub permission: Option<(Value, String, Vec<PermissionOption>)>,
-    /// Tool call id to the entry showing it, for status updates.
-    tools: HashMap<String, (usize, ToolInfo)>,
-    pub status: String,
     pub show_thoughts: bool,
     pub show_log: bool,
-    /// What the backend says it is doing right now.
-    pub phase: String,
     /// When the agent started starting; cleared once it is connected.
     start_began: Option<Instant>,
-    /// When the running turn was sent.
-    turn_started: Option<Instant>,
-    /// When the backend last said anything, to show a long silence for what it is.
-    last_event: Option<Instant>,
-    /// Tool calls seen in the running turn.
-    turn_tools: usize,
-    input_tokens: u64,
-    output_tokens: u64,
-    cost_usd: Option<f64>,
     /// The agent itself, once it has started.
     agent: Option<Agent>,
     /// It is starting on another thread; the result arrives here.
@@ -126,9 +59,18 @@ impl Panel {
         Self {
             follow: true,
             show_log: true,
-            status: "not started".into(),
+            transcript: Transcript::new(),
             ..Self::default()
         }
+    }
+
+    /// The question waiting for an answer, if there is one.
+    pub fn permission(&self) -> Option<&crate::transcript::Pending> {
+        self.transcript.permission.as_ref()
+    }
+
+    pub fn status(&self) -> &str {
+        &self.transcript.status
     }
 
     /// The configured agent's name for titles and hints, worked out on first use.
@@ -167,9 +109,9 @@ impl Panel {
             let _ = tx.send(crate::agent::spawn(&config, &root));
         });
         self.starting = Some(rx);
-        self.status = "starting".into();
+        self.transcript.status = "starting".into();
         self.start_began = Some(Instant::now());
-        self.system(description);
+        self.transcript.system(description);
     }
 
     /// Sends `text` (with embedded `context`) to the agent, starting it first if needed.
@@ -180,17 +122,17 @@ impl Panel {
         config: &AgentConfig,
         root: &Path,
     ) {
-        self.entries.push(Entry {
-            kind: EntryKind::User,
+        self.transcript.apply(crate::agent::Event::Text {
+            role: crate::agent::Role::User,
             text: text.clone(),
         });
         self.follow = true;
         match &mut self.agent {
             Some(agent) => {
                 if let Err(e) = agent.prompt(&text, &context) {
-                    self.system(format!("{e:#}"));
+                    self.transcript.system(format!("{e:#}"));
                 } else {
-                    self.begin_turn();
+                    self.transcript.begin_turn();
                 }
             }
             None => {
@@ -209,17 +151,17 @@ impl Panel {
                     self.starting = None;
                     let name = agent.name().to_string();
                     self.agent = Some(agent);
-                    self.status = "idle".into();
+                    self.transcript.status = "idle".into();
                     self.start_began = None;
-                    self.system(format!("connected to {name}"));
+                    self.transcript.system(format!("connected to {name}"));
                     if let Some((text, context)) = self.queued.take() {
                         let outcome = match &mut self.agent {
                             Some(agent) => agent.prompt(&text, &context),
                             None => Ok(()),
                         };
                         match outcome {
-                            Ok(()) => self.begin_turn(),
-                            Err(e) => self.system(format!("{e:#}")),
+                            Ok(()) => self.transcript.begin_turn(),
+                            Err(e) => self.transcript.system(format!("{e:#}")),
                         }
                     }
                     changed = true;
@@ -227,16 +169,17 @@ impl Panel {
                 Ok(Err(e)) => {
                     self.starting = None;
                     self.queued = None;
-                    self.status = "failed to start".into();
+                    self.transcript.status = "failed to start".into();
                     self.start_began = None;
-                    self.system(format!("could not start the agent: {e:#}"));
+                    self.transcript
+                        .system(format!("could not start the agent: {e:#}"));
                     changed = true;
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     self.starting = None;
                     self.queued = None;
-                    self.status = "failed to start".into();
+                    self.transcript.status = "failed to start".into();
                     self.start_began = None;
                     changed = true;
                 }
@@ -247,47 +190,23 @@ impl Panel {
             None => Vec::new(),
         };
         for event in events {
-            self.apply(event);
+            self.transcript.apply(event);
             changed = true;
         }
         changed
     }
 
-    /// One line of progress for the title and the status bar: the phase, how long the turn
-    /// has run, how long the backend has been silent, tool calls so far. `None` when idle.
+    /// The spinner's current frame, for a title or a strip.
+    /// One line of progress for the title and the status bar.
     pub fn progress(&self) -> Option<String> {
-        if let Some(t) = self.start_began {
-            return Some(format!("starting · {}s", t.elapsed().as_secs()));
-        }
-        if !self.busy() && self.permission.is_none() {
-            return None;
-        }
-        let mut parts = Vec::new();
-        if self.permission.is_some() {
-            parts.push("waiting for permission".to_string());
-        } else if !self.phase.is_empty() {
-            parts.push(self.phase.clone());
-        }
-        if let Some(t) = self.turn_started {
-            parts.push(format!("{}s", t.elapsed().as_secs()));
-        }
-        if let Some(t) = self.last_event {
-            let quiet = t.elapsed().as_secs();
-            if quiet >= 5 && self.permission.is_none() {
-                parts.push(format!("silent for {quiet}s"));
-            }
-        }
-        if self.turn_tools > 0 {
-            parts.push(format!(
-                "{} tool call{}",
-                self.turn_tools,
-                if self.turn_tools == 1 { "" } else { "s" }
-            ));
-        }
-        Some(parts.join(" · "))
+        self.transcript.progress(self.busy(), self.start_began)
     }
 
-    /// The spinner's current frame, for a title or a strip.
+    /// `12.3k in / 1.1k out · $0.21` once the backend has reported any usage.
+    pub fn usage(&self) -> Option<String> {
+        self.transcript.usage()
+    }
+
     pub fn spinner(&self) -> &'static str {
         SPINNER[self.spinner_frame()]
     }
@@ -295,6 +214,7 @@ impl Panel {
     /// Where in its turn the spinner is.
     fn spinner_frame(&self) -> usize {
         (self
+            .transcript
             .turn_started
             .or(self.start_began)
             .map(|t| t.elapsed().as_millis() / 80)
@@ -302,169 +222,11 @@ impl Panel {
             % SPINNER.len() as u128) as usize
     }
 
-    /// `12.3k in / 1.1k out · $0.21` once the backend has reported any usage.
-    pub fn usage(&self) -> Option<String> {
-        if self.input_tokens == 0 && self.output_tokens == 0 && self.cost_usd.is_none() {
-            return None;
-        }
-        let mut text = format!(
-            "{} in / {} out",
-            crate::claude::count(self.input_tokens),
-            crate::claude::count(self.output_tokens)
-        );
-        if let Some(cost) = self.cost_usd {
-            text.push_str(&format!(" · ${cost:.2}"));
-        }
-        Some(text)
-    }
-
-    fn system(&mut self, text: impl Into<String>) {
-        self.entries.push(Entry {
-            kind: EntryKind::System,
-            text: text.into(),
-        });
-    }
-
-    /// Bookkeeping for a prompt that was just sent.
-    fn begin_turn(&mut self) {
-        self.status = "working".into();
-        self.phase = "prompt sent".into();
-        self.turn_started = Some(Instant::now());
-        self.last_event = Some(Instant::now());
-        self.turn_tools = 0;
-    }
-
-    fn apply(&mut self, event: AgentEvent) {
-        self.last_event = Some(Instant::now());
-        match event {
-            AgentEvent::Text { role, text } => {
-                let kind = match role {
-                    Role::Agent => EntryKind::Agent,
-                    Role::Thought => EntryKind::Thought,
-                    Role::User => EntryKind::User,
-                };
-                match self.entries.last_mut() {
-                    Some(last) if last.kind == kind && kind != EntryKind::User => {
-                        last.text.push_str(&text)
-                    }
-                    _ => self.entries.push(Entry { kind, text }),
-                }
-            }
-            AgentEvent::ToolCall {
-                id,
-                title,
-                kind,
-                status,
-                locations,
-                output,
-            } => {
-                if !self.tools.contains_key(&id) {
-                    self.entries.push(Entry {
-                        kind: EntryKind::Tool,
-                        text: String::new(),
-                    });
-                    let i = self.entries.len() - 1;
-                    self.tools.insert(id.clone(), (i, ToolInfo::default()));
-                    self.turn_tools += 1;
-                }
-                let (idx, info) = self.tools.get_mut(&id).expect("present");
-                if let Some(t) = title {
-                    info.title = t;
-                }
-                if kind.is_some() {
-                    info.kind = kind;
-                }
-                if status.is_some() {
-                    info.status = status;
-                }
-                if !locations.is_empty() {
-                    info.locations = locations;
-                }
-                if output.is_some() {
-                    info.output = output;
-                }
-                self.entries[*idx].text = info.render();
-            }
-            AgentEvent::Plan { entries } => {
-                let text = entries
-                    .iter()
-                    .map(|(c, s)| format!("[{s}] {c}"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                self.system(format!("plan:\n{text}"));
-            }
-            AgentEvent::Permission {
-                request_id,
-                title,
-                details,
-                options,
-            } => {
-                let names: Vec<String> = options
-                    .iter()
-                    .enumerate()
-                    .map(|(i, o)| format!("{} {}", i + 1, o.name))
-                    .collect();
-                // The whole of what is being approved goes in the transcript: the bar below
-                // has room for one line, and a command's second line is where something
-                // unwanted would hide.
-                let full = match &details {
-                    Some(d) if d.trim() != title.trim() => format!("permission: {title}\n{d}"),
-                    _ => format!("permission: {title}"),
-                };
-                self.system(format!("{full}\n({})", names.join("  ")));
-                self.permission = Some((request_id, title, options));
-                self.status = "waiting for permission".into();
-            }
-            AgentEvent::TurnDone { stop_reason } => {
-                self.status = if stop_reason == "end_turn" {
-                    "idle".into()
-                } else {
-                    format!("stopped: {stop_reason}")
-                };
-                self.tools.clear();
-                self.phase.clear();
-                self.turn_started = None;
-            }
-            AgentEvent::Error { message } => {
-                self.status = "error".into();
-                self.system(format!("error: {message}"));
-            }
-            AgentEvent::Stderr { text } => self.entries.push(Entry {
-                kind: EntryKind::Log,
-                text: format!("stderr: {text}"),
-            }),
-            AgentEvent::Log { text } => self.entries.push(Entry {
-                kind: EntryKind::Log,
-                text,
-            }),
-            AgentEvent::Status { text } => self.phase = text,
-            AgentEvent::Usage {
-                input_tokens,
-                output_tokens,
-                cost_usd,
-            } => {
-                self.input_tokens += input_tokens;
-                self.output_tokens += output_tokens;
-                if cost_usd.is_some() {
-                    self.cost_usd = cost_usd;
-                }
-            }
-            AgentEvent::Exited { message } => {
-                self.status = "exited".into();
-                self.permission = None;
-                self.phase.clear();
-                self.turn_started = None;
-                self.tools.clear();
-                self.system(message);
-                self.agent = None;
-            }
-        }
-    }
-
     fn answer_permission(&mut self, choice: Option<usize>) {
-        let Some((id, _, options)) = self.permission.take() else {
+        let Some(pending) = self.transcript.permission.take() else {
             return;
         };
+        let (id, options) = (pending.id, pending.options);
         let option = choice.and_then(|i| options.get(i));
         let Some(agent) = &mut self.agent else {
             return;
@@ -473,10 +235,10 @@ impl Panel {
         let label = option
             .map(|o| o.name.clone())
             .unwrap_or_else(|| "cancelled".into());
-        self.status = "working".into();
+        self.transcript.status = "working".into();
         match outcome {
-            Ok(()) => self.system(format!("answered: {label}")),
-            Err(e) => self.system(format!("{e:#}")),
+            Ok(()) => self.transcript.system(format!("answered: {label}")),
+            Err(e) => self.transcript.system(format!("{e:#}")),
         }
     }
 
@@ -496,7 +258,7 @@ impl Panel {
                     if let Some(agent) = &mut self.agent {
                         match agent.cancel() {
                             Ok(()) => return Action::Say("cancelling"),
-                            Err(e) => self.system(format!("{e:#}")),
+                            Err(e) => self.transcript.system(format!("{e:#}")),
                         }
                     }
                 } else {
@@ -504,7 +266,7 @@ impl Panel {
                 }
             }
             KeyCode::Char('i') | KeyCode::Char('a') | KeyCode::Enter => {
-                if self.permission.is_some() {
+                if self.transcript.permission.is_some() {
                     return Action::Say("answer the permission request first (1-9, y, n)");
                 }
                 return Action::Ask(String::new());
@@ -512,21 +274,23 @@ impl Panel {
             KeyCode::Char('A') => {
                 return Action::Ask(crate::agent::prompts::address_all().to_string());
             }
-            KeyCode::Char(c @ '1'..='9') if self.permission.is_some() => {
+            KeyCode::Char(c @ '1'..='9') if self.transcript.permission.is_some() => {
                 self.answer_permission(Some(c as usize - '1' as usize));
             }
-            KeyCode::Char('y') if self.permission.is_some() => {
+            KeyCode::Char('y') if self.transcript.permission.is_some() => {
                 let i = self
+                    .transcript
                     .permission
                     .as_ref()
-                    .and_then(|(_, _, o)| o.iter().position(|x| x.kind.starts_with("allow")));
+                    .and_then(|p| p.options.iter().position(|x| x.kind.starts_with("allow")));
                 self.answer_permission(i);
             }
-            KeyCode::Char('n') if self.permission.is_some() => {
+            KeyCode::Char('n') if self.transcript.permission.is_some() => {
                 let i = self
+                    .transcript
                     .permission
                     .as_ref()
-                    .and_then(|(_, _, o)| o.iter().position(|x| x.kind.starts_with("reject")));
+                    .and_then(|p| p.options.iter().position(|x| x.kind.starts_with("reject")));
                 self.answer_permission(i);
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -558,14 +322,13 @@ impl Panel {
             KeyCode::Char('t') => self.show_thoughts = !self.show_thoughts,
             KeyCode::Char('l') => self.show_log = !self.show_log,
             KeyCode::Char('C') => {
-                self.entries.clear();
-                self.tools.clear();
+                self.transcript.clear();
                 self.scroll = 0;
             }
             KeyCode::Char('R') => {
                 self.agent = None;
-                self.permission = None;
-                self.system("restarting");
+                self.transcript.permission = None;
+                self.transcript.system("restarting");
                 self.start(config, root);
             }
             _ => {}
@@ -589,7 +352,7 @@ pub fn draw(
     let mut title: Vec<Span> = vec![
         " agent ".into(),
         name.to_string().bold(),
-        format!(" {} ", panel.status).into(),
+        format!(" {} ", panel.status()).into(),
     ];
     if let Some(progress) = panel.progress() {
         title.push(Span::styled(
@@ -615,7 +378,7 @@ pub fn draw(
     let block = crate::tui::ui::title_block(theme, title.into(), true);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let has_permission = panel.permission.is_some();
+    let has_permission = panel.permission().is_some();
     let [body, ask] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(if has_permission { 2 } else { 0 }),
@@ -623,7 +386,7 @@ pub fn draw(
     .areas(inner);
     let width = body.width.saturating_sub(1) as usize;
     let mut lines: Vec<Line> = Vec::new();
-    for entry in &panel.entries {
+    for entry in panel.transcript.entries() {
         if entry.kind == EntryKind::Thought && !panel.show_thoughts {
             continue;
         }
@@ -664,7 +427,7 @@ pub fn draw(
             lines.push("".into());
         }
     }
-    if panel.entries.is_empty() {
+    if panel.transcript.is_empty() {
         lines.push(
             "  Nothing yet. Press i to ask something, A to have every pending comment addressed."
                 .dim()
@@ -690,13 +453,13 @@ pub fn draw(
     }
     let shown: Vec<Line> = lines.into_iter().skip(panel.scroll).take(height).collect();
     frame.render_widget(Paragraph::new(shown), body);
-    if let Some((_, title, options)) = &panel.permission {
+    if let Some(pending) = panel.permission() {
         let spans: Vec<Span> = vec![
             Span::styled(" agent asks: ", style::fg(theme.moved).bold()),
-            title.clone().into(),
+            pending.title.clone().into(),
         ];
         let mut choices: Vec<Span> = vec![" ".into()];
-        for (i, o) in options.iter().enumerate() {
+        for (i, o) in pending.options.iter().enumerate() {
             choices.push(Span::styled(
                 format!("[{}] {}  ", i + 1, o.name),
                 style::accent(theme),

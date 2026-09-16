@@ -8,7 +8,6 @@ use std::net::SocketAddr;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use anyhow::{Context, Result};
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Query, Request, State};
@@ -29,6 +28,7 @@ use crate::repo::{BlameLine, ChangedFile, Commit, FileStatus};
 use crate::review::Comment;
 use crate::session::{DiffTarget, FileView, Session};
 use crate::symbols::{Location, Symbol};
+use crate::transcript::{Entry, Transcript};
 
 mod auth;
 
@@ -147,32 +147,26 @@ impl FromRequestParts<AppState> for Ctx {
     }
 }
 
-/// The agent and everything the page has not fetched yet. The page polls; the server drains
-/// the agent into `events` on every poll and hands back what is new.
-#[derive(Default)]
+/// The agent and what it has said. The page polls; every poll drains the agent into the
+/// transcript and hands back the entries that changed.
 struct AgentHub {
     agent: Option<Agent>,
-    events: Vec<(u64, AgentEvent)>,
-    seq: u64,
-    status: String,
+    /// What has been said, built exactly as the terminal builds it.
+    transcript: Transcript,
     name: String,
-    permission: Option<Pending>,
-    /// The user's prompts, echoed so a reloaded page can rebuild the transcript.
-    transcript: Vec<(u64, String)>,
     /// Set while a start is under way, so two browsers cannot start two agents.
     starting: bool,
-    /// What the backend says it is doing, when the turn started, when it last spoke.
-    phase: String,
-    turn_started: Option<Instant>,
-    last_event: Option<Instant>,
 }
 
-/// A permission request waiting for an answer.
-struct Pending {
-    id: serde_json::Value,
-    title: String,
-    details: Option<String>,
-    options: Vec<PermissionOption>,
+impl Default for AgentHub {
+    fn default() -> Self {
+        Self {
+            agent: None,
+            transcript: Transcript::new(),
+            name: String::new(),
+            starting: false,
+        }
+    }
 }
 
 impl AgentHub {
@@ -180,101 +174,24 @@ impl AgentHub {
         let Some(agent) = &mut self.agent else {
             return;
         };
-        for event in agent.poll() {
-            self.last_event = Some(Instant::now());
-            match &event {
-                AgentEvent::Status { text } => self.phase = text.clone(),
-                AgentEvent::Permission {
-                    request_id,
-                    title,
-                    details,
-                    options,
-                } => {
-                    self.permission = Some(Pending {
-                        id: request_id.clone(),
-                        title: title.clone(),
-                        details: details.clone(),
-                        options: options.clone(),
-                    });
-                    self.status = "waiting for permission".into();
-                }
-                AgentEvent::TurnDone { stop_reason } => {
-                    self.status = if stop_reason == "end_turn" {
-                        "idle".into()
-                    } else {
-                        format!("stopped: {stop_reason}")
-                    };
-                    self.phase.clear();
-                    self.turn_started = None;
-                }
-                AgentEvent::Error { .. } => self.status = "error".into(),
-                AgentEvent::Exited { .. } => {
-                    self.status = "exited".into();
-                    self.permission = None;
-                    self.phase.clear();
-                    self.turn_started = None;
-                }
-                _ => {}
-            }
-            self.seq += 1;
-            self.events.push((self.seq, event));
+        let events = agent.poll();
+        let gone = events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::Exited { .. }));
+        for event in events {
+            self.transcript.apply(event);
         }
-        if matches!(&self.events.last(), Some((_, AgentEvent::Exited { .. }))) {
+        if gone {
             self.agent = None;
         }
         self.trim();
     }
 
-    /// Keeps what the hub holds bounded. A page that has fallen behind reloads and asks for
-    /// everything again, so old events are not worth keeping; the count alone is not enough
-    /// of a bound, because one event can carry a whole file.
+    /// Keeps what the hub holds bounded. One entry can carry a whole file, so the bound is
+    /// bytes; a page that has fallen behind is told to take the transcript again.
     fn trim(&mut self) {
-        const MAX_EVENTS: usize = 5000;
-        const MAX_BYTES: usize = 8 * 1024 * 1024;
-        const MAX_PROMPTS: usize = 500;
-        if self.events.len() > MAX_EVENTS {
-            let drop = self.events.len() - MAX_EVENTS;
-            self.events.drain(..drop);
-        }
-        let mut bytes: usize = self.events.iter().map(|(_, e)| event_size(e)).sum();
-        while bytes > MAX_BYTES && self.events.len() > 1 {
-            let (_, dropped) = self.events.remove(0);
-            bytes -= event_size(&dropped);
-        }
-        if self.transcript.len() > MAX_PROMPTS {
-            let drop = self.transcript.len() - MAX_PROMPTS;
-            self.transcript.drain(..drop);
-        }
-    }
-}
-
-/// Roughly how much an event holds, for the bound above.
-fn event_size(event: &AgentEvent) -> usize {
-    match event {
-        AgentEvent::Text { text, .. }
-        | AgentEvent::Log { text }
-        | AgentEvent::Status { text }
-        | AgentEvent::Stderr { text }
-        | AgentEvent::Error { message: text }
-        | AgentEvent::Exited { message: text } => text.len(),
-        AgentEvent::ToolCall {
-            id,
-            title,
-            output,
-            locations,
-            ..
-        } => {
-            id.len()
-                + title.as_ref().map_or(0, String::len)
-                + output.as_ref().map_or(0, String::len)
-                + locations.iter().map(String::len).sum::<usize>()
-        }
-        AgentEvent::Permission { title, details, .. } => {
-            title.len() + details.as_ref().map_or(0, String::len)
-        }
-        AgentEvent::Plan { entries } => entries.iter().map(|(a, b)| a.len() + b.len()).sum(),
-        AgentEvent::TurnDone { stop_reason } => stop_reason.len(),
-        AgentEvent::Usage { .. } => 0,
+        const MAX_BYTES: usize = 4 * 1024 * 1024;
+        self.transcript.trim_to(MAX_BYTES);
     }
 }
 
@@ -491,7 +408,8 @@ fn router(state: AppState) -> Router {
             .route("/agent/prompt", post(post_agent_prompt))
             .route("/agent/permission", post(post_agent_permission))
             .route("/agent/cancel", post(post_agent_cancel))
-            .route("/agent/stop", post(post_agent_stop));
+            .route("/agent/stop", post(post_agent_stop))
+            .route("/agent/clear", post(post_agent_clear));
     }
     let api = api
         .route("/logout", post(post_logout))
@@ -1252,16 +1170,18 @@ struct AgentStatus {
     name: String,
     status: String,
     command: String,
+    /// What the turn is doing and what it has cost, already worded; the page shows them.
+    progress: Option<String>,
+    usage: Option<String>,
     permission: Option<AgentPermission>,
-    /// What the backend is doing, how long the turn has run and how long it has been silent.
-    phase: String,
-    turn_ms: Option<u64>,
-    quiet_ms: Option<u64>,
-    /// Events with a sequence number above the `since` the page sent.
-    events: Vec<(u64, AgentEvent)>,
-    /// The user's own prompts, `(sequence, text)`, for rebuilding a transcript.
-    transcript: Vec<(u64, String)>,
-    seq: u64,
+    /// Transcript entries written or changed since the `since` the page sent, each with the
+    /// position it belongs at. Entries are not append-only: a tool call is filled in as it
+    /// runs.
+    entries: Vec<(usize, Entry)>,
+    /// What to send as `since` next time, and how many entries there are in all: after a
+    /// trim the transcript is shorter, and the page has to drop what is no longer there.
+    version: u64,
+    count: usize,
 }
 
 #[derive(Serialize)]
@@ -1277,36 +1197,28 @@ struct AgentPermission {
 
 fn status_of(hub: &mut AgentHub, since: u64, command: &str) -> AgentStatus {
     hub.drain();
+    let busy = hub.agent.as_ref().is_some_and(Agent::busy);
     AgentStatus {
         running: hub.agent.is_some(),
         name: hub.name.clone(),
-        status: hub.status.clone(),
+        status: hub.transcript.status.clone(),
         command: command.to_string(),
-        phase: hub.phase.clone(),
-        turn_ms: hub.turn_started.map(|t| t.elapsed().as_millis() as u64),
-        quiet_ms: hub
-            .last_event
-            .filter(|_| hub.turn_started.is_some())
-            .map(|t| t.elapsed().as_millis() as u64),
-        permission: hub.permission.as_ref().map(|p| AgentPermission {
+        progress: hub.transcript.progress(busy || hub.starting, None),
+        usage: hub.transcript.usage(),
+        permission: hub.transcript.permission.as_ref().map(|p| AgentPermission {
             title: p.title.clone(),
             details: p.details.clone(),
             options: p.options.clone(),
             request_id: p.id.as_str().unwrap_or_default().to_string(),
         }),
-        events: hub
-            .events
-            .iter()
-            .filter(|(n, _)| *n > since)
-            .cloned()
-            .collect(),
-        transcript: hub
+        entries: hub
             .transcript
-            .iter()
-            .filter(|(n, _)| *n > since)
-            .cloned()
+            .since(since)
+            .into_iter()
+            .map(|(i, e)| (i, e.clone()))
             .collect(),
-        seq: hub.seq,
+        version: hub.transcript.version(),
+        count: hub.transcript.entries().len(),
     }
 }
 
@@ -1325,7 +1237,7 @@ async fn post_agent_start(state: Ctx) -> ApiResult<AgentStatus> {
         let free = hub.agent.is_none() && !hub.starting;
         if free {
             hub.starting = true;
-            hub.status = "starting".into();
+            hub.transcript.status = "starting".into();
         }
         Ok(free)
     })
@@ -1344,11 +1256,11 @@ async fn post_agent_start(state: Ctx) -> ApiResult<AgentStatus> {
                 Ok(agent) => {
                     hub.name = agent.name().to_string();
                     hub.agent = Some(agent);
-                    hub.status = "idle".into();
+                    hub.transcript.status = "idle".into();
                     Ok(())
                 }
                 Err(e) => {
-                    hub.status = format!("failed to start: {e:#}");
+                    hub.transcript.status = format!("failed to start: {e:#}");
                     Err(e)
                 }
             }
@@ -1442,13 +1354,13 @@ async fn post_agent_prompt(
             return Err(Conflict("the agent is not running; start it first".into()).into());
         };
         agent.prompt(&sent, &context)?;
-        hub.status = "working".into();
-        hub.phase = "prompt sent".into();
-        hub.turn_started = Some(Instant::now());
-        hub.last_event = Some(Instant::now());
-        hub.seq += 1;
-        let seq = hub.seq;
-        hub.transcript.push((seq, sent));
+        // The prompt is part of the conversation, written down the same way the agent's
+        // words are, so a page that reloads sees it in place.
+        hub.transcript.apply(AgentEvent::Text {
+            role: crate::agent::Role::User,
+            text: sent,
+        });
+        hub.transcript.begin_turn();
         hub.trim();
         Ok(())
     })
@@ -1466,7 +1378,7 @@ struct PermissionAnswer {
 
 async fn post_agent_permission(state: Ctx, Json(body): Json<PermissionAnswer>) -> ApiResult<Ok_> {
     with_hub(&state, move |hub| {
-        let Some(pending) = hub.permission.as_ref() else {
+        let Some(pending) = hub.transcript.permission.as_ref() else {
             return Err(Conflict("no permission request is pending".into()).into());
         };
         if let Some(answering) = &body.request_id
@@ -1491,8 +1403,8 @@ async fn post_agent_permission(state: Ctx, Json(body): Json<PermissionAnswer>) -
         // Only once the answer is away is the request no longer waiting: a failed write
         // would otherwise leave the agent waiting for an answer nobody can give again.
         agent.respond_permission(&id, chosen)?;
-        hub.permission = None;
-        hub.status = "working".into();
+        hub.transcript.permission = None;
+        hub.transcript.status = "working".into();
         Ok(())
     })
     .await?;
@@ -1510,12 +1422,23 @@ async fn post_agent_cancel(state: Ctx) -> ApiResult<Ok_> {
     Ok(Json(Ok_ { ok: true }))
 }
 
+/// Empties the transcript. The page asks rather than forgetting on its own, so that the
+/// two ends agree on what there is; a reload would otherwise bring it all back.
+async fn post_agent_clear(state: Ctx) -> ApiResult<Ok_> {
+    with_hub(&state, |hub| {
+        hub.transcript.clear();
+        Ok(())
+    })
+    .await?;
+    Ok(Json(Ok_ { ok: true }))
+}
+
 async fn post_agent_stop(state: Ctx) -> ApiResult<Ok_> {
     // Dropping the agent kills its process, which waits for it: another blocking call.
     with_hub(&state, |hub| {
         hub.agent = None;
-        hub.permission = None;
-        hub.status = "stopped".into();
+        hub.transcript.permission = None;
+        hub.transcript.status = "stopped".into();
         Ok(())
     })
     .await?;
@@ -2169,22 +2092,40 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         let option = permission.expect("permission request");
-        // Progress fields and the backend's log lines come with the events.
+        // The transcript comes back written, with what the turn is doing alongside it.
         let (_, body) = request(addr, "GET", "/api/agent/events?since=0", t, None);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert!(v["turn_ms"].is_u64(), "{body}");
-        assert!(v["quiet_ms"].is_u64(), "{body}");
+        assert!(v["progress"].is_string(), "{body}");
+        let entries = v["entries"].as_array().unwrap();
         assert!(
-            v["events"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|e| e[1]["event"] == "log"
-                    && e[1]["text"]
-                        .as_str()
-                        .unwrap()
-                        .starts_with("started in-process fake")),
+            entries.iter().any(|e| e[1]["kind"] == "log"
+                && e[1]["text"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("started in-process fake")),
             "{body}"
+        );
+        assert!(
+            entries.iter().any(|e| e[1]["kind"] == "user"
+                && e[1]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("Work through every comment")),
+            "the prompt is part of the transcript: {body}"
+        );
+        // Asking again from the version just given back yields nothing new.
+        let since = v["version"].as_u64().unwrap();
+        let (_, body) = request(
+            addr,
+            "GET",
+            &format!("/api/agent/events?since={since}"),
+            t,
+            None,
+        );
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(
+            v["entries"].as_array().unwrap().len() < entries.len(),
+            "everything was sent again: {body}"
         );
         // An answer naming a different request is refused, and the request stays open, so
         // a page that never saw this one cannot approve it.
@@ -2204,8 +2145,11 @@ mod tests {
             request(addr, "POST", "/api/agent/permission", t, Some(&answer)).0,
             200
         );
+        // The turn finishes: the status says so, and what the agent read is in the
+        // transcript, written by the server rather than by the page.
         let mut done = false;
         let mut seen = 0;
+        let mut text = String::new();
         while !done && std::time::Instant::now() < deadline {
             let (_, body) = request(
                 addr,
@@ -2215,25 +2159,36 @@ mod tests {
                 None,
             );
             let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            for (n, e) in v["events"]
+            seen = v["version"].as_u64().unwrap();
+            for (_, e) in v["entries"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|p| (p[0].as_u64().unwrap(), &p[1]))
+                .map(|p| (p[0].as_u64().unwrap_or_default(), &p[1]))
             {
-                seen = seen.max(n);
-                if e["event"] == "turn_done" {
-                    done = true;
-                }
+                text.push_str(e["text"].as_str().unwrap_or_default());
+                text.push('\n');
+            }
+            if v["status"] == "idle" {
+                done = true;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        assert!(done);
+        assert!(done, "the turn never ended");
+        assert!(
+            text.contains("Read a.rs (read) [completed]"),
+            "the tool call was filled in as it ran: {text}"
+        );
         assert_eq!(request(addr, "POST", "/api/agent/stop", t, None).0, 200);
         let (_, body) = request(addr, "GET", "/api/agent/events", t, None);
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&body).unwrap()["running"],
             false
         );
+        // Clearing empties it for both ends.
+        assert_eq!(request(addr, "POST", "/api/agent/clear", t, None).0, 200);
+        let (_, body) = request(addr, "GET", "/api/agent/events", t, None);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["count"], 0, "{body}");
     }
 }

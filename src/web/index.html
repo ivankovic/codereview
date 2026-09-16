@@ -184,6 +184,19 @@ const state = {
   search: '',
 };
 
+// The one-letter mark for a changed file: `?` for untracked, otherwise its status.
+function statusLetter(f) {
+  return f.status === 'untracked' ? '?' : f.status[0].toUpperCase();
+}
+
+// A query string from an object, leaving out what is not set.
+function qs(params) {
+  return Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => k + '=' + encodeURIComponent(v))
+    .join('&');
+}
+
 async function api(path, opts = {}) {
   const init = { headers: { 'Authorization': 'Bearer ' + TOKEN } };
   if (opts.body !== undefined) {
@@ -271,8 +284,8 @@ async function switchRepo(index) {
   state.repo = index;
   state.file = null; state.diff = null; state.log = null; state.allComments = undefined;
   state.tree.collapsed = new Set(); state.tree.filter = '';
-  Object.assign(agent, { seq: 0, entries: [], tools: Object.create(null), permission: null, running: false, name: '', status: 'not started',
-    phase: '', turnMs: null, quietMs: null, turnTools: 0, inputTokens: 0, outputTokens: 0, cost: null, startedAt: null });
+  Object.assign(agent, { version: 0, entries: [], permission: null, running: false, name: '', status: 'not started',
+    progress: '', usage: '', pollFailures: 0, startedAt: null });
   state.allComments = await api('/comments');
   await loadState();
   setTabs('explore');
@@ -524,7 +537,11 @@ function renderFile() {
   head.querySelector('[data-act=comment]').onclick = () => addPathComment(f.path);
   head.querySelector('[data-act=symbols]').onclick = () => showFileSymbols(f.path);
   head.querySelector('[data-act=history]').onclick = () => showLog(f.path);
-  head.querySelector('[data-act=diff]').onclick = () => showDiff({ kind: state.status[f.path] && st ? 'working' : 'working', path: f.path, status: st }, [{ path: f.path, status: st, old_path: null }], 0, () => renderFile());
+  head.querySelector('[data-act=diff]').onclick = () => showDiff(
+    { kind: 'working', path: f.path, status: st },
+    [{ path: f.path, status: st, old_path: null }],
+    0,
+    () => { setTabs('explore'); renderFile(); });
   head.querySelector('[data-act=blame]').onclick = async () => {
     if (f.blame) { f.blame = null; renderFile(); return; }
     try { f.blame = await api('/blame?path=' + encodeURIComponent(f.path)); renderFile(); } catch (e) { fail(e); }
@@ -690,53 +707,34 @@ $('#symbol').onkeydown = e => { if (e.key === 'Enter') { searchSymbols(e.target.
 
 // ----- agent ----------------------------------------------------------------------------------
 
-const agent = { seq: 0, entries: [], status: 'not started', running: false, name: '', permission: null, timer: null, tools: Object.create(null), showThoughts: false, showLog: true,
-  phase: '', turnMs: null, quietMs: null, turnTools: 0, inputTokens: 0, outputTokens: 0, cost: null, startedAt: null };
+const agent = { version: 0, entries: [], status: 'not started', running: false, name: '', permission: null, timer: null,
+  showThoughts: false, showLog: true, pollFailures: 0, progress: '', usage: '', startedAt: null };
 
 async function agentPoll() {
   try {
-    const r = await api('/agent/events?since=' + agent.seq);
+    const r = await api('/agent/events?since=' + agent.version);
     agent.running = r.running; agent.status = r.status; agent.name = r.name; agent.permission = r.permission; agent.command = r.command;
-    agent.phase = r.phase || ''; agent.turnMs = r.turn_ms; agent.quietMs = r.quiet_ms;
-    // Merge the user's prompts and the agent's events in sequence order.
-    const items = r.events.map(([n, e]) => [n, 'event', e]).concat(r.transcript.map(([n, t]) => [n, 'user', t])).sort((a, b) => a[0] - b[0]);
-    for (const [n, kind, payload] of items) {
-      agent.seq = Math.max(agent.seq, n);
-      if (kind === 'user') agent.entries.push({ kind: 'user', text: payload });
-      else applyAgentEvent(payload);
-    }
-    if (items.length || state.view === 'agent') renderAgent();
+    agent.progress = r.progress || ''; agent.usage = r.usage || '';
+    // The server writes the transcript; this only puts each line where it says. Entries are
+    // not append-only, because a tool call is filled in as it runs.
+    for (const [index, entry] of r.entries) agent.entries[index] = entry;
+    if (agent.entries.length > r.count) agent.entries.length = r.count;
+    agent.version = r.version;
+    if (r.entries.length || state.view === 'agent') renderAgent();
     else renderAgentHead();
     $('#agentdot').hidden = !(agent.permission || agent.status === 'working');
     $('#agentdot').textContent = agent.permission ? '?' : '…';
-  } catch (err) { console.error(err); }
-}
-
-function applyAgentEvent(e) {
-  const last = agent.entries[agent.entries.length - 1];
-  switch (e.event) {
-    case 'text': {
-      const kind = e.role === 'agent' ? 'agent' : e.role === 'thought' ? 'thought' : 'user';
-      if (last && last.kind === kind && kind !== 'user') last.text += e.text; else agent.entries.push({ kind, text: e.text });
-      break;
+    if (agent.pollFailures) { agent.pollFailures = 0; renderAgentHead(); }
+  } catch (err) {
+    // A poll that keeps failing means the server is gone or the session has ended, and
+    // saying nothing leaves a panel that looks merely quiet.
+    console.error(err);
+    agent.pollFailures = (agent.pollFailures || 0) + 1;
+    if (agent.pollFailures === 3) {
+      agent.entries.push({ kind: 'system', text: 'lost contact with the server: ' + err.message });
+      renderAgent();
     }
-    case 'tool_call': {
-      let t = agent.tools[e.id];
-      if (!t) { t = { kind: 'tool', title: '', k: null, status: null, locations: [], output: null, text: '' }; agent.tools[e.id] = t; agent.entries.push(t); agent.turnTools++; }
-      if (e.title) t.title = e.title; if (e.kind) t.k = e.kind; if (e.status) t.status = e.status;
-      if (e.locations && e.locations.length) t.locations = e.locations; if (e.output) t.output = e.output;
-      t.text = t.title + (t.k ? ' (' + t.k + ')' : '') + (t.status ? ' [' + t.status + ']' : '') + (t.locations.length ? ' ' + t.locations.join(', ') : '') + (t.output ? '\n' + t.output.slice(0, 600) : '');
-      break;
-    }
-    case 'plan': agent.entries.push({ kind: 'system', text: 'plan:\n' + e.entries.map(([c, s]) => '[' + s + '] ' + c).join('\n') }); break;
-    case 'permission': agent.entries.push({ kind: 'system', text: 'permission: ' + e.title }); break;
-    case 'turn_done': agent.tools = Object.create(null); agent.turnTools = 0; if (e.stop_reason !== 'end_turn') agent.entries.push({ kind: 'system', text: 'stopped: ' + e.stop_reason }); break;
-    case 'error': agent.entries.push({ kind: 'system', text: 'error: ' + e.message }); break;
-    case 'exited': agent.entries.push({ kind: 'system', text: e.message }); break;
-    case 'stderr': agent.entries.push({ kind: 'log', text: 'stderr: ' + e.text }); break;
-    case 'log': agent.entries.push({ kind: 'log', text: e.text }); break;
-    case 'status': agent.phase = e.text; break;
-    case 'usage': agent.inputTokens += e.input_tokens; agent.outputTokens += e.output_tokens; if (e.cost_usd != null) agent.cost = e.cost_usd; break;
+    if (agent.pollFailures >= 3) renderAgentHead();
   }
 }
 
@@ -758,28 +756,17 @@ async function agentStart() {
   renderAgent();
 }
 
-function fmtCount(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
-
 // The header line: status, what the backend is doing, elapsed time, tokens and cost.
 function renderAgentHead() {
   const root = $('#agent');
   if (!root) return;
   $('#agentname').textContent = agent.running ? agent.name : (agent.command || '');
   $('#agentstatus').textContent = agent.status;
-  const parts = [];
-  if (agent.startedAt) parts.push('starting · ' + Math.round((Date.now() - agent.startedAt) / 1000) + 's');
-  else if (agent.permission) parts.push('waiting for permission');
-  else if (agent.status === 'working' || agent.turnMs != null) {
-    if (agent.phase) parts.push(agent.phase);
-    if (agent.turnMs != null) parts.push(Math.round(agent.turnMs / 1000) + 's');
-    if (agent.quietMs != null && agent.quietMs >= 5000) parts.push('silent for ' + Math.round(agent.quietMs / 1000) + 's');
-    if (agent.turnTools) parts.push(agent.turnTools + ' tool call' + (agent.turnTools === 1 ? '' : 's'));
-  }
-  $('#agentprogress').textContent = parts.join(' · ');
-  const usage = [];
-  if (agent.inputTokens || agent.outputTokens) usage.push(fmtCount(agent.inputTokens) + ' in / ' + fmtCount(agent.outputTokens) + ' out');
-  if (agent.cost != null) usage.push('$' + agent.cost.toFixed(2));
-  $('#agentusage').textContent = usage.join(' · ');
+  let progress = agent.progress;
+  if (agent.pollFailures >= 3) progress = 'not answering (' + agent.pollFailures + ' tries)';
+  else if (agent.startedAt && !progress) progress = 'starting · ' + Math.round((Date.now() - agent.startedAt) / 1000) + 's';
+  $('#agentprogress').textContent = progress;
+  $('#agentusage').textContent = agent.usage;
 }
 
 async function agentSend(body) {
@@ -816,7 +803,9 @@ function showAgent() {
   $('#agent [data-act=all]').onclick = () => agentSend({ preset: 'address_all' });
   $('#agent [data-act=cancel]').onclick = () => api('/agent/cancel', { post: true }).catch(fail);
   $('#agent [data-act=restart]').onclick = async () => { await api('/agent/stop', { post: true }).catch(fail); agent.running = false; agentStart(); };
-  $('#agent [data-act=clear]').onclick = () => { agent.entries = []; agent.tools = Object.create(null); renderAgent(); };
+  $('#agent [data-act=clear]').onclick = () => api('/agent/clear', { post: true })
+    .then(() => { agent.entries = []; agent.version = 0; renderAgent(); agentPoll(); })
+    .catch(fail);
   $('#thoughts').checked = agent.showThoughts;
   $('#thoughts').onchange = e => { agent.showThoughts = e.target.checked; renderAgent(); };
   $('#showlog').checked = agent.showLog;
@@ -865,7 +854,7 @@ async function showChanges(staged = false) {
     files.forEach((f, i) => {
       const el = document.createElement('div');
       el.className = 'item';
-      const letter = f.status === 'untracked' ? '?' : f.status[0].toUpperCase();
+      const letter = statusLetter(f);
       el.innerHTML = `<span class="status-letter ${letter === '?' ? 'q' : letter}">${letter}</span><span class="mono grow">${esc(f.old_path ? f.old_path + ' → ' + f.path : f.path)}</span>`;
       el.onclick = () => showDiff({ kind: staged ? 'staged' : 'working', path: f.path, old_path: f.old_path || '', status: letter }, files, i, () => showChanges(staged));
       list.appendChild(el);
@@ -935,7 +924,7 @@ async function selectCommit(i) {
     files.forEach((f, k) => {
       const el = document.createElement('div');
       el.className = 'item';
-      const letter = f.status[0].toUpperCase();
+      const letter = statusLetter(f);
       el.innerHTML = `<span class="status-letter ${letter}">${letter}</span><span class="mono grow">${esc(f.old_path ? f.old_path + ' → ' + f.path : f.path)}</span>
         ${L.path && f.path === L.path ? '<button class="small" data-act="vs">vs working tree</button>' : ''}`;
       el.onclick = () => showDiff({ kind: 'commit', hash: c.hash, path: f.path, old_path: f.old_path || '', status: letter }, files, k, () => showLog(L.path, true));
@@ -950,10 +939,13 @@ async function selectCommit(i) {
 
 async function showDiff(params, siblings, index, back) {
   try {
-    const q = Object.entries(params).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
-    const data = await api('/diff?' + q);
+    const data = await api('/diff?' + qs(params));
     const unified = state.diff ? state.diff.unified : window.innerWidth < 1100;
     state.diff = { params, data, unified, siblings, index, back };
+    // A diff is a view of its own, whatever opened it. Without this a diff reached from the
+    // explorer left the view as 'explore', where the keys below do nothing and typing in the
+    // search box would put the file back.
+    setTabs('diff');
     renderDiff();
   } catch (e) { fail(e); }
 }
@@ -982,7 +974,7 @@ function renderDiff() {
   head.querySelector('[data-act=open]').onclick = () => openFile(D.params.path);
   const sibling = k => {
     const f = D.siblings[k];
-    const letter = f.status === 'untracked' ? '?' : f.status[0].toUpperCase();
+    const letter = statusLetter(f);
     showDiff({ ...D.params, path: f.path, old_path: f.old_path || '', status: letter }, D.siblings, k, D.back);
   };
   head.querySelector('[data-act=prev]') && (head.querySelector('[data-act=prev]').onclick = () => sibling(D.index - 1));
@@ -993,7 +985,7 @@ function renderDiff() {
   const rows = d.rows;
   const bl = d.before.text.split('\n'), al = d.after.text.split('\n');
   const onChange = async () => {
-    const q = Object.entries(D.params).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+    const q = qs(D.params);
     D.data = await api('/diff?' + q);
     state.allComments = await api('/comments');
     await loadState();
@@ -1266,8 +1258,7 @@ $('#theme').onchange = async e => {
     await loadState();
     if (state.view === 'explore' && state.file) await openFile(state.file.path);
     else if (state.diff && document.querySelector('#content table.code') && state.view !== 'explore') {
-      const q = Object.entries(state.diff.params).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
-      state.diff.data = await api('/diff?' + q); renderDiff();
+      state.diff.data = await api('/diff?' + qs(state.diff.params)); renderDiff();
     }
     msg('theme saved to the config file');
   } catch (err) { fail(err); }

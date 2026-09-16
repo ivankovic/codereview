@@ -1377,7 +1377,7 @@ impl App {
             }
             KeyCode::Char('i') if !matches!(self.screen(), Screen::Agent) => {
                 self.open_agent();
-                if self.agent.permission.is_none() {
+                if self.agent.permission().is_none() {
                     self.prompt = Some(Prompt::new(
                         PromptKind::Agent {
                             context: Vec::new(),

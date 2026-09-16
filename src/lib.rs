@@ -33,6 +33,7 @@ pub mod review;
 pub mod session;
 pub mod symbols;
 pub mod theme;
+pub mod transcript;
 
 #[cfg(feature = "tui")]
 pub mod tui;
