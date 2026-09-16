@@ -11,9 +11,9 @@
   --ins: rgba(46,160,67,.28); --ins-strong: rgba(46,160,67,.55);
   --del: rgba(248,81,73,.28); --del-strong: rgba(248,81,73,.55);
   --upd: rgba(210,153,34,.28); --upd-strong: rgba(210,153,34,.55);
-  --mov: rgba(163,113,247,.28); --mov-strong: rgba(163,113,247,.55);
+  --mov: rgba(150,157,170,.28); --mov-strong: rgba(150,157,170,.55);
   --exact: #5ec8e5; --moved: #e3b341; --stale: #f85149; --search: rgba(255,200,0,.45); --visual: #2b3a4a;
-  --ins-fg: #3fb950; --del-fg: #f85149; --upd-fg: #e3b341; --mov-fg: #a371f7;
+  --ins-fg: #3fb950; --del-fg: #f85149; --upd-fg: #e3b341; --mov-fg: #9aa0ab;
 }
 * { box-sizing: border-box; }
 /* Elements with their own `display` (the popover, the drawer) must still honour `hidden`. */
@@ -1271,7 +1271,7 @@ const HELP = `
 <tr><td><span class="s-insert">green</span></td><td>inserted</td></tr>
 <tr><td><span class="s-delete">red</span></td><td>deleted</td></tr>
 <tr><td><span class="s-update">yellow</span></td><td>updated</td></tr>
-<tr><td><span class="s-move">purple</span></td><td>moved</td></tr>
+<tr><td><span class="s-move">grey</span></td><td>moved</td></tr>
 <tr><td><span style="color:var(--exact)">●</span> <span style="color:var(--moved)">●</span> <span style="color:var(--stale)">●</span></td><td>comment; yellow when its line moved, red when the line is gone</td></tr></table>
 <p class="dim">Comments live in REVIEW.md, notes in NOTES.md, both at the repository root. Esc closes this.</p>`;
 $('#help').innerHTML = HELP;

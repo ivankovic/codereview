@@ -438,7 +438,7 @@ const HELP: &[(&str, &str)] = &[
     ("green", "inserted"),
     ("red", "deleted"),
     ("yellow", "updated"),
-    ("magenta", "moved"),
+    ("grey", "moved"),
     (
         "cyan ●",
         "comment; yellow when it moved, red when its line is gone",
