@@ -1029,15 +1029,37 @@ impl App {
 
     // ----- keys ------------------------------------------------------------------------------
 
+    /// A key press, from the outermost layer inwards: whatever is over the screen, then the
+    /// chord, then the keys that work everywhere, then the screen on top of the stack. Each
+    /// layer that acts says so, and the ones below it do not see the key.
     pub fn handle_key(&mut self, key: KeyEvent) {
         self.message = None;
+        if self.handle_overlay_key(key) {
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.quit = true;
+            return;
+        }
+        if self.handle_chord_key(key) {
+            return;
+        }
+        if self.handle_global_key(key) {
+            return;
+        }
+        self.handle_screen_key(key);
+    }
+
+    /// A prompt, the colour scheme picker or the help page is over the screen and takes
+    /// every key while it is there. True when one of them did.
+    fn handle_overlay_key(&mut self, key: KeyEvent) -> bool {
         if self.prompt.is_some() {
             self.handle_prompt_key(key);
-            return;
+            return true;
         }
         if self.theme_picker.is_some() {
             self.handle_theme_picker_key(key);
-            return;
+            return true;
         }
         if self.show_help {
             match key.code {
@@ -1050,12 +1072,15 @@ impl App {
                     self.help_scroll = 0;
                 }
             }
-            return;
+            return true;
         }
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.quit = true;
-            return;
-        }
+        false
+    }
+
+    /// The `g` chord: `g` arms it anywhere, and the next key completes it. It is read before
+    /// the keys that work everywhere, so `gr` does not refresh and `gS` does not open the
+    /// changes list.
+    fn handle_chord_key(&mut self, key: KeyEvent) -> bool {
         // A pending `g` claims the next key before the global bindings can (`gr` must not
         // refresh, `gS` must not open the changes list).
         if self.pending_g {
@@ -1075,22 +1100,27 @@ impl App {
                 KeyCode::Char('T') => self.workspace_request = Some(WorkspaceRequest::PrevRepo),
                 _ => {}
             }
-            return;
+            return true;
         }
         // `g` arms the chord everywhere, so `gt`/`gT` switch repositories from any screen.
         if key.code == KeyCode::Char('g') && key.modifiers.is_empty() {
             self.pending_g = true;
-            return;
+            return true;
         }
+        false
+    }
+
+    /// The keys that mean the same thing on every screen.
+    fn handle_global_key(&mut self, key: KeyEvent) -> bool {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('a') => {
                     self.open_agent();
-                    return;
+                    return true;
                 }
                 KeyCode::Char('o') => {
                     self.jump_back();
-                    return;
+                    return true;
                 }
                 _ => {}
             }
@@ -1099,22 +1129,22 @@ impl App {
         match key.code {
             KeyCode::Char('?') => {
                 self.show_help = true;
-                return;
+                return true;
             }
             // In the agent panel `t` toggles thoughts; the picker is a key away elsewhere.
             KeyCode::Char('t') if !matches!(self.screen(), Screen::Agent) => {
                 self.open_theme_picker();
-                return;
+                return true;
             }
             KeyCode::Char('W') => {
                 self.workspace_request = Some(WorkspaceRequest::PickRepo);
-                return;
+                return true;
             }
             // The agent panel from anywhere, for terminals (tmux with a Ctrl-a prefix) where
             // Ctrl-a never arrives. The review list keeps `A` for "address all".
             KeyCode::Char('A') if !matches!(self.screen(), Screen::Agent | Screen::Review(_)) => {
                 self.open_agent();
-                return;
+                return true;
             }
             KeyCode::Char('i') if !matches!(self.screen(), Screen::Agent) => {
                 self.open_agent();
@@ -1127,45 +1157,50 @@ impl App {
                         "",
                     ));
                 }
-                return;
+                return true;
             }
             KeyCode::Char('L') => {
                 self.push_log(None);
-                return;
+                return true;
             }
             KeyCode::Char('R') if !matches!(self.screen(), Screen::Agent) => {
                 self.push_review();
-                return;
+                return true;
             }
             KeyCode::Char('T') => {
                 self.push_notes();
-                return;
+                return true;
             }
             KeyCode::Char('S') => {
                 self.push_changes(DiffTarget::Working);
-                return;
+                return true;
             }
             KeyCode::Char('N') => {
                 self.start_note(true);
-                return;
+                return true;
             }
             KeyCode::Char('r') if key.modifiers.is_empty() => {
                 self.refresh_all();
-                return;
+                return true;
             }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.highlight = !self.highlight;
-                return;
+                return true;
             }
             KeyCode::Char('u')
                 if key.modifiers.is_empty()
                     && !matches!(self.screen(), Screen::Explorer | Screen::Diff(_)) =>
             {
                 self.undo_delete();
-                return;
+                return true;
             }
             _ => {}
         }
+        false
+    }
+
+    /// What is left goes to whichever screen is on top.
+    fn handle_screen_key(&mut self, key: KeyEvent) {
         match self.screen() {
             Screen::Explorer => self.handle_explorer_key(key),
             Screen::Log(_) => self.handle_log_key(key),

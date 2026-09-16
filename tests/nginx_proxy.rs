@@ -274,17 +274,33 @@ fn the_browser_ui_works_behind_nginx() {
     wait_for_port(HTTPS_PORT, "nginx");
     let ca = certs.join("cert.pem");
 
+    the_plain_port_redirects(&ca);
+    the_sign_in_form_and_its_headers(&ca);
+    let token = signing_in(&ca);
+    a_comment_reaches_the_file(&ca, &token, &repo);
+    the_access_log_keeps_no_secrets(&token);
+    nginx_stops_repeated_guessing(&ca);
+
+    // `_harness` goes out of scope here, which is what stops the container and the server.
+    // The same happens on a panic, so a failing assertion does not leave either behind.
+}
+
+fn the_plain_port_redirects(ca: &Path) {
     // The plain port sends the browser to the encrypted one.
-    let r = curl(&ca, &[&format!("http://{HOST}:{HTTP_PORT}/api/state")]);
+    let r = curl(ca, &[&format!("http://{HOST}:{HTTP_PORT}/api/state")]);
     let (status, head) = (r.status, &r.headers);
     assert_eq!(status, 301, "{head}");
     assert_eq!(
         r.header("location"),
         Some(format!("https://{HOST}:{HTTPS_PORT}/api/state").as_str())
     );
+}
 
+/// Nobody is signed in: the page is the form, and every header the server sets survives the
+/// proxy.
+fn the_sign_in_form_and_its_headers(ca: &Path) {
     // The page is the sign-in form, and the headers survive the proxy.
-    let r = curl(&ca, &[&url("/")]);
+    let r = curl(ca, &[&url("/")]);
     let (status, head, body) = (r.status, &r.headers, &r.body);
     assert_eq!(status, 200, "{head}");
     assert!(body.contains("name=\"password\""), "not the sign-in form");
@@ -298,9 +314,14 @@ fn the_browser_ui_works_behind_nginx() {
         Some("nginx"),
         "server_tokens off should hide the version"
     );
+}
 
+/// A wrong password opens nothing; the right one opens a session whose cookie is marked
+/// `Secure`, because the site is HTTPS. Then the page carries a token of its own, which is
+/// what the API wants and the cookie is not. Returns that token.
+fn signing_in(ca: &Path) -> String {
     // A wrong password opens nothing.
-    let r = curl(&ca, &["-X", "POST", "-d", "password=wrong", &url("/login")]);
+    let r = curl(ca, &["-X", "POST", "-d", "password=wrong", &url("/login")]);
     let (status, head) = (r.status, &r.headers);
     assert_eq!(status, 401, "{head}");
     assert!(r.header("set-cookie").is_none(), "{head}");
@@ -308,7 +329,7 @@ fn the_browser_ui_works_behind_nginx() {
     // The right one does, and the cookie is marked Secure because the site is HTTPS.
     // A form body is urlencoded, where a space is a plus.
     let form = format!("password={}", PASSWORD.replace(' ', "+"));
-    let r = curl(&ca, &["-X", "POST", "-d", &form, &url("/login")]);
+    let r = curl(ca, &["-X", "POST", "-d", &form, &url("/login")]);
     let (status, head) = (r.status, &r.headers);
     assert_eq!(status, 303, "{head}");
     let cookie = r
@@ -320,7 +341,7 @@ fn the_browser_ui_works_behind_nginx() {
     let cookie = cookie.split(';').next().unwrap().to_string();
 
     // The page then carries the API token, and the API answers for it.
-    let r = curl(&ca, &["-H", &format!("Cookie: {cookie}"), &url("/")]);
+    let r = curl(ca, &["-H", &format!("Cookie: {cookie}"), &url("/")]);
     let (status, page) = (r.status, &r.body);
     assert_eq!(status, 200);
     let (_, rest) = page
@@ -330,7 +351,7 @@ fn the_browser_ui_works_behind_nginx() {
     let token: String = serde_json::from_str(literal.trim()).expect("a JSON string");
     let bearer = format!("Authorization: Bearer {token}");
 
-    let r = curl(&ca, &["-H", &bearer, &url("/api/state")]);
+    let r = curl(ca, &["-H", &bearer, &url("/api/state")]);
     let (status, body) = (r.status, &r.body);
     assert_eq!(status, 200, "{body}");
     let state: serde_json::Value = serde_json::from_str(body).unwrap();
@@ -344,25 +365,30 @@ fn the_browser_ui_works_behind_nginx() {
     );
 
     // Without the token, nothing; and the agent is not there to be reached.
-    assert_eq!(curl(&ca, &[&url("/api/state")]).status, 403);
+    assert_eq!(curl(ca, &[&url("/api/state")]).status, 403);
     assert_eq!(
-        curl(&ca, &["-H", &bearer, &url("/api/agent/events")]).status,
+        curl(ca, &["-H", &bearer, &url("/api/agent/events")]).status,
         404
     );
     // The cookie alone does not drive the API, whatever the proxy forwards.
     assert_eq!(
         curl(
-            &ca,
+            ca,
             &["-H", &format!("Cookie: {cookie}"), &url("/api/state")]
         )
         .status,
         403
     );
+    token
+}
 
+/// What the page writes goes through the proxy and lands in REVIEW.md.
+fn a_comment_reaches_the_file(ca: &Path, token: &str, repo: &Path) {
+    let bearer = format!("Authorization: Bearer {token}");
     // Writing a comment through the proxy reaches the file on disk.
     let comment = r#"{"path":"a.rs","line":1,"text":"through the proxy"}"#;
     let r = curl(
-        &ca,
+        ca,
         &[
             "-H",
             &bearer,
@@ -377,7 +403,10 @@ fn the_browser_ui_works_behind_nginx() {
     assert_eq!(status, 200, "{body}");
     let review = std::fs::read_to_string(repo.join("REVIEW.md")).unwrap();
     assert!(review.contains("through the proxy"), "{review}");
+}
 
+/// Neither the password nor the token is anywhere in nginx's log.
+fn the_access_log_keeps_no_secrets(token: &str) {
     // The access log keeps neither the password nor the token.
     let log = run(
         "docker",
@@ -385,14 +414,17 @@ fn the_browser_ui_works_behind_nginx() {
     );
     assert!(log.contains("POST /login"), "the log is empty: {log}");
     assert!(!log.contains("password="), "the log kept a password: {log}");
-    assert!(!log.contains(&token), "the log kept the token");
+    assert!(!log.contains(token), "the log kept the token");
+}
 
+/// nginx refuses repeated sign-in attempts before they reach the server.
+fn nginx_stops_repeated_guessing(ca: &Path) {
     // Guessing is stopped by the proxy before it reaches the server.
     // The zone allows ten a minute with a burst of five, so a dozen in a row must run into
     // it whatever the earlier requests used up.
     let mut stopped_by_nginx = false;
     for _ in 0..12 {
-        let r = curl(&ca, &["-X", "POST", "-d", "password=wrong", &url("/login")]);
+        let r = curl(ca, &["-X", "POST", "-d", "password=wrong", &url("/login")]);
         let (status, body) = (r.status, &r.body);
         if status == 429 && body.contains("nginx") {
             stopped_by_nginx = true;

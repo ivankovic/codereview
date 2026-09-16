@@ -182,91 +182,116 @@ fn main() -> Result<()> {
             text,
             author,
             no_timestamp,
-        }) => {
-            let mut session = Session::open(&from)?;
-            if author.is_some() {
-                session.author = author;
-            }
-            session.config.timestamps = !no_timestamp;
-            // With no text the lines argument is the comment, on the path as a whole.
-            let (lines, text) = match text {
-                Some(text) => (Some(parse_lines(&lines)?), text),
-                None => (None, lines),
-            };
-            let c = session.add_comment(&path, lines, &text, None)?;
-            println!("added: {} {}", c.location(), c.text);
-            Ok(())
-        }
-        Some(Command::Note { path, text }) => {
-            let mut session = Session::open(&from)?;
-            let n = session.add_note(path.as_deref(), &text)?;
-            println!("noted under {}", n.target);
-            Ok(())
-        }
-        Some(Command::Toggle { number }) => {
-            let mut session = Session::open(&from)?;
-            let comments = session.review.comments();
-            let Some(target) = comments.get(number.checked_sub(1).unwrap_or(usize::MAX)) else {
-                bail!("no comment number {number}; see `codereview list --all`");
-            };
-            let target = (*target).clone();
-            session.toggle_comment(&target)?;
-            println!(
-                "{} is now {}",
-                target.location(),
-                if target.is_pending() {
-                    "completed"
-                } else {
-                    "pending"
-                }
-            );
-            Ok(())
-        }
-        Some(Command::Reanchor) => {
-            let mut session = Session::open(&from)?;
-            let moved = session.reanchor()?;
-            println!("{moved} comment(s) re-anchored");
-            Ok(())
-        }
-        Some(Command::Def { name }) => {
-            let mut session = Session::open(&from)?;
-            let defs = session.definitions(&name);
-            if defs.is_empty() {
-                println!("no definition of {name}");
-            }
-            for d in defs {
-                let container = d
-                    .container
-                    .as_deref()
-                    .map(|c| format!(" in {c}"))
-                    .unwrap_or_default();
-                println!(
-                    "{}:{}: {} {}{}: {}",
-                    d.path, d.line, d.kind, d.name, container, d.text
-                );
-            }
-            Ok(())
-        }
-        Some(Command::Refs { name }) => {
-            let mut session = Session::open(&from)?;
-            let refs = session.references(&name);
-            if refs.is_empty() {
-                println!("no occurrence of {name}");
-            }
-            for r in refs {
-                println!("{}:{}:{}: {}", r.path, r.line, r.column + 1, r.text);
-            }
-            Ok(())
-        }
-        Some(Command::Symbols { query }) => {
-            let mut session = Session::open(&from)?;
-            for s in session.search_symbols(&query) {
-                println!("{}:{}: {} {}", s.path, s.line, s.kind, s.name);
-            }
-            Ok(())
-        }
+        }) => add(&from, &path, lines, text, author, no_timestamp),
+        Some(Command::Note { path, text }) => note(&from, path.as_deref(), &text),
+        Some(Command::Toggle { number }) => toggle(&from, number),
+        Some(Command::Reanchor) => reanchor(&from),
+        Some(Command::Def { name }) => definitions(&from, &name),
+        Some(Command::Refs { name }) => references(&from, &name),
+        Some(Command::Symbols { query }) => symbols(&from, &query),
         Some(Command::Agent { prompt, yes }) => agent_once(&from, &prompt, yes),
     }
+}
+
+/// `add`: a comment on a line, a range, or a whole path.
+fn add(
+    from: &std::path::Path,
+    path: &str,
+    lines: String,
+    text: Option<String>,
+    author: Option<String>,
+    no_timestamp: bool,
+) -> Result<()> {
+    let mut session = Session::open(from)?;
+    if author.is_some() {
+        session.author = author;
+    }
+    session.config.timestamps = !no_timestamp;
+    // With no text the lines argument is the comment, on the path as a whole.
+    let (lines, text) = match text {
+        Some(text) => (Some(parse_lines(&lines)?), text),
+        None => (None, lines),
+    };
+    let c = session.add_comment(path, lines, &text, None)?;
+    println!("added: {} {}", c.location(), c.text);
+    Ok(())
+}
+
+/// `note`: a note under a file, or under General.
+fn note(from: &std::path::Path, path: Option<&str>, text: &str) -> Result<()> {
+    let mut session = Session::open(from)?;
+    let n = session.add_note(path, text)?;
+    println!("noted under {}", n.target);
+    Ok(())
+}
+
+/// `toggle`: moves a comment between Pending and Completed, by its number in `list --all`.
+fn toggle(from: &std::path::Path, number: usize) -> Result<()> {
+    let mut session = Session::open(from)?;
+    let comments = session.review.comments();
+    let Some(target) = comments.get(number.checked_sub(1).unwrap_or(usize::MAX)) else {
+        bail!("no comment number {number}; see `codereview list --all`");
+    };
+    let target = (*target).clone();
+    session.toggle_comment(&target)?;
+    let now = if target.is_pending() {
+        "completed"
+    } else {
+        "pending"
+    };
+    println!("{} is now {now}", target.location());
+    Ok(())
+}
+
+/// `reanchor`: rewrites the line numbers of comments whose lines have moved.
+fn reanchor(from: &std::path::Path) -> Result<()> {
+    let mut session = Session::open(from)?;
+    let moved = session.reanchor()?;
+    println!("{moved} comment(s) re-anchored");
+    Ok(())
+}
+
+/// `def`: where a name is defined.
+fn definitions(from: &std::path::Path, name: &str) -> Result<()> {
+    let mut session = Session::open(from)?;
+    let defs = session.definitions(name);
+    if defs.is_empty() {
+        println!("no definition of {name}");
+    }
+    for d in defs {
+        let container = d
+            .container
+            .as_deref()
+            .map(|c| format!(" in {c}"))
+            .unwrap_or_default();
+        println!(
+            "{}:{}: {} {}{}: {}",
+            d.path, d.line, d.kind, d.name, container, d.text
+        );
+    }
+    Ok(())
+}
+
+/// `refs`: every occurrence of a name.
+fn references(from: &std::path::Path, name: &str) -> Result<()> {
+    let mut session = Session::open(from)?;
+    let refs = session.references(name);
+    if refs.is_empty() {
+        println!("no occurrence of {name}");
+    }
+    for r in refs {
+        println!("{}:{}:{}: {}", r.path, r.line, r.column + 1, r.text);
+    }
+    Ok(())
+}
+
+/// `symbols`: definitions whose name contains the query.
+fn symbols(from: &std::path::Path, query: &str) -> Result<()> {
+    let mut session = Session::open(from)?;
+    for s in session.search_symbols(query) {
+        println!("{}:{}: {} {}", s.path, s.line, s.kind, s.name);
+    }
+    Ok(())
 }
 
 /// Asks for a password and prints its hash. The password is never written anywhere: it is
