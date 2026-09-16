@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use axum::extract::{FromRequestParts, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, Query, Request, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
@@ -44,6 +44,17 @@ const CSP: &str = "default-src 'none'; connect-src 'self'; script-src 'unsafe-in
                    style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; \
                    base-uri 'none'; form-action 'self'";
 
+/// How many API requests may be working at once. Each one can take a repository's lock and
+/// do git work on a blocking thread, so letting them pile up without bound only moves the
+/// queue somewhere less visible. Sixteen is far more than a few browsers need, whose
+/// busiest habit is one agent poll every half second, and few enough that slow requests
+/// cannot fill the blocking pool.
+const MAX_IN_FLIGHT: usize = 16;
+
+/// The largest request body. The page sends comments, notes and agent prompts, the last of
+/// which can carry a selection; none of that is a megabyte.
+const MAX_BODY: usize = 1024 * 1024;
+
 #[derive(Clone)]
 struct AppState {
     repos: Arc<Vec<RepoState>>,
@@ -56,6 +67,8 @@ struct AppState {
     /// Whether the agent is available at all. When it is off the routes are not registered
     /// and the page hides every way of reaching them.
     agent: bool,
+    /// One permit per request the API is working on.
+    in_flight: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -146,6 +159,8 @@ struct AgentHub {
     permission: Option<Pending>,
     /// The user's prompts, echoed so a reloaded page can rebuild the transcript.
     transcript: Vec<(u64, String)>,
+    /// Set while a start is under way, so two browsers cannot start two agents.
+    starting: bool,
     /// What the backend says it is doing, when the turn started, when it last spoke.
     phase: String,
     turn_started: Option<Instant>,
@@ -207,11 +222,59 @@ impl AgentHub {
         if matches!(&self.events.last(), Some((_, AgentEvent::Exited { .. }))) {
             self.agent = None;
         }
-        // Keep the buffer bounded; a page that fell that far behind reloads anyway.
-        if self.events.len() > 5000 {
-            let drop = self.events.len() - 5000;
+        self.trim();
+    }
+
+    /// Keeps what the hub holds bounded. A page that has fallen behind reloads and asks for
+    /// everything again, so old events are not worth keeping; the count alone is not enough
+    /// of a bound, because one event can carry a whole file.
+    fn trim(&mut self) {
+        const MAX_EVENTS: usize = 5000;
+        const MAX_BYTES: usize = 8 * 1024 * 1024;
+        const MAX_PROMPTS: usize = 500;
+        if self.events.len() > MAX_EVENTS {
+            let drop = self.events.len() - MAX_EVENTS;
             self.events.drain(..drop);
         }
+        let mut bytes: usize = self.events.iter().map(|(_, e)| event_size(e)).sum();
+        while bytes > MAX_BYTES && self.events.len() > 1 {
+            let (_, dropped) = self.events.remove(0);
+            bytes -= event_size(&dropped);
+        }
+        if self.transcript.len() > MAX_PROMPTS {
+            let drop = self.transcript.len() - MAX_PROMPTS;
+            self.transcript.drain(..drop);
+        }
+    }
+}
+
+/// Roughly how much an event holds, for the bound above.
+fn event_size(event: &AgentEvent) -> usize {
+    match event {
+        AgentEvent::Text { text, .. }
+        | AgentEvent::Log { text }
+        | AgentEvent::Status { text }
+        | AgentEvent::Stderr { text }
+        | AgentEvent::Error { message: text }
+        | AgentEvent::Exited { message: text } => text.len(),
+        AgentEvent::ToolCall {
+            id,
+            title,
+            output,
+            locations,
+            ..
+        } => {
+            id.len()
+                + title.as_ref().map_or(0, String::len)
+                + output.as_ref().map_or(0, String::len)
+                + locations.iter().map(String::len).sum::<usize>()
+        }
+        AgentEvent::Permission { title, details, .. } => {
+            title.len() + details.as_ref().map_or(0, String::len)
+        }
+        AgentEvent::Plan { entries } => entries.iter().map(|(a, b)| a.len() + b.len()).sum(),
+        AgentEvent::TurnDone { stop_reason } => stop_reason.len(),
+        AgentEvent::Usage { .. } => 0,
     }
 }
 
@@ -223,8 +286,25 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Not a bad request, but a request the server is in no state to carry out: no agent
+/// running, no permission pending, an answer to a request that is no longer the one
+/// waiting. Answered with 409 wherever it is raised.
+#[derive(Debug)]
+struct Conflict(String);
+
+impl std::fmt::Display for Conflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Conflict {}
+
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
+        if let Some(conflict) = e.downcast_ref::<Conflict>() {
+            return ApiError(StatusCode::CONFLICT, conflict.0.clone());
+        }
         // The whole chain holds git command lines, raw git stderr and absolute paths. The
         // operator can see it in the log; the browser is told only what went wrong.
         eprintln!("api error: {e:#}");
@@ -291,6 +371,7 @@ pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
             sessions: Arc::new(Mutex::new(Sessions::default())),
             secure_cookie: public.as_deref().is_some_and(|u| u.starts_with("https://")),
             agent: serve.agent,
+            in_flight: Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT)),
         };
         let addr: SocketAddr = format!("{}:{}", serve.host, serve.port)
             .parse()
@@ -397,7 +478,12 @@ fn router(state: AppState) -> Router {
     }
     let api = api
         .route("/logout", post(post_logout))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            limit_in_flight,
+        ))
+        .layer(DefaultBodyLimit::max(MAX_BODY));
     Router::new()
         .route("/", get(index))
         .route("/login", post(post_login))
@@ -425,6 +511,21 @@ async fn require_token(
     } else {
         ApiError(StatusCode::FORBIDDEN, "missing or wrong token".into()).into_response()
     }
+}
+
+/// Refuses a request outright when the API already has all it can work on, rather than
+/// queueing it behind work that is already slow. Counted before the token is checked, so an
+/// unauthenticated flood cannot push real requests out of the way either.
+async fn limit_in_flight(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let Ok(_permit) = state.in_flight.clone().try_acquire_owned() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::RETRY_AFTER, "1")],
+            "the server is busy; try again",
+        )
+            .into_response();
+    };
+    next.run(req).await
 }
 
 /// Nothing the server sends may be stored by a proxy or a browser, embedded in a frame, or
@@ -575,6 +676,24 @@ fn session_cookie(id: &str, secure: bool) -> String {
         cookie.push_str("; Secure");
     }
     cookie
+}
+
+/// Runs `f` with the agent hub on a blocking thread. Everything the hub does ends in a
+/// write to a child process's pipe or a read from it, which blocks: doing that on a runtime
+/// thread lets one unresponsive agent stall every request the server has.
+async fn with_hub<T, F>(state: &RepoState, f: F) -> std::result::Result<T, ApiError>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut AgentHub) -> Result<T> + Send + 'static,
+{
+    let hub = state.hub.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut guard = hub.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut guard)
+    })
+    .await
+    .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(ApiError::from)
 }
 
 /// Runs `f` with the session on a blocking thread; diffs and git calls are not async.
@@ -1199,25 +1318,30 @@ fn agent_label(config: &crate::config::AgentConfig) -> String {
 /// Starts the agent when it is not running. Blocks for the handshake, which can take a while
 /// when `npx` has to fetch an adapter.
 async fn post_agent_start(state: Ctx) -> ApiResult<AgentStatus> {
-    let already = state
-        .hub
-        .lock()
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "hub poisoned".into()))?
-        .agent
-        .is_some();
-    if !already {
-        let session = state.session.clone();
+    let command = agent_command(&state);
+    let session = state.session.clone();
+    // Claiming the start under the lock keeps two browsers from starting two agents, where
+    // the second would drop and kill the first.
+    let mine = with_hub(&state, |hub| {
+        let free = hub.agent.is_none() && !hub.starting;
+        if free {
+            hub.starting = true;
+            hub.status = "starting".into();
+        }
+        Ok(free)
+    })
+    .await?;
+    if mine {
         let hub = state.hub.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        let outcome = tokio::task::spawn_blocking(move || -> Result<()> {
             let (agent_config, root) = {
-                let s = session
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("session poisoned"))?;
+                let s = session.lock().unwrap_or_else(|e| e.into_inner());
                 (s.config.agent.clone(), s.root().to_path_buf())
             };
-            let outcome = crate::agent::spawn(&agent_config, &root);
-            let mut hub = hub.lock().map_err(|_| anyhow::anyhow!("hub poisoned"))?;
-            match outcome {
+            let started = crate::agent::spawn(&agent_config, &root);
+            let mut hub = hub.lock().unwrap_or_else(|e| e.into_inner());
+            hub.starting = false;
+            match started {
                 Ok(agent) => {
                     hub.name = agent.name().to_string();
                     hub.agent = Some(agent);
@@ -1231,14 +1355,11 @@ async fn post_agent_start(state: Ctx) -> ApiResult<AgentStatus> {
             }
         })
         .await
-        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))??;
+        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        outcome?;
     }
-    let command = agent_command(&state);
-    let mut hub = state
-        .hub
-        .lock()
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "hub poisoned".into()))?;
-    Ok(Json(status_of(&mut hub, u64::MAX, &command)))
+    let status = with_hub(&state, move |hub| Ok(status_of(hub, u64::MAX, &command))).await?;
+    Ok(Json(status))
 }
 
 #[derive(Deserialize)]
@@ -1249,11 +1370,8 @@ struct SinceQuery {
 
 async fn get_agent_events(state: Ctx, Query(q): Query<SinceQuery>) -> ApiResult<AgentStatus> {
     let command = agent_command(&state);
-    let mut hub = state
-        .hub
-        .lock()
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "hub poisoned".into()))?;
-    Ok(Json(status_of(&mut hub, q.since, &command)))
+    let status = with_hub(&state, move |hub| Ok(status_of(hub, q.since, &command))).await?;
+    Ok(Json(status))
 }
 
 #[derive(Deserialize)]
@@ -1319,24 +1437,23 @@ async fn post_agent_prompt(
     }
     let context: Vec<(String, String)> =
         body.context.into_iter().map(|c| (c.uri, c.text)).collect();
-    let mut hub = state
-        .hub
-        .lock()
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "hub poisoned".into()))?;
-    let Some(agent) = &mut hub.agent else {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "the agent is not running; start it first".into(),
-        ));
-    };
-    agent.prompt(&text, &context)?;
-    hub.status = "working".into();
-    hub.phase = "prompt sent".into();
-    hub.turn_started = Some(Instant::now());
-    hub.last_event = Some(Instant::now());
-    hub.seq += 1;
-    let seq = hub.seq;
-    hub.transcript.push((seq, text.clone()));
+    let sent = text.clone();
+    with_hub(&state, move |hub| {
+        let Some(agent) = &mut hub.agent else {
+            return Err(Conflict("the agent is not running; start it first".into()).into());
+        };
+        agent.prompt(&sent, &context)?;
+        hub.status = "working".into();
+        hub.phase = "prompt sent".into();
+        hub.turn_started = Some(Instant::now());
+        hub.last_event = Some(Instant::now());
+        hub.seq += 1;
+        let seq = hub.seq;
+        hub.transcript.push((seq, sent));
+        hub.trim();
+        Ok(())
+    })
+    .await?;
     Ok(Json(AgentPromptResponse { text }))
 }
 
@@ -1349,66 +1466,59 @@ struct PermissionAnswer {
 }
 
 async fn post_agent_permission(state: Ctx, Json(body): Json<PermissionAnswer>) -> ApiResult<Ok_> {
-    let mut hub = state
-        .hub
-        .lock()
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "hub poisoned".into()))?;
-    let Some(pending) = hub.permission.take() else {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "no permission request is pending".into(),
-        ));
-    };
-    if let Some(answering) = &body.request_id
-        && pending.id.as_str() != Some(answering.as_str())
-    {
-        let id = pending.id.clone();
-        hub.permission = Some(pending);
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            format!(
+    with_hub(&state, move |hub| {
+        let Some(pending) = hub.permission.take() else {
+            return Err(Conflict("no permission request is pending".into()).into());
+        };
+        if let Some(answering) = &body.request_id
+            && pending.id.as_str() != Some(answering.as_str())
+        {
+            let id = pending.id.clone();
+            hub.permission = Some(pending);
+            return Err(Conflict(format!(
                 "that answer is for another request; {} is the one waiting",
                 id.as_str().unwrap_or("another")
-            ),
-        ));
-    }
-    // An option the request never offered is not an answer; the backend treats anything it
-    // does not recognise as a refusal, which is the safe reading.
-    let chosen = body
-        .option_id
-        .as_deref()
-        .filter(|id| pending.options.iter().any(|o| o.option_id == *id));
-    let id = pending.id;
-    let Some(agent) = &mut hub.agent else {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "the agent is not running".into(),
-        ));
-    };
-    agent.respond_permission(&id, chosen)?;
-    hub.status = "working".into();
+            ))
+            .into());
+        }
+        // An option the request never offered is not an answer; the backend treats anything
+        // it does not recognise as a refusal, which is the safe reading.
+        let chosen = body
+            .option_id
+            .as_deref()
+            .filter(|id| pending.options.iter().any(|o| o.option_id == *id));
+        let id = pending.id;
+        let Some(agent) = &mut hub.agent else {
+            return Err(Conflict("the agent is not running".into()).into());
+        };
+        agent.respond_permission(&id, chosen)?;
+        hub.status = "working".into();
+        Ok(())
+    })
+    .await?;
     Ok(Json(Ok_ { ok: true }))
 }
 
 async fn post_agent_cancel(state: Ctx) -> ApiResult<Ok_> {
-    let mut hub = state
-        .hub
-        .lock()
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "hub poisoned".into()))?;
-    if let Some(agent) = &mut hub.agent {
-        agent.cancel()?;
-    }
+    with_hub(&state, |hub| {
+        if let Some(agent) = &mut hub.agent {
+            agent.cancel()?;
+        }
+        Ok(())
+    })
+    .await?;
     Ok(Json(Ok_ { ok: true }))
 }
 
 async fn post_agent_stop(state: Ctx) -> ApiResult<Ok_> {
-    let mut hub = state
-        .hub
-        .lock()
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "hub poisoned".into()))?;
-    hub.agent = None;
-    hub.permission = None;
-    hub.status = "stopped".into();
+    // Dropping the agent kills its process, which waits for it: another blocking call.
+    with_hub(&state, |hub| {
+        hub.agent = None;
+        hub.permission = None;
+        hub.status = "stopped".into();
+        Ok(())
+    })
+    .await?;
     Ok(Json(Ok_ { ok: true }))
 }
 
@@ -1443,6 +1553,7 @@ pub(crate) fn test_router(roots: &[&Path], agent: bool, auth: Auth) -> Router {
         sessions: Arc::new(Mutex::new(Sessions::default())),
         secure_cookie: false,
         agent,
+        in_flight: Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT)),
     })
 }
 

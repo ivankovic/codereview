@@ -158,9 +158,16 @@ args = ["--experimental-acp"]
 claude_args = ["--model", "opus"]   # extra arguments for Claude Code when kind is "claude"
 ```
 
-Over ACP, codereview answers the agent's file reads and writes itself and refuses paths
-outside the repository. Zed's `claude-code-acp` adapter is the ACP fallback when `claude` is
-missing; it needs Node 20 or newer.
+`claude_args` is appended after the flags codereview passes, so anything there wins: a
+`--permission-mode` of your own decides what Claude Code asks about, including asking about
+nothing. Treat the config file as something that chooses what runs on your machine, because
+`command` and `args` do exactly that.
+
+Over ACP, codereview answers the agent's file reads and writes itself: paths outside the
+repository are refused, so are symlinks, and so is `.git`, where a hook would run on the next
+git command. Zed's `claude-code-acp` adapter is the ACP fallback when `claude` is missing; it
+needs Node 20 or newer. An agent is started in a process group of its own, so stopping it
+stops whatever it started, and without this server's own secrets in its environment.
 
 Presets word the common requests so both front ends ask the same way: address one comment
 (and move it to Completed), address every pending comment, review a diff into `REVIEW.md`, or
@@ -214,6 +221,11 @@ preserved.
 
 `make check` runs rustfmt, clippy with `-D warnings` on every feature set, and the tests
 through [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`).
+
+`make integration-test` runs the browser UI behind a real nginx, in a container, over TLS on
+a name: the site from [docs/deploy.md](docs/deploy.md), signing in with a password, reading
+and writing through the proxy. It needs docker, curl and openssl, which is why it is not part
+of `make check`.
 PLAN.md has the design and the roadmap, SPECS.md what the tool does in detail.
 
 ## License

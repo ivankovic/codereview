@@ -8,6 +8,9 @@
   commit.
 - Tests run through `cargo nextest run`, never plain `cargo test`. Use it for targeted runs too,
   for example `cargo nextest run --features web -E 'test(tui::)'`.
+- `make integration-test` puts a real nginx in front of the browser UI, in a container. It
+  needs docker; `make check` does not. `tests/nginx/site.conf` mirrors the site in
+  `docs/deploy.md`, and the test fails if the document loses a directive it exercises.
 - Markdown lines wrap at 100 columns.
 
 # Rust

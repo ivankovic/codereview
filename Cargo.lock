@@ -435,6 +435,7 @@ dependencies = [
  "clap",
  "codediff",
  "crossterm",
+ "libc",
  "open",
  "rand 0.9.5",
  "ratatui",

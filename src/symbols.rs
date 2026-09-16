@@ -19,6 +19,44 @@ use codediff::code::language::{language_for_path_and_content, to_treesitter};
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser, Point};
 
+/// The most occurrences one query answers with. A common identifier in a large repository
+/// has tens of thousands, and each one costs a line of text and a file read.
+pub const MAX_REFERENCES: usize = 2000;
+
+/// Whether `name` equals the already-lowercased `lower`, ignoring case.
+fn eq_fold(name: &str, lower: &str) -> bool {
+    if name.is_ascii() {
+        name.eq_ignore_ascii_case(lower)
+    } else {
+        name.to_lowercase() == lower
+    }
+}
+
+/// Whether `name` starts with the already-lowercased `lower`, ignoring case.
+fn starts_with_fold(name: &str, lower: &str) -> bool {
+    if !name.is_ascii() {
+        return name.to_lowercase().starts_with(lower);
+    }
+    name.as_bytes()
+        .get(..lower.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(lower.as_bytes()))
+}
+
+/// Whether `name` holds the already-lowercased `lower` anywhere, ignoring case.
+fn contains_fold(name: &str, lower: &str) -> bool {
+    if !name.is_ascii() {
+        return name.to_lowercase().contains(lower);
+    }
+    if lower.is_empty() {
+        return true;
+    }
+    lower.len() <= name.len()
+        && name
+            .as_bytes()
+            .windows(lower.len())
+            .any(|w| w.eq_ignore_ascii_case(lower.as_bytes()))
+}
+
 /// Files above this size are not indexed; nothing a reviewer navigates by symbol is that big.
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -144,10 +182,25 @@ impl Index {
     }
 
     /// Every occurrence of the identifier `name`, definitions included, by path then line.
+    /// Every occurrence of `name`, at most [`MAX_REFERENCES`] of them. The cap is what
+    /// keeps a one-letter identifier in a large repository from reading most of the working
+    /// tree on every request; `len() == MAX_REFERENCES` means there were probably more.
     pub fn references(&self, name: &str) -> Vec<Location> {
         let mut out = Vec::new();
-        for (path, entry) in &self.files {
-            let hits: Vec<&Ident> = entry.idents.iter().filter(|i| i.name == name).collect();
+        // Sorted, so the cap keeps the same occurrences from one call to the next.
+        let mut paths: Vec<&String> = self.files.keys().collect();
+        paths.sort();
+        for path in paths {
+            if out.len() >= MAX_REFERENCES {
+                break;
+            }
+            let entry = &self.files[path];
+            let hits: Vec<&Ident> = entry
+                .idents
+                .iter()
+                .filter(|i| i.name == name)
+                .take(MAX_REFERENCES - out.len())
+                .collect();
             if hits.is_empty() {
                 continue;
             }
@@ -197,12 +250,13 @@ impl Index {
             .values()
             .flat_map(|f| f.symbols.iter())
             .filter_map(|s| {
-                let lower = s.name.to_lowercase();
-                let rank = if lower == q {
+                // Ranked without lowercasing every name in the repository on every
+                // keystroke: names are nearly always ASCII, and only the rest pay a copy.
+                let rank = if eq_fold(&s.name, &q) {
                     0
-                } else if lower.starts_with(&q) {
+                } else if starts_with_fold(&s.name, &q) {
                     1
-                } else if lower.contains(&q) {
+                } else if contains_fold(&s.name, &q) {
                     2
                 } else {
                     return None;
@@ -643,6 +697,34 @@ mod tests {
             identifier_at("a.txt", "h\u{e9}llo", 0, 2).as_deref(),
             Some("h\u{e9}llo")
         );
+    }
+
+    /// The fast paths must agree with lowercasing, which is what they replace.
+    #[test]
+    fn folding_matches_lowercasing() {
+        for (name, query) in [
+            ("Foo", "foo"),
+            ("foo", "foo"),
+            ("BarFoo", "foo"),
+            ("f", "foo"),
+            ("\u{c4}pfel", "\u{e4}pfel"),
+            ("Stra\u{df}e", "stra\u{df}e"),
+            ("nothing", "foo"),
+            ("Foo", ""),
+        ] {
+            let lower = name.to_lowercase();
+            assert_eq!(eq_fold(name, query), lower == query, "eq {name} {query}");
+            assert_eq!(
+                starts_with_fold(name, query),
+                lower.starts_with(query),
+                "starts {name} {query}"
+            );
+            assert_eq!(
+                contains_fold(name, query),
+                lower.contains(query),
+                "contains {name} {query}"
+            );
+        }
     }
 
     #[test]

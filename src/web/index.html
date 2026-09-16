@@ -350,6 +350,12 @@ function segStyle(seg) {
 // Cuts the line's segments at diff-span and search boundaries; byte offsets from the server
 // are converted to string indices assuming the line is mostly ASCII (a UTF-8 aware conversion
 // is done per segment via TextEncoder when needed).
+// Where the character containing byte `i` starts. A UTF-8 continuation byte is 10xxxxxx.
+function charStart(bytes, i) {
+  while (i > 0 && (bytes[i] & 0xc0) === 0x80) i--;
+  return i;
+}
+
 function renderSegments(segs, spans, searchRanges) {
   const cuts = new Set();
   for (const s of spans || []) { cuts.add(s.start); cuts.add(s.end); }
@@ -360,7 +366,13 @@ function renderSegments(segs, spans, searchRanges) {
   for (const seg of segs) {
     const bytes = enc.encode(seg.text);
     const segStart = byte, segEnd = byte + bytes.length;
-    const inner = [...cuts].filter(c => c > segStart && c < segEnd).sort((a, b) => a - b);
+    // A cut may land inside a multi-byte character, which would decode to a replacement
+    // character and misplace every byte offset after it. Move each one back to the start
+    // of the character it falls in.
+    const inner = [...new Set([...cuts]
+      .filter(c => c > segStart && c < segEnd)
+      .map(c => segStart + charStart(bytes, c - segStart))
+      .filter(c => c > segStart && c < segEnd))].sort((a, b) => a - b);
     let prev = segStart;
     const pieces = [];
     for (const c of inner.concat([segEnd])) {

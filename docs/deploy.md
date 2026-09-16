@@ -149,6 +149,7 @@ log_format noquery '$remote_addr - $remote_user [$time_local] '
                    '"$http_referer" "$http_user_agent"';
 
 limit_req_zone $binary_remote_addr zone=signin:1m rate=10r/m;
+limit_req_status 429;
 server_tokens off;
 ```
 
@@ -185,8 +186,9 @@ server {
     gzip_types application/json;
     gzip_min_length 1024;
 
-    # Nothing is uploaded; a comment is a few hundred bytes.
-    client_max_body_size 256k;
+    # Nothing is uploaded. A comment is a few hundred bytes; an agent prompt carrying a
+    # selection is the largest thing the page sends, and the server refuses past a megabyte.
+    client_max_body_size 1m;
 
     location = /login {
         limit_req zone=signin burst=5 nodelay;

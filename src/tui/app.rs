@@ -576,6 +576,7 @@ impl App {
             return;
         }
         let n = refs.len();
+        let capped = n == crate::symbols::MAX_REFERENCES;
         let items = refs
             .into_iter()
             .map(|r| Hit {
@@ -586,7 +587,12 @@ impl App {
                 text: r.text,
             })
             .collect();
-        self.push_locations(format!("{n} occurrences of {name}"), items);
+        let title = if capped {
+            format!("first {n} occurrences of {name}; there may be more")
+        } else {
+            format!("{n} occurrences of {name}")
+        };
+        self.push_locations(title, items);
     }
 
     fn file_symbols(&mut self) {

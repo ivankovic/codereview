@@ -114,6 +114,14 @@ impl Transport {
     /// Spawns `command` with piped stdio. Stdout lines that parse as JSON become messages,
     /// the rest and stderr become diagnostics; `description` names the command for logs.
     pub(crate) fn spawn(mut command: Command, description: String) -> Result<Self> {
+        // The agent leads a process group of its own, so that stopping it stops whatever it
+        // started: an `npx` wrapper otherwise leaves the node process behind, holding the
+        // pipes and whatever it inherited.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -169,6 +177,7 @@ impl Transport {
 
     pub(crate) fn kill(&mut self) {
         if let Some(child) = &mut self.child {
+            kill_group(child);
             let _ = child.kill();
         }
     }
@@ -185,11 +194,26 @@ impl Transport {
 impl Drop for Transport {
     fn drop(&mut self) {
         if let Some(child) = &mut self.child {
+            kill_group(child);
             let _ = child.kill();
             let _ = child.wait();
         }
     }
 }
+
+/// Kills everything the agent started along with the agent. Safe while the `Child` is held:
+/// the process is not reaped until then, so its identifier cannot have been reused.
+#[cfg(unix)]
+fn kill_group(child: &std::process::Child) {
+    // SAFETY: a signal to a process group; the group is the agent's own, made by
+    // `process_group(0)` above.
+    unsafe {
+        libc::killpg(child.id() as i32, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_group(_child: &std::process::Child) {}
 
 /// Hands complete lines to the in-process fake.
 #[cfg(test)]

@@ -153,6 +153,12 @@ is normalised and confirmed to lie inside the repository; anything else is refus
 Node-based ACP commands are checked for Node 20 or newer before starting. A failed start
 reports the agent's last stderr lines.
 
+`claude_args` is appended after the permission flags, so a `--permission-mode` there decides
+what is asked about. An agent runs in a process group of its own, which is signalled as a
+whole when it is stopped, and starts without `CODEREVIEW_TOKEN`, `CODEREVIEW_PASSWORD_HASH`
+or `CODEREVIEW_CONFIG` in its environment. A line of agent output longer than eight megabytes
+is dropped rather than grown.
+
 Presets: address one comment (then move it to Completed), address every pending comment,
 review a diff into REVIEW.md, and a question about a line range.
 

@@ -1,4 +1,4 @@
-.PHONY: build build-web test check fmt clippy install run web
+.PHONY: build build-web test integration-test check fmt clippy install run web
 
 build:
 	cargo build --release
@@ -9,6 +9,10 @@ build-web:
 test:
 	cargo nextest run
 	cargo nextest run --features web
+
+# The browser UI behind nginx, which runs in a container. Needs docker, curl and openssl.
+integration-test:
+	cargo nextest run --features web --run-ignored all -E 'binary(nginx_proxy)'
 
 fmt:
 	cargo fmt --check
