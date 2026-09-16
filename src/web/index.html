@@ -1,0 +1,1255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>codereview</title>
+<style>
+:root {
+  --bg: #15171c; --panel: #1b1e24; --code-bg: #15171c; --fg: #d6d8de; --dim: #8a8f9a;
+  --border: #2b2f38; --accent: #5ec8e5; --cursor: #2c3242;
+  --ins: rgba(46,160,67,.28); --ins-strong: rgba(46,160,67,.55);
+  --del: rgba(248,81,73,.28); --del-strong: rgba(248,81,73,.55);
+  --upd: rgba(210,153,34,.28); --upd-strong: rgba(210,153,34,.55);
+  --mov: rgba(163,113,247,.28); --mov-strong: rgba(163,113,247,.55);
+  --exact: #5ec8e5; --moved: #e3b341; --stale: #f85149; --search: rgba(255,200,0,.45); --visual: #2b3a4a;
+  --ins-fg: #3fb950; --del-fg: #f85149; --upd-fg: #e3b341; --mov-fg: #a371f7;
+}
+* { box-sizing: border-box; }
+/* Elements with their own `display` (the popover, the drawer) must still honour `hidden`. */
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 13px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; }
+a { color: var(--accent); }
+button { background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; cursor: pointer; font: inherit; }
+button:hover { border-color: var(--accent); }
+button.primary { border-color: var(--accent); color: var(--accent); }
+button.small { padding: 1px 6px; font-size: 11px; }
+input, textarea, select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font: inherit; }
+textarea { width: 100%; min-height: 3.2em; font-family: ui-monospace, Menlo, Consolas, monospace; }
+header { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
+header .brand { font-weight: 700; color: var(--accent); }
+header #branch { max-width: 28vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header .tabs button { border-radius: 0; border: none; border-bottom: 2px solid transparent; background: none; }
+header .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
+header .spacer { flex: 1; }
+header .dim, .dim { color: var(--dim); }
+main { flex: 1; display: flex; min-height: 0; }
+aside#tree { width: 280px; min-width: 180px; max-width: 50vw; overflow: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 6px 0; resize: horizontal; }
+aside#tree .row { padding: 1px 8px; cursor: pointer; white-space: nowrap; display: flex; gap: 4px; align-items: center; }
+aside#tree .row:hover { background: var(--cursor); }
+aside#tree .row.selected { background: var(--visual); }
+aside#tree .row .st { width: 1em; text-align: center; font-family: ui-monospace, monospace; }
+aside#tree .row .st.M, aside#tree .name.M { color: var(--upd-fg); }
+aside#tree .row .st.A, aside#tree .name.A { color: var(--ins-fg); }
+aside#tree .row .st.D { color: var(--del-fg); }
+aside#tree .row .st.q, aside#tree .name.q { color: var(--dim); }
+aside#tree .dir { font-weight: 600; }
+aside#tree .cnt { color: var(--exact); font-size: 11px; margin-left: auto; }
+aside#tree .add { visibility: hidden; margin-left: 6px; padding: 0 4px; color: var(--dim); }
+aside#tree .row.dir:hover .add { visibility: visible; }
+aside#tree .add:hover { color: var(--fg); }
+aside#tree input { width: calc(100% - 16px); margin: 0 8px 6px; }
+section#content { flex: 1; overflow: auto; min-width: 0; }
+.filehead { position: sticky; top: 0; z-index: 2; display: flex; gap: 8px; align-items: center; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.filehead .path { font-weight: 600; font-family: ui-monospace, monospace; }
+.badge { padding: 0 6px; border-radius: 8px; font-size: 11px; border: 1px solid var(--border); }
+.badge.M { color: var(--upd-fg); } .badge.A, .badge.q { color: var(--ins-fg); } .badge.D { color: var(--del-fg); }
+table.code { border-collapse: collapse; width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; background: var(--code-bg); }
+table.code td { padding: 0 6px; vertical-align: top; white-space: pre; }
+table.code td.n { text-align: right; color: var(--dim); user-select: none; cursor: pointer; width: 1%; border-right: 1px solid var(--border); }
+table.code td.n:hover { color: var(--fg); background: var(--cursor); }
+table.code td.m { width: 1%; text-align: center; user-select: none; padding: 0 2px; }
+table.code td.b { color: var(--dim); font-size: 11px; white-space: nowrap; user-select: none; }
+table.code tr.op-insert td.c { background: var(--ins); }
+table.code tr.op-delete td.c { background: var(--del); }
+table.code tr.op-update td.c { background: var(--upd); }
+table.code tr.op-move td.c { background: var(--mov); }
+table.code tr.op-insert td.m { color: var(--ins-fg); } table.code tr.op-delete td.m { color: var(--del-fg); }
+table.code tr.op-update td.m { color: var(--upd-fg); } table.code tr.op-move td.m { color: var(--mov-fg); }
+table.code tr.sel td.c { background: var(--visual); }
+table.code tr.cur td { background: var(--cursor); }
+table.code tr.empty td.c { background: var(--panel); }
+span.s-insert { background: var(--ins-strong); } span.s-delete { background: var(--del-strong); }
+span.s-update { background: var(--upd-strong); } span.s-move { background: var(--mov-strong); }
+mark { background: var(--search); color: inherit; }
+tr.comment td { background: var(--panel); padding: 4px 12px; white-space: normal; font-family: -apple-system, "Segoe UI", sans-serif; border-bottom: 1px solid var(--border); }
+.cmt { display: flex; gap: 8px; align-items: baseline; }
+.cmt .who { font-weight: 600; }
+.cmt.exact .who { color: var(--exact); } .cmt.moved .who { color: var(--moved); } .cmt.stale .who { color: var(--stale); }
+.cmt.done { opacity: .6; }
+.cmt .text { flex: 1; white-space: pre-wrap; }
+.cmt .actions { display: flex; gap: 4px; }
+.cmt .st { font-size: 11px; color: var(--dim); }
+tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
+.form .row { display: flex; gap: 6px; margin-top: 4px; align-items: center; }
+.list { padding: 8px 12px; }
+.list .item { padding: 4px 8px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+.list .item:hover, .list .item.selected { background: var(--cursor); }
+.list .item .mono { font-family: ui-monospace, monospace; }
+.list .item .grow { flex: 1; }
+.split { display: flex; height: 100%; min-height: 0; }
+.split > div { flex: 1; overflow: auto; min-width: 0; }
+.split > div:first-child { border-right: 1px solid var(--border); max-width: 50%; }
+.details { padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-family: ui-monospace, monospace; white-space: pre-wrap; }
+.status-letter { display: inline-block; width: 1.2em; font-family: ui-monospace, monospace; }
+.status-letter.A { color: var(--ins-fg); } .status-letter.D { color: var(--del-fg); } .status-letter.M { color: var(--upd-fg); } .status-letter.R { color: var(--mov-fg); } .status-letter.q { color: var(--dim); }
+.sbs { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.sbs table.code { width: 100%; }
+.sbs > div { overflow-x: auto; min-width: 0; }
+.sbs > div:first-child { border-right: 2px solid var(--border); }
+footer { padding: 4px 12px; border-top: 1px solid var(--border); background: var(--panel); color: var(--dim); font-size: 12px; display: flex; gap: 16px; }
+footer .msg.error { color: #f85149; }
+.center { padding: 40px; color: var(--dim); text-align: center; }
+#help { position: fixed; inset: 10% 20%; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 16px 24px; overflow: auto; z-index: 10; }
+#help h3 { margin: 8px 0 4px; color: var(--accent); }
+#help table td { padding: 1px 12px 1px 0; }
+#help kbd { font-family: ui-monospace, monospace; background: var(--bg); padding: 0 4px; border-radius: 3px; border: 1px solid var(--border); }
+#popover { position: fixed; z-index: 20; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+#popover .word { font-family: ui-monospace, monospace; font-weight: 600; margin-right: 4px; }
+#drawer { width: 380px; min-width: 200px; max-width: 60vw; border-left: 1px solid var(--border); background: var(--panel); overflow: auto; display: flex; flex-direction: column; }
+#drawer .filehead { position: static; }
+#drawer .list .item { flex-direction: column; align-items: stretch; gap: 2px; }
+#drawer .list .item .loc { color: var(--accent); font-family: ui-monospace, monospace; font-size: 12px; }
+#drawer .list .item .label { font-weight: 600; }
+#drawer .list .item .text { font-family: ui-monospace, monospace; font-size: 12px; color: var(--dim); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+table.code td.c span.ident:hover { text-decoration: underline; cursor: pointer; }
+table.code tr.cur-sym td.c { outline: 1px solid var(--accent); }
+#agent { display: flex; flex-direction: column; height: 100%; }
+#agent .transcript { flex: 1; overflow: auto; padding: 12px 16px; }
+#agent .entry { display: flex; gap: 10px; margin-bottom: 10px; }
+#agent .entry .who { width: 56px; flex: none; font-weight: 600; color: var(--dim); font-size: 12px; padding-top: 2px; }
+#agent .entry.user .who { color: var(--accent); }
+#agent .entry .body { flex: 1; white-space: pre-wrap; word-break: break-word; }
+#agent .entry.thought .body, #agent .entry.system .body { color: var(--dim); font-style: italic; }
+#agent .entry.tool .body { color: var(--upd-fg); font-family: ui-monospace, monospace; font-size: 12px; }
+#agent .entry.log { margin-bottom: 2px; }
+#agent .entry.log .body { color: var(--dim); font-family: ui-monospace, monospace; font-size: 11px; }
+#agent .progress { color: var(--accent); font-size: 12px; }
+#agent .usage { color: var(--dim); font-size: 12px; }
+#agent .compose { border-top: 1px solid var(--border); padding: 8px 12px; background: var(--panel); }
+#agent .compose textarea { min-height: 2.6em; }
+#agent .permission { padding: 8px 12px; background: var(--upd); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+@media (max-width: 800px) { aside#tree { width: 160px; } .sbs { grid-template-columns: 1fr; } #drawer { width: 200px; } }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">codereview</span>
+  <select id="repo" title="which repository the page shows" hidden></select>
+  <span id="branch" class="dim"></span>
+  <span class="tabs">
+    <button data-view="explore" class="active">Explore</button>
+    <button data-view="changes">Changes</button>
+    <button data-view="log">Log</button>
+    <button data-view="review">Review <span id="pending" class="badge"></span></button>
+    <button data-view="notes">Notes</button>
+    <button data-view="agent">Agent <span id="agentdot" class="badge" hidden></span></button>
+  </span>
+  <span class="spacer"></span>
+  <input id="symbol" placeholder="find symbol (#)" size="16" title="definitions whose name contains this">
+  <input id="search" placeholder="search in file (/)" size="20">
+  <select id="theme" title="colour scheme, saved to the config file"></select>
+  <button id="refresh" title="re-read the repository and both Markdown files">Refresh</button>
+  <button id="helpbtn">?</button>
+</header>
+<main>
+  <aside id="tree"></aside>
+  <section id="content"><div class="center">Pick a file on the left.</div></section>
+  <aside id="drawer" hidden></aside>
+</main>
+<div id="popover" hidden></div>
+<footer><span id="hint" class="dim"></span><span id="msg" class="msg"></span></footer>
+<div id="help" hidden></div>
+<script>
+'use strict';
+const TOKEN = '__TOKEN__';
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const state = {
+  repo: 0, repos: [],
+  view: 'explore', files: [], status: {}, pending: 0, hasCommits: true,
+  tree: { collapsed: new Set(), filter: '' },
+  file: null,      // { path, lines, text, comments, notes, line_ops, blame }
+  diff: null,      // { params, data, unified, siblings, index, back }
+  log: null,       // { path, commits, selected, files, exhausted }
+  review: { showCompleted: false },
+  search: '',
+};
+
+async function api(path, opts = {}) {
+  const init = { headers: { 'Authorization': 'Bearer ' + TOKEN } };
+  if (opts.body !== undefined) {
+    init.method = 'POST';
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(opts.body);
+  } else if (opts.post) {
+    init.method = 'POST';
+  }
+  // Every call names the repository the page is on; the server defaults to the first.
+  const res = await fetch('/api' + path + (path.includes('?') ? '&' : '?') + 'repo=' + state.repo, init);
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* no body */ }
+  if (!res.ok) throw new Error((data && data.error) || res.statusText);
+  return data;
+}
+
+function msg(text, isError = false) {
+  const el = $('#msg');
+  el.textContent = text || '';
+  el.className = 'msg' + (isError ? ' error' : '');
+  if (text) setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 6000);
+}
+function fail(e) { console.error(e); msg(e.message || String(e), true); }
+
+// ----- state ----------------------------------------------------------------------------------
+
+function applyTheme(t) {
+  // A terminal-palette scheme has no browser colours: follow the browser's preference.
+  if (!t || t.terminal) {
+    const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    t = state.themesByName && state.themesByName[dark ? 'Dark' : 'Light'];
+    if (!t) return;
+  }
+  const r = document.documentElement.style;
+  const alpha = (hex, a) => hex.startsWith('#') && hex.length === 7 ? `rgba(${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)},${a})` : hex;
+  r.setProperty('--bg', t.bg); r.setProperty('--code-bg', t.bg); r.setProperty('--fg', t.fg);
+  r.setProperty('--panel', t.panel); r.setProperty('--border', t.border); r.setProperty('--dim', t.dim);
+  r.setProperty('--accent', t.accent); r.setProperty('--cursor', t.cursor_bg);
+  r.setProperty('--ins', t.insert_line); r.setProperty('--ins-strong', t.insert_span);
+  r.setProperty('--del', t.delete_line); r.setProperty('--del-strong', t.delete_span);
+  r.setProperty('--upd', t.update_line); r.setProperty('--upd-strong', t.update_span);
+  r.setProperty('--mov', t.move_line); r.setProperty('--mov-strong', t.move_span);
+  r.setProperty('--exact', t.exact); r.setProperty('--moved', t.moved); r.setProperty('--stale', t.stale);
+  r.setProperty('--search', alpha(t.search_bg, .6)); r.setProperty('--visual', t.visual_bg);
+  r.setProperty('--ins-fg', t.insert_fg); r.setProperty('--del-fg', t.delete_fg);
+  r.setProperty('--upd-fg', t.update_fg); r.setProperty('--mov-fg', t.move_fg);
+  document.documentElement.style.colorScheme = t.dark ? 'dark' : 'light';
+}
+
+async function loadState() {
+  const s = await api('/state');
+  state.files = s.files;
+  state.theme = s.theme;
+  const sel = $('#theme');
+  if (sel.options.length !== s.themes.length + (s.theme.terminal ? 1 : 0)) {
+    sel.innerHTML = (s.theme.terminal ? '<option value="Terminal">Terminal (browser default)</option>' : '') + s.themes.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  }
+  sel.value = s.theme.name;
+  applyTheme(s.theme);
+  state.status = Object.fromEntries(s.status);
+  state.pending = s.pending;
+  state.hasCommits = s.has_commits;
+  $('#branch').textContent = s.branch + ' · ' + s.root;
+  $('#pending').textContent = s.pending;
+  renderTree();
+}
+
+// ----- repositories ---------------------------------------------------------------------------
+
+async function loadRepos() {
+  state.repos = await api('/repos');
+  const sel = $('#repo');
+  sel.hidden = state.repos.length < 2;
+  sel.innerHTML = state.repos.map(r => `<option value="${r.index}">${esc(r.name)}${r.pending ? ' · ' + r.pending : ''}</option>`).join('');
+  sel.value = String(state.repo);
+}
+
+/// Moves the page to another served repository: everything shown belongs to one, so the
+/// per-repository state starts over and the agent transcript is rebuilt from that
+/// repository's events.
+async function switchRepo(index) {
+  state.repo = index;
+  state.file = null; state.diff = null; state.log = null; state.allComments = undefined;
+  state.tree.collapsed = new Set(); state.tree.filter = '';
+  Object.assign(agent, { seq: 0, entries: [], tools: {}, permission: null, running: false, name: '', status: 'not started',
+    phase: '', turnMs: null, quietMs: null, turnTools: 0, inputTokens: 0, outputTokens: 0, cost: null, startedAt: null });
+  state.allComments = await api('/comments');
+  await loadState();
+  setTabs('explore');
+  $('#content').innerHTML = '<div class="center">Pick a file on the left.</div>';
+  $('#agentdot').hidden = true;
+  agentPoll();
+  msg('repository ' + (state.repos[index] ? state.repos[index].name : index));
+}
+
+$('#repo').onchange = e => switchRepo(Number(e.target.value)).catch(fail);
+
+// ----- tree -----------------------------------------------------------------------------------
+
+function buildTree() {
+  const root = { dirs: new Map(), files: [] };
+  for (const f of state.files) {
+    if (state.tree.filter && !f.toLowerCase().includes(state.tree.filter.toLowerCase())) continue;
+    const parts = f.split('/');
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!node.dirs.has(parts[i])) node.dirs.set(parts[i], { dirs: new Map(), files: [], path: parts.slice(0, i + 1).join('/') });
+      node = node.dirs.get(parts[i]);
+    }
+    node.files.push({ name: parts[parts.length - 1], path: f });
+  }
+  return root;
+}
+
+function renderTree() {
+  const counts = {};
+  for (const c of (state.allComments || [])) if (c.comment.section === 'Pending') counts[c.comment.path] = (counts[c.comment.path] || 0) + 1;
+  const parts = [`<input id="filter" placeholder="filter files" value="${esc(state.tree.filter)}">`];
+  const walk = (node, depth) => {
+    const dirs = [...node.dirs.keys()].sort();
+    for (const name of dirs) {
+      const d = node.dirs.get(name);
+      const collapsed = state.tree.collapsed.has(d.path) && !state.tree.filter;
+      const dcnt = counts[d.path] ? `<span class="cnt">●${counts[d.path]}</span>` : '';
+      parts.push(`<div class="row dir" data-dir="${esc(d.path)}" style="padding-left:${8 + depth * 14}px"><span class="st"></span>${collapsed ? '▸' : '▾'} ${esc(name)}/${dcnt}<span class="add" title="comment on this directory">+</span></div>`);
+      if (!collapsed) walk(d, depth + 1);
+    }
+    for (const f of node.files.sort((a, b) => a.name.localeCompare(b.name))) {
+      const st = state.status[f.path] || '';
+      const cls = st === '?' ? 'q' : st;
+      const sel = state.file && state.file.path === f.path ? ' selected' : '';
+      const cnt = counts[f.path] ? `<span class="cnt">●${counts[f.path]}</span>` : '';
+      parts.push(`<div class="row${sel}" data-file="${esc(f.path)}" style="padding-left:${8 + depth * 14}px"><span class="st ${cls}">${esc(st)}</span><span class="name ${cls}">${esc(f.name)}</span>${cnt}</div>`);
+    }
+  };
+  walk(buildTree(), 0);
+  const tree = $('#tree');
+  tree.innerHTML = parts.join('');
+  $('#filter').oninput = e => { state.tree.filter = e.target.value; renderTree(); $('#filter').focus(); $('#filter').setSelectionRange(1e9, 1e9); };
+  tree.querySelectorAll('[data-dir]').forEach(el => {
+    el.onclick = () => {
+      const p = el.dataset.dir;
+      if (state.tree.collapsed.has(p)) state.tree.collapsed.delete(p); else state.tree.collapsed.add(p);
+      renderTree();
+    };
+    el.querySelector('.add').onclick = e => { e.stopPropagation(); addPathComment(el.dataset.dir); };
+  });
+  tree.querySelectorAll('[data-file]').forEach(el => el.onclick = () => openFile(el.dataset.file));
+}
+
+// ----- code rendering -------------------------------------------------------------------------
+
+function segStyle(seg) {
+  let s = '';
+  if (seg.fg) s += `color:rgb(${seg.fg[0]},${seg.fg[1]},${seg.fg[2]});`;
+  if (seg.bold) s += 'font-weight:bold;';
+  if (seg.italic) s += 'font-style:italic;';
+  return s;
+}
+
+// Cuts the line's segments at diff-span and search boundaries; byte offsets from the server
+// are converted to string indices assuming the line is mostly ASCII (a UTF-8 aware conversion
+// is done per segment via TextEncoder when needed).
+function renderSegments(segs, spans, searchRanges) {
+  const cuts = new Set();
+  for (const s of spans || []) { cuts.add(s.start); cuts.add(s.end); }
+  for (const r of searchRanges || []) { cuts.add(r[0]); cuts.add(r[1]); }
+  const out = [];
+  let byte = 0;
+  const enc = new TextEncoder();
+  for (const seg of segs) {
+    const bytes = enc.encode(seg.text);
+    const segStart = byte, segEnd = byte + bytes.length;
+    const inner = [...cuts].filter(c => c > segStart && c < segEnd).sort((a, b) => a - b);
+    let prev = segStart;
+    const pieces = [];
+    for (const c of inner.concat([segEnd])) {
+      // Slice by bytes, decode back to text.
+      const text = new TextDecoder().decode(bytes.slice(prev - segStart, c - segStart));
+      pieces.push([prev, text]);
+      prev = c;
+    }
+    for (const [off, text] of pieces) {
+      if (!text) continue;
+      let cls = '';
+      const inSearch = (searchRanges || []).some(r => r[0] <= off && off < r[1]);
+      const span = (spans || []).find(s => s.start <= off && off < s.end);
+      if (span) cls = 's-' + span.op;
+      let html = `<span class="${cls}" style="${segStyle(seg)}" data-off="${off}">${esc(text)}</span>`;
+      if (inSearch) html = `<mark>${html}</mark>`;
+      out.push(html);
+    }
+    byte = segEnd;
+  }
+  return out.join('') || ' ';
+}
+
+function searchRangesFor(text) {
+  if (!state.search) return [];
+  const smart = /[A-Z]/.test(state.search);
+  const hay = smart ? text : text.toLowerCase();
+  const needle = smart ? state.search : state.search.toLowerCase();
+  const enc = new TextEncoder();
+  const out = [];
+  let from = 0;
+  while (needle && (from = hay.indexOf(needle, from)) >= 0) {
+    const start = enc.encode(text.slice(0, from)).length;
+    out.push([start, start + enc.encode(text.slice(from, from + needle.length)).length]);
+    from += needle.length;
+  }
+  return out;
+}
+
+function commentRow(c, colspan, onChange) {
+  const st = c.state;
+  const done = c.comment.section !== 'Pending';
+  const who = esc(c.comment.author || 'comment');
+  let note = '';
+  if (st === 'moved') note = `moved from line ${c.comment.line}`;
+  if (st === 'stale') note = `stale, was line ${c.comment.line}`;
+  const tr = document.createElement('tr');
+  tr.className = 'comment';
+  tr.innerHTML = `<td colspan="${colspan}"><div class="cmt ${st}${done ? ' done' : ''}">
+    <span class="who">${done ? '✓' : '◆'} ${who}</span>
+    <span class="text">${esc(c.comment.text)}</span>
+    <span class="st">${esc(note)}${c.comment.timestamp ? ' ' + esc(c.comment.timestamp) : ''}</span>
+    <span class="actions">
+      <button class="small" data-act="toggle">${done ? 'reopen' : 'done'}</button>
+      <button class="small" data-act="edit">edit</button>
+      <button class="small" data-act="delete">delete</button>
+      <button class="small" data-act="ask" title="have the agent address this comment">ask agent</button>
+    </span></div></td>`;
+  tr.querySelector('[data-act=ask]').onclick = () => askAgent({ preset: 'address_comment', comment: c.comment });
+  tr.querySelector('[data-act=toggle]').onclick = () => api('/comments/toggle', { body: { comment: c.comment } }).then(onChange).catch(fail);
+  tr.querySelector('[data-act=delete]').onclick = () => api('/comments/delete', { body: { comment: c.comment } }).then(onChange).catch(fail);
+  tr.querySelector('[data-act=edit]').onclick = () => {
+    const text = prompt('Edit comment', c.comment.text);
+    if (text && text.trim()) api('/comments/edit', { body: { comment: c.comment, text } }).then(onChange).catch(fail);
+  };
+  return tr;
+}
+
+// `line` of null comments on the whole file or directory, with no line range.
+function commentForm(path, line, endLine, sourceLine, colspan, onDone) {
+  const tr = document.createElement('tr');
+  tr.className = 'form';
+  const label = line ? ':' + (endLine > line ? `${line}-${endLine}` : `${line}`) : '';
+  tr.innerHTML = `<td colspan="${colspan}"><div class="form"><div class="dim">comment on ${esc(path)}${label}</div>
+    <textarea placeholder="Enter saves, Esc cancels; Shift-Enter for a new line"></textarea>
+    <div class="row"><button class="primary" data-act="save">Add to REVIEW.md</button><button data-act="ask" title="send the text as a question about these lines instead">Ask agent</button><button data-act="cancel">Cancel</button></div></div></td>`;
+  const ta = tr.querySelector('textarea');
+  const save = () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    api('/comments', { body: { path, line: line || null, end_line: line ? endLine : null, text, source_line: line ? sourceLine : null } }).then(() => onDone(true)).catch(fail);
+  };
+  tr.querySelector('[data-act=save]').onclick = save;
+  tr.querySelector('[data-act=ask]').onclick = () => {
+    const question = ta.value.trim() || 'Explain this.';
+    onDone(false);
+    askAgent({ preset: 'about_code', path, line: line || null, end_line: line ? endLine : null, text: question, context: line ? [{ uri: 'file://' + path, text: sourceLine }] : [] });
+  };
+  tr.querySelector('[data-act=cancel]').onclick = () => onDone(false);
+  ta.onkeydown = e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save(); }
+    if (e.key === 'Escape') { e.preventDefault(); onDone(false); }
+  };
+  setTimeout(() => ta.focus(), 0);
+  return tr;
+}
+
+// ----- explore --------------------------------------------------------------------------------
+
+let selectStart = null;
+
+async function openFile(path, line) {
+  try {
+    const f = await api('/file?path=' + encodeURIComponent(path));
+    state.file = { ...f, blame: null };
+    state.view = 'explore';
+    renderFile();
+    renderTree();
+    if (line) scrollToLine(line);
+  } catch (e) { fail(e); }
+}
+
+async function refreshFileComments() {
+  if (!state.file) return;
+  const f = await api('/file?path=' + encodeURIComponent(state.file.path));
+  state.file.comments = f.comments;
+  state.file.notes = f.notes;
+  state.allComments = await api('/comments');
+  await loadState();
+  renderFile();
+}
+
+function scrollToLine(line) {
+  const row = $(`#content tr[data-line="${line}"]`);
+  if (row) { row.scrollIntoView({ block: 'center' }); row.classList.add('cur'); setTimeout(() => row.classList.remove('cur'), 1500); }
+}
+
+function renderFile() {
+  const f = state.file;
+  const content = $('#content');
+  content.innerHTML = '';
+  if (!f) { content.innerHTML = '<div class="center">Pick a file on the left.</div>'; return; }
+  setTabs('explore');
+  const st = state.status[f.path] || '';
+  const head = document.createElement('div');
+  head.className = 'filehead';
+  head.innerHTML = `<span class="path">${esc(f.path)}</span>
+    ${st ? `<span class="badge ${st === '?' ? 'q' : st}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
+    <span class="dim">${f.lines.length} lines</span>
+    <span class="spacer" style="flex:1"></span>
+    <button data-act="symbols" title="definitions in this file (@)">Symbols</button>
+    <button data-act="comment" title="comment on the file as a whole">Comment</button>
+    <button data-act="note">Note</button>
+    <button data-act="history" ${state.hasCommits ? '' : 'disabled'}>History</button>
+    <button data-act="diff" ${st && st !== '?' ? '' : 'disabled'}>Diff vs HEAD</button>
+    <button data-act="blame" ${state.hasCommits && st !== '?' ? '' : 'disabled'}>${f.blame ? 'Hide blame' : 'Blame'}</button>`;
+  content.appendChild(head);
+  head.querySelector('[data-act=note]').onclick = () => addNote(f.path);
+  head.querySelector('[data-act=comment]').onclick = () => addPathComment(f.path);
+  head.querySelector('[data-act=symbols]').onclick = () => showFileSymbols(f.path);
+  head.querySelector('[data-act=history]').onclick = () => showLog(f.path);
+  head.querySelector('[data-act=diff]').onclick = () => showDiff({ kind: state.status[f.path] && st ? 'working' : 'working', path: f.path, status: st }, [{ path: f.path, status: st, old_path: null }], 0, () => renderFile());
+  head.querySelector('[data-act=blame]').onclick = async () => {
+    if (f.blame) { f.blame = null; renderFile(); return; }
+    try { f.blame = await api('/blame?path=' + encodeURIComponent(f.path)); renderFile(); } catch (e) { fail(e); }
+  };
+
+  if (f.notes && f.notes.length) {
+    const n = document.createElement('div');
+    n.className = 'details';
+    n.innerHTML = f.notes.map(x => '• ' + esc(x.text)).join('\n');
+    content.appendChild(n);
+  }
+  if (f.binary) { content.insertAdjacentHTML('beforeend', '<div class="center">binary file</div>'); return; }
+
+  const table = document.createElement('table');
+  table.className = 'code';
+  const lines = f.text.split('\n');
+  if (lines.length && lines[lines.length - 1] === '' && f.lines.length < lines.length) lines.pop();
+  const cols = 3 + (f.blame ? 1 : 0);
+  const byLine = {};
+  for (const c of f.comments) if (c.line) (byLine[c.end_line] = byLine[c.end_line] || []).push(c);
+  const onChange = () => refreshFileComments().catch(fail);
+  // Comments on the file as a whole have no line; they head the file.
+  for (const c of f.comments) if (!c.line) table.appendChild(commentRow(c, cols, onChange));
+  let firstMatch = null;
+  f.lines.forEach((segs, i) => {
+    const n = i + 1;
+    const op = f.line_ops ? f.line_ops[i] : 'none';
+    const tr = document.createElement('tr');
+    tr.dataset.line = n;
+    tr.className = 'op-' + op;
+    const marker = f.comments.find(c => c.line && c.line <= n && n <= c.end_line);
+    const mk = marker ? `<span style="color:var(--${marker.state})">●</span>` : (op !== 'none' ? {insert:'+',delete:'-',update:'~',move:'>'}[op] : '');
+    const ranges = searchRangesFor(lines[i] || '');
+    if (ranges.length && firstMatch === null) firstMatch = n;
+    let blame = '';
+    if (f.blame) {
+      const b = f.blame[i];
+      blame = `<td class="b" title="${b ? esc(b.summary) : ''}">${b ? esc(b.hash.slice(0, 7) + ' ' + b.author.slice(0, 12).padEnd(12) + ' ' + b.date) : ''}</td>`;
+    }
+    tr.innerHTML = `<td class="m">${mk}</td>${blame}<td class="n" title="click to comment, shift-click to extend">${n}</td><td class="c">${renderSegments(segs, [], ranges)}</td>`;
+    tr.querySelector('td.c').onclick = e => codeClick(e, f.path, i, lines[i] || '');
+    tr.querySelector('td.n').onclick = e => {
+      $('#content .form')?.closest('tr')?.remove();
+      let start = n, end = n;
+      if (e.shiftKey && selectStart) { start = Math.min(selectStart, n); end = Math.max(selectStart, n); }
+      selectStart = n;
+      table.querySelectorAll('tr.sel').forEach(x => x.classList.remove('sel'));
+      for (let k = start; k <= end; k++) table.querySelector(`tr[data-line="${k}"]`)?.classList.add('sel');
+      const anchorRow = table.querySelector(`tr[data-line="${end}"]`);
+      const form = commentForm(f.path, start, end, lines[start - 1] || '', cols, saved => {
+        form.remove();
+        table.querySelectorAll('tr.sel').forEach(x => x.classList.remove('sel'));
+        selectStart = null;
+        if (saved) onChange();
+      });
+      anchorRow.after(form);
+    };
+    table.appendChild(tr);
+    for (const c of byLine[n] || []) table.appendChild(commentRow(c, cols, onChange));
+  });
+  // Comments past the end of the file.
+  for (const c of f.comments) if (c.line && c.end_line > f.lines.length) table.appendChild(commentRow(c, cols, onChange));
+  content.appendChild(table);
+  $('#hint').textContent = 'Click a line number to comment; shift-click extends the range.';
+  if (state.search && firstMatch) scrollToLine(firstMatch);
+}
+
+// ----- symbols --------------------------------------------------------------------------------
+
+// The byte column of a click inside a code cell: the clicked span's byte offset plus the
+// UTF-8 length of the text before the caret within it.
+function byteColumnOfClick(e) {
+  let span = e.target.closest('span[data-off]');
+  if (!span) return null;
+  const base = +span.dataset.off;
+  let within = 0;
+  const pos = document.caretPositionFromPoint ? document.caretPositionFromPoint(e.clientX, e.clientY)
+    : (document.caretRangeFromPoint ? (r => r && { offsetNode: r.startContainer, offset: r.startOffset })(document.caretRangeFromPoint(e.clientX, e.clientY)) : null);
+  if (pos && span.contains(pos.offsetNode)) {
+    const text = pos.offsetNode.textContent || '';
+    within = new TextEncoder().encode(text.slice(0, pos.offset)).length;
+  }
+  return base + within;
+}
+
+async function codeClick(e, path, row, lineText) {
+  const col = byteColumnOfClick(e);
+  hidePopover();
+  if (col === null) return;
+  try {
+    const r = await api(`/identifier?path=${encodeURIComponent(path)}&line=${row}&col=${col}`);
+    if (!r.name) return;
+    showPopover(e.clientX, e.clientY, r.name);
+  } catch (err) { fail(err); }
+}
+
+function showPopover(x, y, name) {
+  const p = $('#popover');
+  p.innerHTML = `<span class="word">${esc(name)}</span><button class="small" data-act="def">Definition</button><button class="small" data-act="refs">Usages</button>`;
+  p.hidden = false;
+  p.style.left = Math.min(x + 4, window.innerWidth - 260) + 'px';
+  p.style.top = (y + 8) + 'px';
+  p.querySelector('[data-act=def]').onclick = () => { hidePopover(); gotoDefinition(name); };
+  p.querySelector('[data-act=refs]').onclick = () => { hidePopover(); showReferences(name); };
+}
+function hidePopover() { $('#popover').hidden = true; }
+document.addEventListener('click', e => { if (!e.target.closest('#popover') && !e.target.closest('table.code td.c')) hidePopover(); });
+
+async function gotoDefinition(name) {
+  try {
+    const defs = await api('/definitions?name=' + encodeURIComponent(name));
+    if (!defs.length) { msg('no definition of ' + name + ' in the repository'); return; }
+    if (defs.length === 1) { await openFile(defs[0].path, defs[0].line); return; }
+    showDrawer(defs.length + ' definitions of ' + name, defs.map(symbolHit));
+  } catch (err) { fail(err); }
+}
+
+async function showReferences(name) {
+  try {
+    const refs = await api('/references?name=' + encodeURIComponent(name));
+    if (!refs.length) { msg('no occurrence of ' + name); return; }
+    showDrawer(refs.length + ' occurrences of ' + name, refs.map(r => ({ path: r.path, line: r.line, label: '', text: r.text })));
+  } catch (err) { fail(err); }
+}
+
+async function showFileSymbols(path) {
+  try {
+    const syms = await api('/symbols?path=' + encodeURIComponent(path));
+    if (!syms.length) { msg('no symbols found in ' + path); return; }
+    showDrawer('symbols in ' + path, syms.map(symbolHit));
+  } catch (err) { fail(err); }
+}
+
+async function searchSymbols(q) {
+  if (!q.trim()) return;
+  try {
+    const syms = await api('/symbol_search?q=' + encodeURIComponent(q.trim()));
+    if (!syms.length) { msg('no symbol matches ' + q); return; }
+    showDrawer(syms.length + ' symbols matching ' + q, syms.map(symbolHit));
+  } catch (err) { fail(err); }
+}
+
+function symbolHit(s) {
+  return { path: s.path, line: s.line, label: s.kind + ' ' + s.name + (s.container ? ' in ' + s.container : ''), text: s.text };
+}
+
+function showDrawer(title, hits) {
+  const d = $('#drawer');
+  d.hidden = false;
+  d.innerHTML = `<div class="filehead"><span class="path">${esc(title)}</span><span style="flex:1"></span><button class="small" data-act="close">✕</button></div><div class="list"></div>`;
+  d.querySelector('[data-act=close]').onclick = () => { d.hidden = true; };
+  const list = d.querySelector('.list');
+  for (const h of hits) {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = `<span class="loc">${esc(h.path)}:${h.line}</span>${h.label ? `<span class="label">${esc(h.label)}</span>` : ''}<span class="text">${esc(h.text)}</span>`;
+    el.onclick = () => openFile(h.path, h.line);
+    list.appendChild(el);
+  }
+}
+
+$('#symbol').onkeydown = e => { if (e.key === 'Enter') { searchSymbols(e.target.value); e.target.blur(); } if (e.key === 'Escape') e.target.blur(); };
+
+// ----- agent ----------------------------------------------------------------------------------
+
+const agent = { seq: 0, entries: [], status: 'not started', running: false, name: '', permission: null, timer: null, tools: {}, showThoughts: false, showLog: true,
+  phase: '', turnMs: null, quietMs: null, turnTools: 0, inputTokens: 0, outputTokens: 0, cost: null, startedAt: null };
+
+async function agentPoll() {
+  try {
+    const r = await api('/agent/events?since=' + agent.seq);
+    agent.running = r.running; agent.status = r.status; agent.name = r.name; agent.permission = r.permission; agent.command = r.command;
+    agent.phase = r.phase || ''; agent.turnMs = r.turn_ms; agent.quietMs = r.quiet_ms;
+    // Merge the user's prompts and the agent's events in sequence order.
+    const items = r.events.map(([n, e]) => [n, 'event', e]).concat(r.transcript.map(([n, t]) => [n, 'user', t])).sort((a, b) => a[0] - b[0]);
+    for (const [n, kind, payload] of items) {
+      agent.seq = Math.max(agent.seq, n);
+      if (kind === 'user') agent.entries.push({ kind: 'user', text: payload });
+      else applyAgentEvent(payload);
+    }
+    if (items.length || state.view === 'agent') renderAgent();
+    else renderAgentHead();
+    $('#agentdot').hidden = !(agent.permission || agent.status === 'working');
+    $('#agentdot').textContent = agent.permission ? '?' : '…';
+  } catch (err) { console.error(err); }
+}
+
+function applyAgentEvent(e) {
+  const last = agent.entries[agent.entries.length - 1];
+  switch (e.event) {
+    case 'text': {
+      const kind = e.role === 'agent' ? 'agent' : e.role === 'thought' ? 'thought' : 'user';
+      if (last && last.kind === kind && kind !== 'user') last.text += e.text; else agent.entries.push({ kind, text: e.text });
+      break;
+    }
+    case 'tool_call': {
+      let t = agent.tools[e.id];
+      if (!t) { t = { kind: 'tool', title: '', k: null, status: null, locations: [], output: null, text: '' }; agent.tools[e.id] = t; agent.entries.push(t); agent.turnTools++; }
+      if (e.title) t.title = e.title; if (e.kind) t.k = e.kind; if (e.status) t.status = e.status;
+      if (e.locations && e.locations.length) t.locations = e.locations; if (e.output) t.output = e.output;
+      t.text = t.title + (t.k ? ' (' + t.k + ')' : '') + (t.status ? ' [' + t.status + ']' : '') + (t.locations.length ? ' ' + t.locations.join(', ') : '') + (t.output ? '\n' + t.output.slice(0, 600) : '');
+      break;
+    }
+    case 'plan': agent.entries.push({ kind: 'system', text: 'plan:\n' + e.entries.map(([c, s]) => '[' + s + '] ' + c).join('\n') }); break;
+    case 'permission': agent.entries.push({ kind: 'system', text: 'permission: ' + e.title }); break;
+    case 'turn_done': agent.tools = {}; agent.turnTools = 0; if (e.stop_reason !== 'end_turn') agent.entries.push({ kind: 'system', text: 'stopped: ' + e.stop_reason }); break;
+    case 'error': agent.entries.push({ kind: 'system', text: 'error: ' + e.message }); break;
+    case 'exited': agent.entries.push({ kind: 'system', text: e.message }); break;
+    case 'stderr': agent.entries.push({ kind: 'log', text: 'stderr: ' + e.text }); break;
+    case 'log': agent.entries.push({ kind: 'log', text: e.text }); break;
+    case 'status': agent.phase = e.text; break;
+    case 'usage': agent.inputTokens += e.input_tokens; agent.outputTokens += e.output_tokens; if (e.cost_usd != null) agent.cost = e.cost_usd; break;
+  }
+}
+
+function startAgentPolling() {
+  if (agent.timer) return;
+  agent.timer = setInterval(() => { if (state.view === 'agent' || agent.running) agentPoll(); }, 500);
+}
+
+async function agentStart() {
+  agent.entries.push({ kind: 'system', text: 'starting ' + (agent.command || 'the agent') + ' …' });
+  agent.startedAt = Date.now();
+  renderAgent();
+  try {
+    const r = await api('/agent/start', { post: true });
+    agent.running = r.running; agent.status = r.status; agent.name = r.name;
+    agent.entries.push({ kind: 'system', text: 'connected to ' + r.name + ' after ' + ((Date.now() - agent.startedAt) / 1000).toFixed(1) + 's' });
+  } catch (err) { agent.entries.push({ kind: 'system', text: 'could not start the agent: ' + err.message }); }
+  agent.startedAt = null;
+  renderAgent();
+}
+
+function fmtCount(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
+
+// The header line: status, what the backend is doing, elapsed time, tokens and cost.
+function renderAgentHead() {
+  const root = $('#agent');
+  if (!root) return;
+  $('#agentname').textContent = agent.running ? agent.name : (agent.command || '');
+  $('#agentstatus').textContent = agent.status;
+  const parts = [];
+  if (agent.startedAt) parts.push('starting · ' + Math.round((Date.now() - agent.startedAt) / 1000) + 's');
+  else if (agent.permission) parts.push('waiting for permission');
+  else if (agent.status === 'working' || agent.turnMs != null) {
+    if (agent.phase) parts.push(agent.phase);
+    if (agent.turnMs != null) parts.push(Math.round(agent.turnMs / 1000) + 's');
+    if (agent.quietMs != null && agent.quietMs >= 5000) parts.push('silent for ' + Math.round(agent.quietMs / 1000) + 's');
+    if (agent.turnTools) parts.push(agent.turnTools + ' tool call' + (agent.turnTools === 1 ? '' : 's'));
+  }
+  $('#agentprogress').textContent = parts.join(' · ');
+  const usage = [];
+  if (agent.inputTokens || agent.outputTokens) usage.push(fmtCount(agent.inputTokens) + ' in / ' + fmtCount(agent.outputTokens) + ' out');
+  if (agent.cost != null) usage.push('$' + agent.cost.toFixed(2));
+  $('#agentusage').textContent = usage.join(' · ');
+}
+
+async function agentSend(body) {
+  try {
+    if (!agent.running) await agentStart();
+    if (!agent.running) return;
+    await api('/agent/prompt', { body });
+    agent.status = 'working';
+    await agentPoll();
+  } catch (err) { fail(err); }
+}
+
+function askAgent(body) { showAgent(); agentSend(body); }
+
+function showAgent() {
+  setTabs('agent');
+  startAgentPolling();
+  const content = $('#content');
+  content.innerHTML = `<div id="agent"><div class="filehead"><span class="path">agent</span><span id="agentname" class="dim"></span><span id="agentstatus" class="badge"></span><span id="agentprogress" class="progress"></span><span id="agentusage" class="usage"></span><span style="flex:1"></span>
+      <label class="dim"><input type="checkbox" id="thoughts"> thoughts</label>
+      <label class="dim"><input type="checkbox" id="showlog"> log</label>
+      <button data-act="all" title="work through every pending comment in REVIEW.md">Address all pending</button>
+      <button data-act="cancel">Cancel turn</button><button data-act="restart">Restart</button><button data-act="clear">Clear</button></div>
+    <div class="transcript"></div><div class="permission" hidden></div>
+    <div class="compose"><textarea id="ask" placeholder="Ask the agent (Enter sends, Shift-Enter for a new line)"></textarea>
+    <div class="row" style="margin-top:6px"><button class="primary" data-act="send">Send</button><span class="dim">Comments and lines have their own “ask” buttons; the agent runs in the repository root.</span></div></div></div>`;
+  $('#agent [data-act=send]').onclick = () => { const ta = $('#ask'); const t = ta.value.trim(); if (!t) return; ta.value = ''; agentSend({ text: t }); };
+  $('#ask').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#agent [data-act=send]').click(); } };
+  $('#agent [data-act=all]').onclick = () => agentSend({ preset: 'address_all' });
+  $('#agent [data-act=cancel]').onclick = () => api('/agent/cancel', { post: true }).catch(fail);
+  $('#agent [data-act=restart]').onclick = async () => { await api('/agent/stop', { post: true }).catch(fail); agent.running = false; agentStart(); };
+  $('#agent [data-act=clear]').onclick = () => { agent.entries = []; agent.tools = {}; renderAgent(); };
+  $('#thoughts').checked = agent.showThoughts;
+  $('#thoughts').onchange = e => { agent.showThoughts = e.target.checked; renderAgent(); };
+  $('#showlog').checked = agent.showLog;
+  $('#showlog').onchange = e => { agent.showLog = e.target.checked; renderAgent(); };
+  renderAgent();
+  agentPoll();
+  $('#hint').textContent = 'Enter sends. The agent asks before doing anything that needs permission.';
+}
+
+function renderAgent() {
+  const root = $('#agent');
+  if (!root) return;
+  renderAgentHead();
+  const t = root.querySelector('.transcript');
+  const atBottom = t.scrollTop + t.clientHeight >= t.scrollHeight - 20;
+  t.innerHTML = agent.entries.filter(e => (e.kind !== 'thought' || agent.showThoughts) && (e.kind !== 'log' || agent.showLog)).map(e => {
+    const who = { user: 'you', agent: agent.name || 'agent', thought: 'thinking', tool: 'tool', system: '', log: 'log' }[e.kind];
+    return `<div class="entry ${e.kind}"><span class="who">${esc(who)}</span><span class="body">${esc(e.text)}</span></div>`;
+  }).join('') || '<div class="center">Nothing yet. Ask something below, or use “Address all pending”.</div>';
+  if (atBottom) t.scrollTop = t.scrollHeight;
+  const p = root.querySelector('.permission');
+  if (agent.permission) {
+    p.hidden = false;
+    p.innerHTML = `<b>agent asks:</b> ${esc(agent.permission.title)} ` + agent.permission.options.map(o => `<button class="small" data-opt="${esc(o.option_id)}">${esc(o.name)}</button>`).join('') + `<button class="small" data-opt="">Cancel</button>`;
+    p.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => api('/agent/permission', { body: { option_id: b.dataset.opt || null } }).then(agentPoll).catch(fail));
+  } else {
+    p.hidden = true;
+  }
+}
+
+// ----- changes --------------------------------------------------------------------------------
+
+async function showChanges(staged = false) {
+  setTabs('changes');
+  try {
+    const files = await api('/changes?staged=' + staged);
+    const content = $('#content');
+    content.innerHTML = `<div class="filehead"><span class="path">${staged ? 'staged' : 'working tree'}</span><span class="dim">${files.length} files</span>
+      <span style="flex:1"></span><button data-act="switch">${staged ? 'Show working tree' : 'Show staged'}</button></div><div class="list"></div>`;
+    content.querySelector('[data-act=switch]').onclick = () => showChanges(!staged);
+    const list = content.querySelector('.list');
+    if (!files.length) list.innerHTML = '<div class="center">nothing here</div>';
+    files.forEach((f, i) => {
+      const el = document.createElement('div');
+      el.className = 'item';
+      const letter = f.status === 'untracked' ? '?' : f.status[0].toUpperCase();
+      el.innerHTML = `<span class="status-letter ${letter === '?' ? 'q' : letter}">${letter}</span><span class="mono grow">${esc(f.old_path ? f.old_path + ' → ' + f.path : f.path)}</span>`;
+      el.onclick = () => showDiff({ kind: staged ? 'staged' : 'working', path: f.path, old_path: f.old_path || '', status: letter }, files, i, () => showChanges(staged));
+      list.appendChild(el);
+    });
+    $('#hint').textContent = 'Click a file to see its diff.';
+  } catch (e) { fail(e); }
+}
+
+// ----- log and history ------------------------------------------------------------------------
+
+async function showLog(path = null, keep = false) {
+  setTabs('log');
+  try {
+    if (!keep || !state.log || state.log.path !== path) {
+      const commits = await api('/log?limit=100' + (path ? '&path=' + encodeURIComponent(path) : ''));
+      state.log = { path, commits, selected: 0, files: [], exhausted: commits.length < 100 };
+    }
+    renderLog();
+    await selectCommit(state.log.selected);
+  } catch (e) { fail(e); }
+}
+
+function renderLog() {
+  const L = state.log;
+  const content = $('#content');
+  content.innerHTML = `<div class="split"><div id="commits"><div class="filehead"><span class="path">${L.path ? 'history of ' + esc(L.path) : 'log'}</span><span class="dim">${L.commits.length} commits${L.exhausted ? '' : '+'}</span></div><div class="list"></div></div>
+    <div id="commit"><div class="details"></div><div class="list files"></div></div></div>`;
+  const list = content.querySelector('#commits .list');
+  if (!L.commits.length) list.innerHTML = '<div class="center">no commits</div>';
+  L.commits.forEach((c, i) => {
+    const el = document.createElement('div');
+    el.className = 'item' + (i === L.selected ? ' selected' : '');
+    el.dataset.i = i;
+    el.innerHTML = `<span class="mono dim">${esc(c.short)} ${esc(c.date.slice(0, 10))}</span><span class="grow">${esc(c.subject)}</span><span class="dim">${esc(c.author)}</span>`;
+    el.onclick = () => selectCommit(i);
+    list.appendChild(el);
+  });
+  if (!L.exhausted) {
+    const more = document.createElement('button');
+    more.textContent = 'Load more';
+    more.style.margin = '8px';
+    more.onclick = async () => {
+      const next = await api('/log?limit=100&skip=' + L.commits.length + (L.path ? '&path=' + encodeURIComponent(L.path) : ''));
+      L.commits.push(...next);
+      if (next.length < 100) L.exhausted = true;
+      renderLog();
+    };
+    list.after(more);
+  }
+  $('#hint').textContent = L.path ? 'Click a commit, then the file to see what changed. "vs working tree" diffs that version against your checkout.' : 'Click a commit, then a file.';
+}
+
+async function selectCommit(i) {
+  const L = state.log;
+  if (!L.commits[i]) return;
+  L.selected = i;
+  $('#content #commits .list')?.querySelectorAll('.item').forEach(el => el.classList.toggle('selected', +el.dataset.i === i));
+  const c = L.commits[i];
+  const details = $('#content #commit .details');
+  details.innerHTML = `<span style="color:var(--upd-fg)">${esc(c.hash)}</span>\n${esc(c.author)} &lt;${esc(c.email)}&gt;  ${esc(c.date)}\n\n<b>${esc(c.subject)}</b>${c.body ? '\n' + esc(c.body) : ''}`;
+  try {
+    let files = await api('/commit_files?hash=' + c.hash);
+    if (L.path) files.sort((a, b) => (a.path === L.path ? 0 : 1) - (b.path === L.path ? 0 : 1));
+    L.files = files;
+    const list = $('#content #commit .files');
+    list.innerHTML = '';
+    files.forEach((f, k) => {
+      const el = document.createElement('div');
+      el.className = 'item';
+      const letter = f.status[0].toUpperCase();
+      el.innerHTML = `<span class="status-letter ${letter}">${letter}</span><span class="mono grow">${esc(f.old_path ? f.old_path + ' → ' + f.path : f.path)}</span>
+        ${L.path && f.path === L.path ? '<button class="small" data-act="vs">vs working tree</button>' : ''}`;
+      el.onclick = () => showDiff({ kind: 'commit', hash: c.hash, path: f.path, old_path: f.old_path || '', status: letter }, files, k, () => showLog(L.path, true));
+      const vs = el.querySelector('[data-act=vs]');
+      if (vs) vs.onclick = e => { e.stopPropagation(); showDiff({ kind: 'revisions', from: c.hash, to: '', path: f.path, status: 'M' }, [f], 0, () => showLog(L.path, true)); };
+      list.appendChild(el);
+    });
+  } catch (e) { fail(e); }
+}
+
+// ----- diff -----------------------------------------------------------------------------------
+
+async function showDiff(params, siblings, index, back) {
+  try {
+    const q = Object.entries(params).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+    const data = await api('/diff?' + q);
+    const unified = state.diff ? state.diff.unified : window.innerWidth < 1100;
+    state.diff = { params, data, unified, siblings, index, back };
+    renderDiff();
+  } catch (e) { fail(e); }
+}
+
+function renderDiff() {
+  const D = state.diff;
+  const d = D.data;
+  const content = $('#content');
+  content.innerHTML = '';
+  const changes = d.before.line_ops.filter(o => o !== 'none').length + '/' + d.after.line_ops.filter(o => o !== 'none').length;
+  const head = document.createElement('div');
+  head.className = 'filehead';
+  head.innerHTML = `<button data-act="back">← back</button><span class="path">${esc(D.params.old_path ? D.params.old_path + ' → ' + D.params.path : D.params.path)}</span>
+    <span class="badge">${esc(d.target)}</span><span class="dim">−${d.before.line_ops.filter(o => o !== 'none').length} +${d.after.line_ops.filter(o => o !== 'none').length}</span>
+    <span class="dim">${d.structural ? 'structural diff' : 'line diff'}${d.large_residual ? ' · rewritten?' : ''}</span>
+    <span style="flex:1"></span>
+    <button data-act="prevh" title="previous hunk (p)">▲ hunk</button><button data-act="nexth" title="next hunk (n)">▼ hunk</button>
+    <button data-act="layout">${D.unified ? 'Side by side' : 'Unified'}</button>
+    ${D.siblings.length > 1 ? `<button data-act="prev" ${D.index === 0 ? 'disabled' : ''}>◀ file</button><span class="dim">${D.index + 1}/${D.siblings.length}</span><button data-act="next" ${D.index + 1 >= D.siblings.length ? 'disabled' : ''}>file ▶</button>` : ''}
+    <button data-act="review" title="have the agent review this change into REVIEW.md">Ask agent to review</button>
+    <button data-act="open">Open in explorer</button>`;
+  content.appendChild(head);
+  head.querySelector('[data-act=back]').onclick = () => D.back();
+  head.querySelector('[data-act=review]').onclick = () => askAgent({ preset: 'review_diff', path: D.params.path, target: d.target });
+  head.querySelector('[data-act=layout]').onclick = () => { D.unified = !D.unified; renderDiff(); };
+  head.querySelector('[data-act=open]').onclick = () => openFile(D.params.path);
+  const sibling = k => {
+    const f = D.siblings[k];
+    const letter = f.status === 'untracked' ? '?' : f.status[0].toUpperCase();
+    showDiff({ ...D.params, path: f.path, old_path: f.old_path || '', status: letter }, D.siblings, k, D.back);
+  };
+  head.querySelector('[data-act=prev]') && (head.querySelector('[data-act=prev]').onclick = () => sibling(D.index - 1));
+  head.querySelector('[data-act=next]') && (head.querySelector('[data-act=next]').onclick = () => sibling(D.index + 1));
+  head.querySelector('[data-act=nexth]').onclick = () => jumpHunk(1);
+  head.querySelector('[data-act=prevh]').onclick = () => jumpHunk(-1);
+
+  const rows = d.rows;
+  const bl = d.before.text.split('\n'), al = d.after.text.split('\n');
+  const onChange = async () => {
+    const q = Object.entries(D.params).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+    D.data = await api('/diff?' + q);
+    state.allComments = await api('/comments');
+    await loadState();
+    renderDiff();
+  };
+  const sideRow = (side, i, hunk) => {
+    const s = side === 'after' ? d.after : d.before;
+    const segs = side === 'after' ? d.after_lines[i] : d.before_lines[i];
+    const tr = document.createElement('tr');
+    if (i === undefined || i === null) { tr.className = 'empty'; tr.innerHTML = '<td class="m"></td><td class="n"></td><td class="c"> </td>'; return tr; }
+    const op = s.line_ops[i];
+    tr.className = 'op-' + op;
+    if (hunk !== undefined) tr.dataset.hunk = hunk;
+    const n = i + 1;
+    let mk = op !== 'none' ? {insert:'+',delete:'-',update:'~',move:'>'}[op] : '';
+    if (side === 'after') {
+      tr.dataset.line = n;
+      const c = d.comments.find(c => c.line && c.line <= n && n <= c.end_line);
+      if (c) mk = `<span style="color:var(--${c.state})">●</span>`;
+    }
+    const ranges = side === 'after' ? searchRangesFor(al[i] || '') : [];
+    tr.innerHTML = `<td class="m">${mk}</td><td class="n">${n}</td><td class="c">${renderSegments(segs || [], s.spans[i], ranges)}</td>`;
+    if (side === 'after') tr.querySelector('td.n').onclick = () => {
+      $('#content .form')?.closest('tr')?.remove();
+      const form = commentForm(D.params.path, n, n, al[i] || '', 3, saved => { form.remove(); if (saved) onChange().catch(fail); });
+      tr.after(form);
+    };
+    return tr;
+  };
+  // Hunk numbering over aligned rows.
+  let hunk = 0, inHunk = false;
+  const hunkOf = rows.map(r => {
+    const change = (r.before !== null && d.before.line_ops[r.before] !== 'none') || (r.after !== null && d.after.line_ops[r.after] !== 'none');
+    if (change && !inHunk) hunk++;
+    inHunk = change;
+    return change ? hunk : undefined;
+  });
+  D.hunks = hunk;
+  const byLine = {};
+  for (const c of d.comments) if (c.line) (byLine[c.end_line] = byLine[c.end_line] || []).push(c);
+  if (!D.unified) {
+    const wrap = document.createElement('div');
+    wrap.className = 'sbs';
+    const lt = document.createElement('table'), rt = document.createElement('table');
+    lt.className = rt.className = 'code';
+    rows.forEach((r, k) => {
+      lt.appendChild(sideRow('before', r.before, hunkOf[k]));
+      rt.appendChild(sideRow('after', r.after, hunkOf[k]));
+      if (r.after !== null) for (const c of byLine[r.after + 1] || []) { rt.appendChild(commentRow(c, 3, onChange)); lt.appendChild(sideRow('before', null)); }
+    });
+    const l = document.createElement('div'), rr = document.createElement('div');
+    l.appendChild(lt); rr.appendChild(rt);
+    wrap.appendChild(l); wrap.appendChild(rr);
+    content.appendChild(wrap);
+  } else {
+    const t = document.createElement('table');
+    t.className = 'code';
+    // Within a hunk, every before line first, then every after line, as diff -u reads.
+    let k = 0;
+    while (k < rows.length) {
+      if (hunkOf[k] === undefined) {
+        const r = rows[k];
+        if (r.after !== null) t.appendChild(sideRow('after', r.after));
+        else if (r.before !== null) t.appendChild(sideRow('before', r.before));
+        if (r.after !== null) for (const c of byLine[r.after + 1] || []) t.appendChild(commentRow(c, 3, onChange));
+        k++; continue;
+      }
+      const start = k;
+      while (k < rows.length && hunkOf[k] !== undefined) k++;
+      for (let m = start; m < k; m++) if (rows[m].before !== null) t.appendChild(sideRow('before', rows[m].before, hunkOf[m]));
+      for (let m = start; m < k; m++) if (rows[m].after !== null) {
+        t.appendChild(sideRow('after', rows[m].after, hunkOf[m]));
+        for (const c of byLine[rows[m].after + 1] || []) t.appendChild(commentRow(c, 3, onChange));
+      }
+    }
+    content.appendChild(t);
+  }
+  $('#hint').textContent = `${D.hunks} hunks · n/p jump between hunks · click an after-side line number to comment`;
+  D.currentHunk = 0;
+  if (D.hunks) jumpHunk(1);
+}
+
+function jumpHunk(delta) {
+  const D = state.diff;
+  if (!D || !D.hunks) return;
+  D.currentHunk = ((D.currentHunk - 1 + delta + D.hunks) % D.hunks) + 1;
+  const row = $(`#content tr[data-hunk="${D.currentHunk}"]`);
+  if (row) row.scrollIntoView({ block: 'center' });
+  $('#hint').textContent = `hunk ${D.currentHunk}/${D.hunks} · n/p jump between hunks · click an after-side line number to comment`;
+}
+
+// ----- review ---------------------------------------------------------------------------------
+
+async function showReview() {
+  setTabs('review');
+  try {
+    const all = await api('/comments');
+    state.allComments = all;
+    const show = state.review.showCompleted;
+    const items = all.filter(c => show || c.comment.section === 'Pending').sort((x, y) => x.comment.path.localeCompare(y.comment.path) || (x.line || 0) - (y.line || 0));
+    const pending = all.filter(c => c.comment.section === 'Pending').length;
+    const content = $('#content');
+    content.innerHTML = `<div class="filehead"><span class="path">REVIEW.md</span><span class="dim">${pending} pending, ${all.length - pending} completed</span><span style="flex:1"></span>
+      <button data-act="toggle">${show ? 'Hide completed' : 'Show completed'}</button><button data-act="reanchor" title="rewrite line numbers of moved comments">Re-anchor</button><button data-act="askall" title="have the agent work through every pending comment">Address all with agent</button></div><div class="list"></div>`;
+    content.querySelector('[data-act=toggle]').onclick = () => { state.review.showCompleted = !show; showReview(); };
+    content.querySelector('[data-act=askall]').onclick = () => askAgent({ preset: 'address_all' });
+    content.querySelector('[data-act=reanchor]').onclick = () => api('/reanchor', { post: true }).then(r => { msg(r.moved + ' comment(s) re-anchored'); showReview(); }).catch(fail);
+    const list = content.querySelector('.list');
+    if (!items.length) list.innerHTML = '<div class="center">no comments</div>';
+    for (const c of items) {
+      const el = document.createElement('div');
+      el.className = 'item';
+      const done = c.comment.section !== 'Pending';
+      const loc = c.comment.path + (c.line ? ':' + c.line + (c.end_line > c.line ? '-' + c.end_line : '') : '');
+      el.innerHTML = `<span class="mono" style="color:var(--${c.state})">${done ? '✓' : '◆'} ${esc(loc)}${c.state !== 'exact' ? ' (' + c.state + ')' : ''}</span>
+        <span class="grow" style="${done ? 'opacity:.6' : ''}">${esc(c.comment.text)}</span><span class="dim">${esc(c.comment.author || '')}</span>
+        <span class="actions"><button class="small" data-act="toggle">${done ? 'reopen' : 'done'}</button><button class="small" data-act="edit">edit</button><button class="small" data-act="delete">delete</button><button class="small" data-act="ask">ask agent</button></span>`;
+      el.onclick = () => { if (!c.line && !state.files.includes(c.comment.path)) return; openFile(c.comment.path, c.line); };
+      el.querySelector('[data-act=ask]').onclick = e => { e.stopPropagation(); askAgent({ preset: 'address_comment', comment: c.comment }); };
+      el.querySelector('[data-act=toggle]').onclick = e => { e.stopPropagation(); api('/comments/toggle', { body: { comment: c.comment } }).then(showReview).catch(fail); };
+      el.querySelector('[data-act=delete]').onclick = e => { e.stopPropagation(); api('/comments/delete', { body: { comment: c.comment } }).then(showReview).catch(fail); };
+      el.querySelector('[data-act=edit]').onclick = e => { e.stopPropagation(); const t = prompt('Edit comment', c.comment.text); if (t && t.trim()) api('/comments/edit', { body: { comment: c.comment, text: t } }).then(showReview).catch(fail); };
+      list.appendChild(el);
+    }
+    await loadState();
+    $('#hint').textContent = 'Click a comment to open the file at its line.';
+  } catch (e) { fail(e); }
+}
+
+// ----- notes ----------------------------------------------------------------------------------
+
+// A comment on a whole file or directory, from the tree or the file header.
+async function addPathComment(path) {
+  const text = prompt('Comment on ' + path);
+  if (!text || !text.trim()) return;
+  try {
+    await api('/comments', { body: { path, line: null, end_line: null, text } });
+    msg('comment added to REVIEW.md');
+    if (state.file && state.file.path === path) { await refreshFileComments(); return; }
+    // The tree counts comments per path, so it needs the new one before it redraws.
+    state.allComments = await api('/comments');
+    await loadState();
+    if (state.view === 'review') showReview();
+  } catch (e) { fail(e); }
+}
+
+function addNote(path) {
+  const text = prompt(path ? 'Note on ' + path : 'General note');
+  if (!text || !text.trim()) return;
+  api('/notes', { body: { path: path || null, text } }).then(() => { msg('note added to NOTES.md'); if (state.view === 'notes') showNotes(); else if (state.file && state.file.path === path) refreshFileComments(); }).catch(fail);
+}
+
+async function showNotes() {
+  setTabs('notes');
+  try {
+    const notes = await api('/notes');
+    const content = $('#content');
+    content.innerHTML = `<div class="filehead"><span class="path">NOTES.md</span><span class="dim">${notes.length} notes</span><span style="flex:1"></span><button data-act="add">Add general note</button></div><div class="list"></div>`;
+    content.querySelector('[data-act=add]').onclick = () => addNote(null);
+    const list = content.querySelector('.list');
+    if (!notes.length) list.innerHTML = '<div class="center">no notes</div>';
+    for (const n of notes) {
+      const el = document.createElement('div');
+      el.className = 'item';
+      el.innerHTML = `<span class="mono" style="color:var(--accent)">${esc(n.target)}</span><span class="grow" style="white-space:pre-wrap">${esc(n.text)}</span>
+        <span class="actions"><button class="small" data-act="edit">edit</button><button class="small" data-act="delete">delete</button></span>`;
+      if (n.target !== 'General') el.onclick = () => openFile(n.target);
+      el.querySelector('[data-act=delete]').onclick = e => { e.stopPropagation(); api('/notes/delete', { body: { note: n } }).then(showNotes).catch(fail); };
+      el.querySelector('[data-act=edit]').onclick = e => { e.stopPropagation(); const t = prompt('Edit note', n.text); if (t && t.trim()) api('/notes/edit', { body: { note: n, text: t } }).then(showNotes).catch(fail); };
+      list.appendChild(el);
+    }
+    $('#hint').textContent = '';
+  } catch (e) { fail(e); }
+}
+
+// ----- chrome ---------------------------------------------------------------------------------
+
+function setTabs(view) {
+  state.view = view;
+  document.querySelectorAll('header .tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  $('#tree').style.display = view === 'explore' ? '' : 'none';
+  hidePopover();
+  if (view !== 'explore') $('#drawer').hidden = true;
+}
+
+document.querySelectorAll('header .tabs button').forEach(b => b.onclick = () => {
+  const v = b.dataset.view;
+  if (v === 'explore') { setTabs('explore'); renderFile(); }
+  if (v === 'changes') showChanges();
+  if (v === 'log') showLog(null, true);
+  if (v === 'review') showReview();
+  if (v === 'notes') showNotes();
+  if (v === 'agent') showAgent();
+});
+$('#refresh').onclick = async () => {
+  try {
+    await api('/refresh', { post: true });
+    state.allComments = await api('/comments');
+    await loadState();
+    await loadRepos();
+    if (state.view === 'explore' && state.file) await openFile(state.file.path);
+    else if (state.view === 'agent') showAgent();
+    else if (state.view === 'changes') showChanges();
+    else if (state.view === 'log') showLog(state.log && state.log.path);
+    else if (state.view === 'review') showReview();
+    else if (state.view === 'notes') showNotes();
+    msg('refreshed');
+  } catch (e) { fail(e); }
+};
+$('#search').oninput = e => { state.search = e.target.value; if (state.view === 'explore' && state.file) renderFile(); else if (state.diff && document.querySelector('.sbs, table.code')) renderDiff(); };
+$('#search').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; state.search = ''; e.target.blur(); if (state.file) renderFile(); } };
+
+const HELP = `
+<h3>Explore</h3><table>
+<tr><td><kbd>click line number</kbd></td><td>comment on that line; shift-click extends the range</td></tr>
+<tr><td><kbd>Comment</kbd></td><td>a comment on the whole file; <kbd>+</kbd> on a directory in the tree comments on it</td></tr>
+<tr><td><kbd>/</kbd></td><td>search in the file (smart case)</td></tr>
+<tr><td><kbd>Note</kbd></td><td>a note on the file, kept in NOTES.md</td></tr>
+<tr><td><kbd>History</kbd></td><td>every commit that touched the file, and the diff of each</td></tr>
+<tr><td><kbd>Diff vs HEAD</kbd></td><td>what changed in the working tree</td></tr>
+<tr><td><kbd>Blame</kbd></td><td>last commit per line</td></tr></table>
+<h3>Symbols</h3><table>
+<tr><td><kbd>click a name</kbd></td><td>Definition or Usages, found with tree-sitter across the repository</td></tr>
+<tr><td><kbd>@</kbd></td><td>symbols defined in the open file</td></tr>
+<tr><td><kbd>#</kbd></td><td>search symbols by name</td></tr></table>
+<h3>Agent</h3><table>
+<tr><td><kbd>ask agent</kbd></td><td>on a comment: have the agent address it; on a selection: ask about those lines</td></tr>
+<tr><td><kbd>Address all pending</kbd></td><td>the agent works through REVIEW.md and moves each comment to Completed</td></tr>
+<tr><td><kbd>Ask agent to review</kbd></td><td>in a diff: findings are written to REVIEW.md as comments</td></tr></table>
+<h3>Diff</h3><table>
+<tr><td><kbd>n</kbd> <kbd>p</kbd></td><td>next / previous hunk</td></tr>
+<tr><td><kbd>]</kbd> <kbd>[</kbd></td><td>next / previous file of the same commit</td></tr>
+<tr><td><kbd>u</kbd></td><td>toggle unified / side by side</td></tr></table>
+<h3>Colours</h3><table>
+<tr><td><span class="s-insert">green</span></td><td>inserted</td></tr>
+<tr><td><span class="s-delete">red</span></td><td>deleted</td></tr>
+<tr><td><span class="s-update">yellow</span></td><td>updated</td></tr>
+<tr><td><span class="s-move">purple</span></td><td>moved</td></tr>
+<tr><td><span style="color:var(--exact)">●</span> <span style="color:var(--moved)">●</span> <span style="color:var(--stale)">●</span></td><td>comment; yellow when its line moved, red when the line is gone</td></tr></table>
+<p class="dim">Comments live in REVIEW.md, notes in NOTES.md, both at the repository root. Esc closes this.</p>`;
+$('#help').innerHTML = HELP;
+$('#helpbtn').onclick = () => { $('#help').hidden = !$('#help').hidden; };
+
+document.addEventListener('keydown', e => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea') return;
+  if (e.key === 'Escape') { $('#help').hidden = true; $('#content .form')?.closest('tr')?.remove(); return; }
+  if (e.key === '?') { $('#help').hidden = !$('#help').hidden; return; }
+  if (e.key === '/') { e.preventDefault(); $('#search').focus(); $('#search').select(); return; }
+  if (e.key === '#') { e.preventDefault(); $('#symbol').focus(); $('#symbol').select(); return; }
+  if (e.key === '@' && state.file) { showFileSymbols(state.file.path); return; }
+  if (e.key === 'r' && !e.ctrlKey && !e.metaKey) { $('#refresh').click(); return; }
+  if (state.diff && document.querySelector('#content table.code') && state.view !== 'explore') {
+    if (e.key === 'n') jumpHunk(1);
+    if (e.key === 'p') jumpHunk(-1);
+    if (e.key === 'u') { state.diff.unified = !state.diff.unified; renderDiff(); }
+    if (e.key === ']') $('#content [data-act=next]')?.click();
+    if (e.key === '[') $('#content [data-act=prev]')?.click();
+  }
+});
+
+$('#theme').onchange = async e => {
+  try {
+    await api('/config', { body: { theme: e.target.value } });
+    await loadState();
+    if (state.view === 'explore' && state.file) await openFile(state.file.path);
+    else if (state.diff && document.querySelector('#content table.code') && state.view !== 'explore') {
+      const q = Object.entries(state.diff.params).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+      state.diff.data = await api('/diff?' + q); renderDiff();
+    }
+    msg('theme saved to the config file');
+  } catch (err) { fail(err); }
+};
+
+startAgentPolling();
+(async () => {
+  try {
+    state.themesByName = Object.fromEntries((await api('/themes')).map(t => [t.name, t]));
+    await loadRepos();
+    state.allComments = await api('/comments');
+    await loadState();
+    $('#hint').textContent = 'Pick a file on the left. ? shows the keys.';
+  } catch (e) { fail(e); }
+})();
+</script>
+</body>
+</html>
