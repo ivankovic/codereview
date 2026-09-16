@@ -439,6 +439,33 @@ mod tests {
         assert_eq!(rows.len(), 5);
     }
 
+    /// Lines that appear more than once are no anchor on their own: the pairing has to come
+    /// from the unique lines around them, and then fill the gaps in order.
+    #[test]
+    fn duplicate_lines_do_not_mislead_the_alignment() {
+        let none = Op::None;
+        let before = ["header", "}", "alpha", "}", "footer"];
+        let after = ["header", "}", "beta", "}", "footer"];
+        let bops = [none, none, Op::Delete, none, none];
+        let aops = [none, none, Op::Insert, none, none];
+        let pairs = anchors(&before, &bops, &after, &aops);
+        // `}` is not unique, so the unique lines anchor and the braces follow them in order.
+        assert!(pairs.contains(&(0, 0)), "{pairs:?}");
+        assert!(pairs.contains(&(4, 4)), "{pairs:?}");
+        assert!(
+            pairs.contains(&(1, 1)),
+            "the first brace pairs with the first: {pairs:?}"
+        );
+        assert!(
+            pairs.contains(&(3, 3)),
+            "and the last with the last: {pairs:?}"
+        );
+        // Strictly increasing on both sides, always.
+        for w in pairs.windows(2) {
+            assert!(w[0].0 < w[1].0 && w[0].1 < w[1].1, "{pairs:?}");
+        }
+    }
+
     #[test]
     fn longest_chain() {
         let pairs = [(0, 5), (1, 1), (2, 2), (3, 9), (4, 3)];

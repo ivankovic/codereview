@@ -140,6 +140,40 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+
+    /// The config file is read and written by hand as well as by the tool, so a round trip
+    /// has to keep every value, and a broken file has to say so rather than quietly start
+    /// with different settings.
+    #[test]
+    fn a_config_file_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested/config.toml");
+        assert_eq!(
+            Config::load_from(&path).unwrap(),
+            Config::default(),
+            "a file that is not there means the defaults"
+        );
+
+        let config = Config {
+            theme: "Solarized Light".into(),
+            layout: "unified".into(),
+            timestamps: false,
+            agent: AgentConfig {
+                kind: "acp".into(),
+                command: "gemini".into(),
+                args: vec!["--experimental-acp".into()],
+                claude_args: vec!["--model".into(), "opus".into()],
+                ..AgentConfig::default()
+            },
+        };
+        config.save_to(&path).unwrap();
+        assert!(path.exists(), "the directory was made as well");
+        assert_eq!(Config::load_from(&path).unwrap(), config);
+
+        std::fs::write(&path, "theme = [1, 2]\n").unwrap();
+        let err = format!("{:#}", Config::load_from(&path).unwrap_err());
+        assert!(err.contains("config.toml"), "{err}");
+    }
     use super::*;
 
     #[test]

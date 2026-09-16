@@ -1025,9 +1025,15 @@ impl DiffView {
         self.rows.get(self.cursor)?.after
     }
 
-    pub fn go_to_after_line(&mut self, line: usize) {
-        if let Some(i) = self.rows.iter().position(|r| r.after == Some(line)) {
-            self.cursor = i;
+    /// Puts the cursor on the row showing after-side line `line`. False when the diff has
+    /// no such row.
+    pub fn go_to_after_line(&mut self, line: usize) -> bool {
+        match self.rows.iter().position(|r| r.after == Some(line)) {
+            Some(i) => {
+                self.cursor = i;
+                true
+            }
+            None => false,
         }
     }
 
@@ -1315,6 +1321,87 @@ mod tests {
         assert_eq!(next_hunk(&ops, 3, false), Some(1));
         assert_eq!(next_hunk(&ops, 1, false), Some(4));
         assert_eq!(next_hunk(&[Op::None], 0, true), None);
+    }
+
+    /// A diff view, built the way the app builds one.
+    fn diff_view(before: &str, after: &str) -> DiffView {
+        let diff = crate::diff::FileDiff::compute(std::path::Path::new("a.rs"), before, after);
+        DiffView::new(
+            crate::session::DiffTarget::Working,
+            crate::repo::ChangedFile {
+                status: crate::repo::FileStatus::Modified,
+                path: "a.rs".into(),
+                old_path: None,
+            },
+            diff,
+            Vec::new(),
+            "ansi",
+        )
+    }
+
+    /// Opening a diff puts the cursor on the first change, and the hunk keys walk the rest.
+    #[test]
+    fn a_diff_opens_on_the_first_change_and_walks_the_hunks() {
+        let before = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n";
+        let after = "one\nTWO\nthree\nfour\nfive\nSIX\nseven\n";
+        let mut view = diff_view(before, after);
+        let (hunks, at) = view.hunk_position();
+        assert_eq!(hunks, 2, "two lines changed, apart");
+        assert_eq!(at, Some(1), "the cursor starts on the first");
+        assert_eq!(
+            view.after_line(),
+            Some(1),
+            "the second line, counting from 0"
+        );
+
+        view.next_change(true, false);
+        assert_eq!(view.hunk_position().1, Some(2));
+        assert_eq!(view.after_line(), Some(5));
+        // Forward from the last wraps to the first.
+        view.next_change(true, false);
+        assert_eq!(view.hunk_position().1, Some(1));
+        view.next_change(false, false);
+        assert_eq!(view.hunk_position().1, Some(2), "backwards wraps too");
+
+        // Jumping to a line by number lands on it.
+        assert!(view.go_to_after_line(3));
+        assert_eq!(view.after_line(), Some(3));
+        assert!(!view.go_to_after_line(999), "no such line");
+    }
+
+    /// The unified layout puts a hunk's before lines above its after lines, rather than
+    /// interleaving them, and shows every line of both sides exactly once.
+    #[test]
+    fn the_unified_layout_groups_each_hunk() {
+        let before = "keep\nold one\nold two\ntail\n";
+        let after = "keep\nnew one\ntail\n";
+        let view = diff_view(before, after);
+        let theme = crate::theme::Theme::default();
+        let rows = view.render_unified(&theme, 80, 100, true);
+        let text: Vec<String> = rows
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+        let joined = text.join("\n");
+        for line in ["keep", "old one", "old two", "new one", "tail"] {
+            assert_eq!(
+                text.iter().filter(|l| l.contains(line)).count(),
+                1,
+                "{line} should appear once: {joined}"
+            );
+        }
+        let at = |needle: &str| text.iter().position(|l| l.contains(needle)).unwrap();
+        assert!(
+            at("old one") < at("new one"),
+            "before comes first: {joined}"
+        );
+        assert!(at("old two") < at("new one"), "{joined}");
+        assert!(at("new one") < at("tail"), "{joined}");
     }
 
     #[test]

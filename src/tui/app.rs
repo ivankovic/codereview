@@ -1214,7 +1214,9 @@ impl App {
             PromptKind::GoToLine => {
                 if let Ok(n) = text.trim().parse::<usize>() {
                     match self.screen_mut() {
-                        Screen::Diff(d) => d.view.go_to_after_line(n.saturating_sub(1)),
+                        Screen::Diff(d) => {
+                            d.view.go_to_after_line(n.saturating_sub(1));
+                        }
                         _ => {
                             if let Some(v) = &mut self.viewer {
                                 v.go_to_line(n.saturating_sub(1));

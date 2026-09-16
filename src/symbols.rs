@@ -101,13 +101,47 @@ struct FileEntry {
     len: u64,
     modified: Option<SystemTime>,
     symbols: Vec<Symbol>,
-    idents: Vec<Ident>,
+    /// Occurrences, with the name interned: a common identifier appears tens of thousands
+    /// of times in a large repository and its name is worth storing once.
+    idents: Vec<Occurrence>,
+}
+
+/// One occurrence of an identifier, by name number.
+#[derive(Debug, Clone, Copy)]
+struct Occurrence {
+    name: u32,
+    line: u32,
+    column: u32,
+}
+
+/// The names seen so far, each with a number. Names are never dropped: there are only so
+/// many distinct identifiers in a repository, and a number that meant something must keep
+/// meaning it.
+#[derive(Debug, Default)]
+struct Names {
+    ids: HashMap<String, u32>,
+}
+
+impl Names {
+    fn intern(&mut self, name: &str) -> u32 {
+        if let Some(&id) = self.ids.get(name) {
+            return id;
+        }
+        let id = self.ids.len() as u32;
+        self.ids.insert(name.to_string(), id);
+        id
+    }
+
+    fn id(&self, name: &str) -> Option<u32> {
+        self.ids.get(name).copied()
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct Index {
     root: PathBuf,
     files: HashMap<String, FileEntry>,
+    names: Names,
 }
 
 impl Index {
@@ -116,6 +150,7 @@ impl Index {
         let mut index = Self {
             root: root.to_path_buf(),
             files: HashMap::new(),
+            names: Names::default(),
         };
         index.refresh(paths);
         index
@@ -143,23 +178,42 @@ impl Index {
                 (None, None) => {}
             }
         }
-        let entries = index_files(&self.root, &stale);
-        self.files.extend(entries);
+        for (path, entry) in index_files(&self.root, &stale) {
+            let entry = self.take_in(entry);
+            self.files.insert(path, entry);
+        }
     }
 
     /// Replaces one file's entry from text already in memory (an unsaved buffer, a version at
     /// a commit shown in a viewer).
     pub fn update_text(&mut self, path: &str, text: &str) {
         let (symbols, idents) = index_text(path, text);
-        self.files.insert(
-            path.to_string(),
-            FileEntry {
-                len: text.len() as u64,
-                modified: None,
-                symbols,
-                idents,
-            },
-        );
+        let entry = self.take_in(RawEntry {
+            len: text.len() as u64,
+            modified: None,
+            symbols,
+            idents,
+        });
+        self.files.insert(path.to_string(), entry);
+    }
+
+    /// Turns a worker's entry into a stored one, giving every name its number.
+    fn take_in(&mut self, raw: RawEntry) -> FileEntry {
+        let idents = raw
+            .idents
+            .into_iter()
+            .map(|i| Occurrence {
+                name: self.names.intern(&i.name),
+                line: i.line,
+                column: i.column,
+            })
+            .collect();
+        FileEntry {
+            len: raw.len,
+            modified: raw.modified,
+            symbols: raw.symbols,
+            idents,
+        }
     }
 
     pub fn file_count(&self) -> usize {
@@ -187,6 +241,9 @@ impl Index {
     /// tree on every request; `len() == MAX_REFERENCES` means there were probably more.
     pub fn references(&self, name: &str) -> Vec<Location> {
         let mut out = Vec::new();
+        let Some(wanted) = self.names.id(name) else {
+            return out;
+        };
         // Sorted, so the cap keeps the same occurrences from one call to the next.
         let mut paths: Vec<&String> = self.files.keys().collect();
         paths.sort();
@@ -195,10 +252,10 @@ impl Index {
                 break;
             }
             let entry = &self.files[path];
-            let hits: Vec<&Ident> = entry
+            let hits: Vec<&Occurrence> = entry
                 .idents
                 .iter()
-                .filter(|i| i.name == name)
+                .filter(|i| i.name == wanted)
                 .take(MAX_REFERENCES - out.len())
                 .collect();
             if hits.is_empty() {
@@ -275,8 +332,16 @@ impl Index {
     }
 }
 
+/// What a worker produces: names as it found them, before they are given numbers.
+struct RawEntry {
+    len: u64,
+    modified: Option<SystemTime>,
+    symbols: Vec<Symbol>,
+    idents: Vec<Ident>,
+}
+
 /// Parses each file on a pool of threads; unreadable, binary and oversized files are skipped.
-fn index_files(root: &Path, paths: &[String]) -> Vec<(String, FileEntry)> {
+fn index_files(root: &Path, paths: &[String]) -> Vec<(String, RawEntry)> {
     if paths.is_empty() {
         return Vec::new();
     }
@@ -310,7 +375,7 @@ fn index_files(root: &Path, paths: &[String]) -> Vec<(String, FileEntry)> {
                         let (symbols, idents) = index_text(path, &text);
                         out.push((
                             path.clone(),
-                            FileEntry {
+                            RawEntry {
                                 len: meta.len(),
                                 modified: meta.modified().ok(),
                                 symbols,

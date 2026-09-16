@@ -477,3 +477,96 @@ fn list(from: &std::path::Path, all: bool, path: Option<&str>, json: bool) -> Re
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_specifications() {
+        assert_eq!(parse_lines("12").unwrap(), (12, 12));
+        assert_eq!(parse_lines("12-20").unwrap(), (12, 20));
+        assert_eq!(parse_lines(" 3 - 4 ").unwrap(), (3, 4));
+        assert_eq!(parse_lines("7-7").unwrap(), (7, 7));
+        for bad in ["0", "0-3", "20-12", "", "-", "x", "1-", "1-x", "-3", "1.5"] {
+            assert!(parse_lines(bad).is_err(), "{bad:?} should not parse");
+        }
+    }
+
+    /// A repository with one file, for the numbering test below. The library's own scratch
+    /// repository is not reachable from here: the binary is its own crate.
+    fn scratch_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "Tester"]);
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+        std::fs::write(dir.path().join("Makefile"), "all:\n\techo hi\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "first"]);
+        dir
+    }
+
+    /// `list` numbers comments by their order in the file, and `toggle` takes the same
+    /// number: the two must agree, or a toggle moves the wrong comment.
+    #[test]
+    fn listing_and_toggling_agree_on_the_numbers() {
+        let dir = scratch_repo();
+        let config = dir.path().join(".git/codereview.toml");
+        let mut session = Session::open_with_config(dir.path(), Some(config.clone())).unwrap();
+        session
+            .add_comment("a.rs", Some((1, 1)), "first", None)
+            .unwrap();
+        session
+            .add_comment("a.rs", Some((2, 2)), "second", None)
+            .unwrap();
+        session
+            .add_comment("Makefile", None, "third", None)
+            .unwrap();
+
+        let numbered = |s: &Session| -> Vec<(usize, String)> {
+            s.review
+                .comments()
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (i + 1, c.text.clone()))
+                .collect()
+        };
+        assert_eq!(
+            numbered(&session),
+            vec![
+                (1, "first".to_string()),
+                (2, "second".to_string()),
+                (3, "third".to_string())
+            ]
+        );
+
+        // Toggling number two completes the second comment and nothing else.
+        let target = session.review.comments()[1].clone();
+        session.toggle_comment(&target).unwrap();
+        let session = Session::open_with_config(dir.path(), Some(config)).unwrap();
+        let by_text = |text: &str| {
+            session
+                .review
+                .comments()
+                .iter()
+                .find(|c| c.text == text)
+                .map(|c| c.is_pending())
+                .unwrap()
+        };
+        assert!(by_text("first"));
+        assert!(!by_text("second"), "the second one was completed");
+        assert!(by_text("third"));
+        // And the numbers still line up, completed comments included.
+        assert_eq!(numbered(&session).len(), 3);
+    }
+}
