@@ -137,10 +137,6 @@ impl Theme {
             .into_iter()
             .find(|t| t.name.eq_ignore_ascii_case(name))
     }
-
-    pub fn names() -> Vec<String> {
-        all().into_iter().map(|t| t.name).collect()
-    }
 }
 
 impl Default for Theme {

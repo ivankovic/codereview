@@ -22,8 +22,11 @@ pub enum PromptKind {
     EditNote,
     Search,
     GoToLine,
-    Filter,
-    ConfirmDelete,
+    /// The tree filter, which applies as it is typed. `was` is what it was before, put
+    /// back when the prompt is cancelled.
+    Filter {
+        was: String,
+    },
     /// Text for the agent, with embedded context `(uri, text)`.
     Agent {
         context: Vec<(String, String)>,

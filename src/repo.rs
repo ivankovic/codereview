@@ -290,9 +290,7 @@ impl Repo {
         Self::check_rev(rev)?;
         Self::check_path(path)?;
         let spec = format!("{rev}:{path}");
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&self.root)
+        let output = git_command(&self.root)
             .args(["show", &spec])
             .output()
             .context("cannot run git show")?;
@@ -372,9 +370,7 @@ pub struct BlameLine {
 const LOG_FORMAT: &str = "--format=%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%b";
 
 fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let output = git_command(dir)
         .args(args)
         .output()
         .with_context(|| format!("cannot run git {}", args.join(" ")))?;
@@ -387,6 +383,14 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
         );
     }
     Ok(output.stdout)
+}
+
+/// `git -C dir`, with the messages in one language. `show` tells a missing file from a real
+/// failure by what git says, and under another locale it would say it differently.
+fn git_command(dir: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(dir).env("LC_ALL", "C");
+    command
 }
 
 pub fn parse_log(bytes: &[u8]) -> Vec<Commit> {

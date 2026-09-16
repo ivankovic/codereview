@@ -78,7 +78,8 @@ pub struct Session {
     pub status: BTreeMap<String, StatusEntry>,
     /// Author written into new comments; `None` leaves the field out.
     pub author: Option<String>,
-    pub timestamps: bool,
+    // Timestamps and the colour scheme live in `config`; `theme` below is the resolved
+    // form of `config.theme`, kept because every drawn frame reads it.
     pub config: Config,
     /// Where `config` is saved; `None` when there is no config directory at all.
     pub config_path: Option<PathBuf>,
@@ -105,7 +106,18 @@ impl Session {
             Some(p) => Config::load_from(p)?,
             None => Config::default(),
         };
-        let theme = Theme::named(&config.theme).unwrap_or_default();
+        // A name that matches nothing is a typo in a hand-edited file, and silently
+        // showing something else would hide it.
+        let theme = Theme::named(&config.theme).with_context(|| {
+            format!(
+                "no colour scheme named {:?}; the config file is {}",
+                config.theme,
+                config_path
+                    .as_deref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "not in use".into())
+            )
+        })?;
         Ok(Self {
             repo,
             review,
@@ -113,7 +125,7 @@ impl Session {
             files,
             status,
             author,
-            timestamps: config.timestamps,
+
             config,
             config_path,
             theme,
@@ -277,7 +289,7 @@ impl Session {
             None => Comment::on_path(path, text.trim()),
         };
         comment.author = self.author.clone();
-        comment.timestamp = self.timestamps.then(now_timestamp);
+        comment.timestamp = self.config.timestamps.then(now_timestamp);
         if let Some((first, _)) = lines {
             match source_line {
                 Some(src) => comment = comment.with_anchor_from(src),

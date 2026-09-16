@@ -50,10 +50,6 @@ fn theme_set() -> &'static ThemeSet {
     SET.get_or_init(|| ThemeSet::from(&two_face::theme::extra()))
 }
 
-pub fn theme_names() -> Vec<String> {
-    theme_set().themes.keys().cloned().collect()
-}
-
 pub fn has_syntax_theme(name: &str) -> bool {
     theme_set().themes.contains_key(name)
 }
@@ -84,14 +80,6 @@ fn syntax_for(path: &str, first_line: &str) -> Option<&'static SyntaxReference> 
         }
     }
     set.find_syntax_by_first_line(first_line)
-}
-
-/// The theme's background, for a front end that wants to match it.
-pub fn theme_background(theme_name: &str) -> Option<(u8, u8, u8)> {
-    theme(theme_name)
-        .settings
-        .background
-        .map(|c| (c.r, c.g, c.b))
 }
 
 /// Highlights `text` as the file at `path`. Always returns one entry per line of `text`, each

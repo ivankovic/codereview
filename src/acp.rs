@@ -168,6 +168,40 @@ impl Transport {
         &self.description
     }
 
+    /// Sends one JSON message: the line protocol both backends speak.
+    pub(crate) fn send_json(&mut self, message: &Value) -> Result<()> {
+        let mut line = serde_json::to_string(message)?;
+        line.push('\n');
+        self.send_line(&line)
+    }
+
+    /// Waits for the next line until `deadline`, or `None` when it passes or the agent is
+    /// gone. Both handshakes wait like this, for an answer that may be slow to come.
+    pub(crate) fn recv_until(&self, deadline: Instant) -> Option<Raw> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        self.rx.recv_timeout(remaining).ok()
+    }
+
+    /// The last few things the agent said on stderr, which is usually the real explanation
+    /// when a handshake fails. `queued` holds what was collected before the failure.
+    pub(crate) fn last_words(&self, queued: &[Event]) -> Vec<String> {
+        let mut said: Vec<String> = queued
+            .iter()
+            .filter_map(|ev| match ev {
+                Event::Stderr { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        while let Ok(Raw::Stderr(text)) = self.rx.try_recv() {
+            said.push(text);
+        }
+        let from = said.len().saturating_sub(6);
+        said.split_off(from)
+    }
+
     pub(crate) fn send_line(&mut self, line: &str) -> Result<()> {
         self.writer
             .write_all(line.as_bytes())
@@ -295,26 +329,7 @@ impl Agent {
         if let Err(e) = agent.handshake() {
             agent.io.kill();
             // Whatever the agent said on stderr is the real explanation more often than not.
-            let mut diagnostics: Vec<String> = agent
-                .queued
-                .iter()
-                .filter_map(|ev| match ev {
-                    Event::Stderr { text } => Some(text.clone()),
-                    _ => None,
-                })
-                .collect();
-            while let Ok(raw) = agent.io.rx.try_recv() {
-                if let Raw::Stderr(text) = raw {
-                    diagnostics.push(text);
-                }
-            }
-            let tail: Vec<&str> = diagnostics
-                .iter()
-                .rev()
-                .take(6)
-                .rev()
-                .map(String::as_str)
-                .collect();
+            let tail = agent.io.last_words(&agent.queued);
             if tail.is_empty() {
                 return Err(e);
             }
@@ -405,9 +420,7 @@ impl Agent {
     }
 
     fn send(&mut self, message: &Value) -> Result<()> {
-        let mut line = serde_json::to_string(message)?;
-        line.push('\n');
-        self.io.send_line(&line)
+        self.io.send_json(message)
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<u64> {
@@ -434,17 +447,13 @@ impl Agent {
             if self.exited {
                 bail!("agent exited during the handshake");
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                bail!("agent did not answer within {}s", timeout.as_secs());
-            }
-            match self.io.rx.recv_timeout(remaining) {
-                Ok(raw) => {
+            match self.io.recv_until(deadline) {
+                Some(raw) => {
                     if let Some(event) = self.handle_raw(raw) {
                         self.queued.push(event);
                     }
                 }
-                Err(_) => bail!("agent did not answer within {}s", timeout.as_secs()),
+                None => bail!("agent did not answer within {}s", timeout.as_secs()),
             }
         }
     }

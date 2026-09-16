@@ -22,6 +22,9 @@ use crate::agent::strip_secrets;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// What Claude Code feeds back to the model when a turn was cut short.
+const INTERRUPTED: &str = "[Request interrupted by user]";
+
 /// A pending `can_use_tool` request: what it asked, and the "always allow" rules it offered.
 struct PendingPermission {
     input: Value,
@@ -48,6 +51,9 @@ pub struct Agent {
     call_input: u64,
     /// The id of the interrupt sent for the last cancel, to report its acknowledgement.
     interrupt_id: Option<String>,
+    /// Whether an interrupt is outstanding, so the note Claude Code writes about one is
+    /// read as a cancellation only when a cancellation was asked for.
+    interrupted: bool,
 }
 
 impl Agent {
@@ -104,6 +110,7 @@ impl Agent {
             turn_calls: 0,
             call_input: 0,
             interrupt_id: None,
+            interrupted: false,
         };
         agent.queued.push(Event::Log {
             text: format!("started {} in {}", agent.io.description(), root.display()),
@@ -111,26 +118,7 @@ impl Agent {
         let started = Instant::now();
         if let Err(e) = agent.handshake() {
             agent.io.kill();
-            let mut diagnostics: Vec<String> = agent
-                .queued
-                .iter()
-                .filter_map(|ev| match ev {
-                    Event::Stderr { text } => Some(text.clone()),
-                    _ => None,
-                })
-                .collect();
-            while let Ok(raw) = agent.io.rx.try_recv() {
-                if let Raw::Stderr(text) = raw {
-                    diagnostics.push(text);
-                }
-            }
-            let tail: Vec<&str> = diagnostics
-                .iter()
-                .rev()
-                .take(6)
-                .rev()
-                .map(String::as_str)
-                .collect();
+            let tail = agent.io.last_words(&agent.queued);
             if tail.is_empty() {
                 return Err(e);
             }
@@ -157,20 +145,13 @@ impl Agent {
             if self.exited {
                 bail!("claude exited during start-up");
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                bail!(
-                    "claude did not answer within {}s",
-                    HANDSHAKE_TIMEOUT.as_secs()
-                );
-            }
-            match self.io.rx.recv_timeout(remaining) {
-                Ok(raw) => {
+            match self.io.recv_until(deadline) {
+                Some(raw) => {
                     if let Some(ev) = self.handle_raw(raw) {
                         self.queued.push(ev);
                     }
                 }
-                Err(_) => bail!(
+                None => bail!(
                     "claude did not answer within {}s",
                     HANDSHAKE_TIMEOUT.as_secs()
                 ),
@@ -195,9 +176,7 @@ impl Agent {
     }
 
     fn send(&mut self, message: &Value) -> Result<()> {
-        let mut line = serde_json::to_string(message)?;
-        line.push('\n');
-        self.io.send_line(&line).context("claude stdin closed")
+        self.io.send_json(message).context("claude stdin closed")
     }
 
     fn control_request(&mut self, subtype: &str, mut request: Value) -> Result<String> {
@@ -234,6 +213,7 @@ impl Agent {
     pub fn cancel(&mut self) -> Result<()> {
         let id = self.control_request("interrupt", json!({}))?;
         self.interrupt_id = Some(id);
+        self.interrupted = true;
         self.queued.push(Event::Status {
             text: "interrupt sent".into(),
         });
@@ -306,226 +286,233 @@ impl Agent {
     fn handle_message(&mut self, msg: Value) -> Option<Event> {
         match msg.get("type").and_then(Value::as_str)? {
             "stream_event" => self.handle_stream_event(msg.get("event")?),
-            "assistant" => {
-                if msg.get("aborted").and_then(Value::as_bool).unwrap_or(false) {
-                    return None;
-                }
-                // Text already arrived as deltas; only tool uses are new information here.
-                let content = msg.pointer("/message/content")?.as_array()?;
-                let mut last = None;
-                for block in content {
-                    if block.get("type").and_then(Value::as_str) == Some("tool_use") {
-                        last = Some(self.tool_use_event(block));
-                    }
-                }
-                last
-            }
-            "user" => {
-                let content = msg.pointer("/message/content")?.as_array()?;
-                let mut last = None;
-                for block in content {
-                    match block.get("type").and_then(Value::as_str) {
-                        Some("tool_result") => {
-                            self.queued.push(Event::Status {
-                                text: "tool finished, waiting for the model".into(),
-                            });
-                            let failed = block
-                                .get("is_error")
-                                .and_then(Value::as_bool)
-                                .unwrap_or(false);
-                            last = Some(Event::ToolCall {
-                                id: block
-                                    .get("tool_use_id")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("")
-                                    .to_string(),
-                                title: None,
-                                kind: None,
-                                status: Some(if failed { "failed" } else { "completed" }.into()),
-                                locations: Vec::new(),
-                                output: Some(result_text(block.get("content")))
-                                    .filter(|t| !t.is_empty()),
-                            });
-                        }
-                        Some("text") => {
-                            let text = block.get("text").and_then(Value::as_str).unwrap_or("");
-                            if text.contains("[Request interrupted by user]") && self.busy {
-                                self.busy = false;
-                                last = Some(Event::TurnDone {
-                                    stop_reason: "cancelled".into(),
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                last
-            }
-            "system" => match msg.get("subtype").and_then(Value::as_str) {
-                Some("init") => {
-                    if let Some(id) = msg.get("session_id").and_then(Value::as_str) {
-                        self.session_id = id.to_string();
-                    }
-                    if let Some(model) = msg.get("model").and_then(Value::as_str) {
-                        self.name = format!("Claude Code ({model})");
-                    }
-                    Some(Event::Log {
-                        text: describe_init(&msg),
-                    })
-                }
-                Some("status") => {
-                    let text = match msg.get("status").and_then(Value::as_str) {
-                        Some("requesting") => "waiting for the model".to_string(),
-                        Some(other) => other.to_string(),
-                        None => "working".to_string(),
-                    };
-                    Some(Event::Status { text })
-                }
-                Some("permission_denied") => Some(Event::ToolCall {
-                    id: msg
-                        .get("tool_use_id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                    title: None,
-                    kind: None,
-                    status: Some("failed".into()),
-                    locations: Vec::new(),
-                    output: msg
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                }),
-                Some(other) => Some(Event::Log {
-                    text: format!("system: {other}"),
-                }),
-                None => None,
-            },
-            "rate_limit_event" => {
-                let info = msg.get("rate_limit_info")?;
-                let status = info.get("status").and_then(Value::as_str).unwrap_or("?");
-                let windows: Vec<String> = info
-                    .get("unifiedWindows")
-                    .and_then(Value::as_object)
-                    .map(|w| {
-                        w.iter()
-                            .filter_map(|(name, v)| {
-                                let used = v.get("utilization")?.as_f64()?;
-                                Some(format!("{} {:.0}%", name.replace('_', "-"), used * 100.0))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                Some(Event::Log {
-                    text: format!(
-                        "rate limit {status}{}",
-                        if windows.is_empty() {
-                            String::new()
-                        } else {
-                            format!(": {}", windows.join(", "))
-                        }
-                    ),
-                })
-            }
-            "control_request" => {
-                let request = msg.get("request")?;
-                if request.get("subtype").and_then(Value::as_str) != Some("can_use_tool") {
-                    return None;
-                }
-                let id = msg.get("request_id").and_then(Value::as_str)?.to_string();
-                let tool = request
-                    .get("tool_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("tool");
-                let input = request.get("input").cloned().unwrap_or(Value::Null);
-                let suggestions: Vec<Value> = request
-                    .get("permission_suggestions")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                let title = describe(tool, &input, &self.root);
-                let mut options = vec![PermissionOption {
-                    option_id: "allow".into(),
-                    name: "Allow".into(),
-                    kind: "allow_once".into(),
-                }];
-                if !suggestions.is_empty() {
-                    options.push(PermissionOption {
-                        option_id: "allow_always".into(),
-                        name: "Always allow".into(),
-                        kind: "allow_always".into(),
-                    });
-                }
-                options.push(PermissionOption {
-                    option_id: "deny".into(),
-                    name: "Deny".into(),
-                    kind: "reject_once".into(),
-                });
-                let details = details_of(tool, &input);
-                self.permissions
-                    .insert(id.clone(), PendingPermission { input, suggestions });
-                Some(Event::Permission {
-                    request_id: Value::String(id),
-                    title,
-                    details,
-                    options,
-                })
-            }
-            "control_response" => {
-                let response = msg.get("response")?;
-                let id = response
-                    .get("request_id")
-                    .and_then(Value::as_str)?
-                    .to_string();
-                self.responses.insert(id.clone(), response.clone());
-                if self.interrupt_id.as_deref() == Some(id.as_str()) {
-                    self.interrupt_id = None;
-                    return Some(Event::Log {
-                        text: "interrupt acknowledged".into(),
-                    });
-                }
-                None
-            }
-            "result" => {
-                let was_busy = self.busy;
-                self.busy = false;
-                if !was_busy {
-                    return None;
-                }
-                let summary = self.summarise_result(&msg);
-                self.queued.push(Event::Log { text: summary });
-                if let Some(cost) = msg.get("total_cost_usd").and_then(Value::as_f64) {
-                    self.queued.push(Event::Usage {
-                        input_tokens: 0,
-                        output_tokens: 0,
-                        cost_usd: Some(cost),
-                    });
-                }
-                if msg
-                    .get("is_error")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-                {
-                    let message = msg
-                        .get("result")
-                        .and_then(Value::as_str)
-                        .or_else(|| msg.get("subtype").and_then(Value::as_str))
-                        .unwrap_or("Claude Code reported an error")
-                        .to_string();
-                    return Some(Event::Error { message });
-                }
-                let stop_reason = match msg.get("subtype").and_then(Value::as_str) {
-                    Some("success") => "end_turn".to_string(),
-                    Some("error_max_turns") => "max_turn_requests".to_string(),
-                    Some(other) => other.to_string(),
-                    None => "end_turn".to_string(),
-                };
-                Some(Event::TurnDone { stop_reason })
-            }
+            "assistant" => self.on_assistant(&msg),
+            "user" => self.on_user(&msg),
+            "system" => self.on_system(&msg),
+            "rate_limit_event" => on_rate_limit(&msg),
+            "control_request" => self.on_control_request(&msg),
+            "control_response" => self.on_control_response(&msg),
+            "result" => self.on_result(&msg),
             other => Some(Event::Log {
                 text: format!("message type {other} (not shown)"),
             }),
         }
+    }
+
+    /// What the model said. Its text already arrived as deltas, so only tool uses are news
+    /// here; `aborted` marks the turn Claude Code gave up on when it was interrupted, which
+    /// is how a cancellation is recognised.
+    fn on_assistant(&mut self, msg: &Value) -> Option<Event> {
+        if msg.get("aborted").and_then(Value::as_bool).unwrap_or(false) {
+            self.interrupted = false;
+            if self.busy {
+                self.busy = false;
+                return Some(Event::TurnDone {
+                    stop_reason: "cancelled".into(),
+                });
+            }
+            return None;
+        }
+        let content = msg.pointer("/message/content")?.as_array()?;
+        let mut last = None;
+        for block in content {
+            if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                last = Some(self.tool_use_event(block));
+            }
+        }
+        last
+    }
+
+    /// What was fed back to the model: tool results, and the note Claude Code writes when a
+    /// turn was interrupted. That note counts as a cancellation only when one was asked
+    /// for, since a prompt or a file could carry the same words.
+    fn on_user(&mut self, msg: &Value) -> Option<Event> {
+        let content = msg.pointer("/message/content")?.as_array()?;
+        let mut last = None;
+        for block in content {
+            match block.get("type").and_then(Value::as_str) {
+                Some("tool_result") => {
+                    self.queued.push(Event::Status {
+                        text: "tool finished, waiting for the model".into(),
+                    });
+                    let failed = block
+                        .get("is_error")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    last = Some(Event::ToolCall {
+                        id: block
+                            .get("tool_use_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        title: None,
+                        kind: None,
+                        status: Some(if failed { "failed" } else { "completed" }.into()),
+                        locations: Vec::new(),
+                        output: Some(result_text(block.get("content"))).filter(|t| !t.is_empty()),
+                    });
+                }
+                Some("text") => {
+                    let text = block.get("text").and_then(Value::as_str).unwrap_or("");
+                    if self.interrupted && self.busy && text.contains(INTERRUPTED) {
+                        self.busy = false;
+                        self.interrupted = false;
+                        last = Some(Event::TurnDone {
+                            stop_reason: "cancelled".into(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        last
+    }
+
+    /// The session's own announcements: what it started as, what it is doing, and a tool
+    /// call refused by Claude Code's own rules.
+    fn on_system(&mut self, msg: &Value) -> Option<Event> {
+        match msg.get("subtype").and_then(Value::as_str) {
+            Some("init") => {
+                if let Some(id) = msg.get("session_id").and_then(Value::as_str) {
+                    self.session_id = id.to_string();
+                }
+                if let Some(model) = msg.get("model").and_then(Value::as_str) {
+                    self.name = format!("Claude Code ({model})");
+                }
+                Some(Event::Log {
+                    text: describe_init(msg),
+                })
+            }
+            Some("status") => {
+                let text = match msg.get("status").and_then(Value::as_str) {
+                    Some("requesting") => "waiting for the model".to_string(),
+                    Some(other) => other.to_string(),
+                    None => "working".to_string(),
+                };
+                Some(Event::Status { text })
+            }
+            Some("permission_denied") => Some(Event::ToolCall {
+                id: msg
+                    .get("tool_use_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                title: None,
+                kind: None,
+                status: Some("failed".into()),
+                locations: Vec::new(),
+                output: msg
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            }),
+            Some(other) => Some(Event::Log {
+                text: format!("system: {other}"),
+            }),
+            None => None,
+        }
+    }
+
+    /// A permission question. Anything else asked of this client is not ours to answer.
+    fn on_control_request(&mut self, msg: &Value) -> Option<Event> {
+        let request = msg.get("request")?;
+        if request.get("subtype").and_then(Value::as_str) != Some("can_use_tool") {
+            return None;
+        }
+        let id = msg.get("request_id").and_then(Value::as_str)?.to_string();
+        let tool = request
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .unwrap_or("tool");
+        let input = request.get("input").cloned().unwrap_or(Value::Null);
+        let suggestions: Vec<Value> = request
+            .get("permission_suggestions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let title = describe(tool, &input, &self.root);
+        let mut options = vec![PermissionOption {
+            option_id: "allow".into(),
+            name: "Allow".into(),
+            kind: "allow_once".into(),
+        }];
+        if !suggestions.is_empty() {
+            options.push(PermissionOption {
+                option_id: "allow_always".into(),
+                name: "Always allow".into(),
+                kind: "allow_always".into(),
+            });
+        }
+        options.push(PermissionOption {
+            option_id: "deny".into(),
+            name: "Deny".into(),
+            kind: "reject_once".into(),
+        });
+        let details = details_of(tool, &input);
+        self.permissions
+            .insert(id.clone(), PendingPermission { input, suggestions });
+        Some(Event::Permission {
+            request_id: Value::String(id),
+            title,
+            details,
+            options,
+        })
+    }
+
+    /// An answer to something this client asked, kept for whoever is waiting on it.
+    fn on_control_response(&mut self, msg: &Value) -> Option<Event> {
+        let response = msg.get("response")?;
+        let id = response
+            .get("request_id")
+            .and_then(Value::as_str)?
+            .to_string();
+        self.responses.insert(id.clone(), response.clone());
+        if self.interrupt_id.as_deref() == Some(id.as_str()) {
+            self.interrupt_id = None;
+            return Some(Event::Log {
+                text: "interrupt acknowledged".into(),
+            });
+        }
+        None
+    }
+
+    /// The turn is over: a summary of what it cost, and what stopped it.
+    fn on_result(&mut self, msg: &Value) -> Option<Event> {
+        let was_busy = self.busy;
+        self.busy = false;
+        self.interrupted = false;
+        if !was_busy {
+            return None;
+        }
+        let summary = self.summarise_result(msg);
+        self.queued.push(Event::Log { text: summary });
+        if let Some(cost) = msg.get("total_cost_usd").and_then(Value::as_f64) {
+            self.queued.push(Event::Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cost_usd: Some(cost),
+            });
+        }
+        if msg
+            .get("is_error")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            let message = msg
+                .get("result")
+                .and_then(Value::as_str)
+                .or_else(|| msg.get("subtype").and_then(Value::as_str))
+                .unwrap_or("Claude Code reported an error")
+                .to_string();
+            return Some(Event::Error { message });
+        }
+        let stop_reason = match msg.get("subtype").and_then(Value::as_str) {
+            Some("success") => "end_turn".to_string(),
+            Some("error_max_turns") => "max_turn_requests".to_string(),
+            Some(other) => other.to_string(),
+            None => "end_turn".to_string(),
+        };
+        Some(Event::TurnDone { stop_reason })
     }
 
     /// One line for the transcript when a turn ends: how long, how many model calls, tokens
@@ -708,6 +695,34 @@ fn describe(tool: &str, input: &Value, root: &Path) -> String {
     } else {
         format!("{tool}: {detail}")
     }
+}
+
+/// How much of the usage window is gone, as a line for the panel's log.
+fn on_rate_limit(msg: &Value) -> Option<Event> {
+    let info = msg.get("rate_limit_info")?;
+    let status = info.get("status").and_then(Value::as_str).unwrap_or("?");
+    let windows: Vec<String> = info
+        .get("unifiedWindows")
+        .and_then(Value::as_object)
+        .map(|w| {
+            w.iter()
+                .filter_map(|(name, v)| {
+                    let used = v.get("utilization")?.as_f64()?;
+                    Some(format!("{} {:.0}%", name.replace('_', "-"), used * 100.0))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Event::Log {
+        text: format!(
+            "rate limit {status}{}",
+            if windows.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", windows.join(", "))
+            }
+        ),
+    })
 }
 
 /// `session b3503b22, model claude-opus-5, permission mode default, 41 tools, MCP serena

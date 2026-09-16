@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::anchor::AnchorState;
 use crate::session::DiffTarget;
 use crate::theme::Theme;
-use crate::tui::app::{App, ChangesState, EntryKind, LogState, NotesState, ReviewState, Screen};
+use crate::tui::app::{App, EntryKind, Screen};
 use crate::tui::style::{self, comment_style};
 use crate::tui::workspace::Workspace;
 
@@ -494,12 +494,6 @@ fn draw_log(frame: &mut Frame, app: &mut App, area: Rect) {
         },
     );
     frame.render_widget(Paragraph::new(lines), inner);
-    let _ = LogState::name_hint;
-}
-
-impl LogState {
-    #[allow(dead_code)]
-    fn name_hint() {}
 }
 
 fn draw_changes(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -545,12 +539,6 @@ fn draw_changes(frame: &mut Frame, app: &mut App, area: Rect) {
         },
     );
     frame.render_widget(Paragraph::new(lines), inner);
-    let _ = ChangesState::hint;
-}
-
-impl ChangesState {
-    #[allow(dead_code)]
-    fn hint() {}
 }
 
 fn draw_diff(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -682,12 +670,6 @@ fn draw_review(frame: &mut Frame, app: &mut App, area: Rect) {
         },
     );
     frame.render_widget(Paragraph::new(lines), inner);
-    let _ = ReviewState::hint;
-}
-
-impl ReviewState {
-    #[allow(dead_code)]
-    fn hint() {}
 }
 
 fn draw_notes(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -720,12 +702,6 @@ fn draw_notes(frame: &mut Frame, app: &mut App, area: Rect) {
         },
     );
     frame.render_widget(Paragraph::new(lines), inner);
-    let _ = NotesState::hint;
-}
-
-impl NotesState {
-    #[allow(dead_code)]
-    fn hint() {}
 }
 
 fn draw_locations(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -952,7 +928,7 @@ fn draw_agent(frame: &mut Frame, app: &mut App, area: Rect) {
         .collect();
     frame.render_widget(Paragraph::new(shown), body);
     if let Some((_, title, options)) = &app.agent_state.permission {
-        let mut spans: Vec<Span> = vec![
+        let spans: Vec<Span> = vec![
             Span::styled(" agent asks: ", style::fg(theme.moved).bold()),
             title.clone().into(),
         ];
@@ -964,7 +940,6 @@ fn draw_agent(frame: &mut Frame, app: &mut App, area: Rect) {
             ));
         }
         choices.push("y first allow, n first reject".dim());
-        spans.truncate(2);
         frame.render_widget(
             Paragraph::new(vec![Line::from(spans), Line::from(choices)]),
             ask,
@@ -978,13 +953,26 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let mut spans: Vec<Span> = vec![format!(" {} ", app.screen().name()).reversed()];
-    if app.agent_state.permission.is_some() && !matches!(app.screen(), Screen::Agent) {
+    let elsewhere = !matches!(app.screen(), Screen::Agent);
+    // What just happened comes first: a message is cleared by the next key, and burying an
+    // error under the agent's progress for the length of a turn loses it entirely.
+    if let Some((text, is_error)) = &app.message {
+        spans.push(" ".into());
+        spans.push(if *is_error {
+            text.clone().red()
+        } else {
+            text.clone().into()
+        });
+        if app.agent_state.permission.is_some() && elsewhere {
+            spans.push("  agent is waiting for permission (A)".into());
+        }
+    } else if app.agent_state.permission.is_some() && elsewhere {
         spans.push(" ".into());
         spans.push(Span::styled(
-            "agent is waiting for permission (Ctrl-a)",
+            "agent is waiting for permission (A)",
             style::fg(app.theme.moved).bold(),
         ));
-    } else if app.agent_active() && !matches!(app.screen(), Screen::Agent) {
+    } else if app.agent_active() && elsewhere {
         spans.push(" ".into());
         spans.push(Span::styled(
             format!(
@@ -993,13 +981,6 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
             ),
             style::dim(&app.theme),
         ));
-    } else if let Some((text, is_error)) = &app.message {
-        spans.push(" ".into());
-        spans.push(if *is_error {
-            text.clone().red()
-        } else {
-            text.clone().into()
-        });
     } else {
         let context: Option<String> = match app.screen() {
             Screen::Diff(d) => {

@@ -16,7 +16,8 @@ pub struct Node {
 pub struct Tree {
     /// Every node in display order, directories before files within a directory.
     nodes: Vec<Node>,
-    collapsed: BTreeSet<String>,
+    /// Directories the user folded. Public so that a test can check a refresh keeps them.
+    pub(crate) collapsed: BTreeSet<String>,
     /// Indices into `nodes` currently shown.
     visible: Vec<usize>,
     pub cursor: usize,
@@ -25,6 +26,18 @@ pub struct Tree {
 }
 
 impl Tree {
+    /// Takes a new file list, keeping what the user set up: the folds, the filter and, when
+    /// it is still there, the cursor's file.
+    pub fn replace_files(&mut self, files: &[String]) {
+        let here = self.current().map(|n| n.path.clone());
+        let fresh = Tree::new(files);
+        self.nodes = fresh.nodes;
+        self.rebuild();
+        if let Some(path) = here {
+            self.select(&path);
+        }
+    }
+
     pub fn new(files: &[String]) -> Self {
         let mut nodes = Vec::new();
         let mut seen_dirs: BTreeSet<String> = BTreeSet::new();
@@ -220,6 +233,9 @@ impl Tree {
     }
 
     /// Moves the cursor to `path`, unfolding whatever hides it.
+    /// Puts the cursor on `path`, unfolding what it takes to see it. A filter in force
+    /// stays in force: the caller chose it, and a jump is not a reason to drop it. When the
+    /// filter hides `path`, the cursor stays where it was.
     pub fn select(&mut self, path: &str) {
         let mut prefix = String::new();
         for part in path.split('/') {
@@ -229,7 +245,6 @@ impl Tree {
             }
             prefix.push_str(part);
         }
-        self.filter.clear();
         self.rebuild();
         if let Some(i) = self
             .visible

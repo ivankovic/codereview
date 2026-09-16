@@ -893,8 +893,6 @@ pub struct DiffView {
     pub scroll: usize,
     pub hscroll: usize,
     pub search: Option<Search>,
-    /// Which side the cursor line refers to, for commenting and searching.
-    pub focus_after: bool,
 }
 
 impl DiffView {
@@ -925,7 +923,6 @@ impl DiffView {
             scroll: 0,
             hscroll: 0,
             search: None,
-            focus_after: true,
         };
         // Start on the first change.
         view.next_change(true, true);
@@ -1026,10 +1023,6 @@ impl DiffView {
     /// The 0-based after-side line under the cursor, if the row has one.
     pub fn after_line(&self) -> Option<usize> {
         self.rows.get(self.cursor)?.after
-    }
-
-    pub fn before_line(&self) -> Option<usize> {
-        self.rows.get(self.cursor)?.before
     }
 
     pub fn go_to_after_line(&mut self, line: usize) {

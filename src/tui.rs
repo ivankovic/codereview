@@ -578,6 +578,79 @@ mod tests {
         );
     }
 
+    /// The tree's folds and filter belong to the user: a refresh must not undo them, and
+    /// cancelling the filter prompt must put back what was there before.
+    #[test]
+    fn the_tree_keeps_what_the_user_set_up() {
+        let dir = scratch_repo();
+        std::fs::create_dir_all(dir.path().join("src/deep")).unwrap();
+        std::fs::write(dir.path().join("src/deep/inner.rs"), "fn inner() {}\n").unwrap();
+        let session = scratch_session(dir.path());
+        let mut app = App::new(session, None);
+        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        draw(&mut term, &mut app);
+
+        // Fold everything, then filter: both are the user's doing.
+        press(&mut app, &[KeyCode::Char('z')]);
+        assert!(!app.tree.collapsed.is_empty(), "nothing folded");
+        let folded = app.tree.collapsed.clone();
+        press(&mut app, &[KeyCode::Char('/')]);
+        for ch in "inner".chars() {
+            app.handle_key(key(ch));
+        }
+        press(&mut app, &[KeyCode::Enter]);
+        assert_eq!(app.tree.filter, "inner");
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("inner.rs"), "{screen}");
+        assert!(
+            !screen.contains("Makefile"),
+            "the filter is not applied: {screen}"
+        );
+
+        // `r` re-reads the repository and keeps both.
+        press(&mut app, &[KeyCode::Char('r')]);
+        assert_eq!(app.tree.filter, "inner", "the refresh dropped the filter");
+        assert_eq!(
+            app.tree.collapsed, folded,
+            "the refresh unfolded everything"
+        );
+
+        // Typing in the filter prompt applies as you go; Esc puts back what was there.
+        press(&mut app, &[KeyCode::Char('/')]);
+        for ch in "zzz".chars() {
+            app.handle_key(key(ch));
+        }
+        assert_eq!(
+            app.tree.filter, "innerzzz",
+            "the filter applies as it is typed"
+        );
+        press(&mut app, &[KeyCode::Esc]);
+        assert_eq!(app.tree.filter, "inner", "Esc did not put the filter back");
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("inner.rs"), "{screen}");
+    }
+
+    /// A message says what just happened, and is cleared by the next key. An agent working
+    /// in the background must not hide it for the length of a turn.
+    #[test]
+    fn a_message_outranks_the_agent_status() {
+        let dir = scratch_repo();
+        let mut session = scratch_session(dir.path());
+        session.config.agent = crate::config::AgentConfig {
+            kind: "fake-acp".into(),
+            ..Default::default()
+        };
+        let mut app = App::new(session, Some("a.rs".into()));
+        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        app.ask_agent("hello".into(), Vec::new());
+        press(&mut app, &[KeyCode::Char('q')]);
+        assert!(!matches!(app.screen(), Screen::Agent));
+        assert!(app.agent_active(), "the agent should be starting");
+        app.error("something went wrong");
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("something went wrong"), "{screen}");
+    }
+
     #[test]
     fn asking_about_an_empty_file_does_not_panic() {
         let dir = scratch_repo();

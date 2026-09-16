@@ -91,7 +91,7 @@ struct RepoState {
 impl RepoState {
     fn new(session: Session) -> Self {
         Self {
-            agent_label: agent_label(&session.config.agent),
+            agent_label: session.config.agent.label(),
             session: Arc::new(Mutex::new(session)),
             hub: Arc::new(Mutex::new(AgentHub::default())),
         }
@@ -310,7 +310,22 @@ impl From<anyhow::Error> for ApiError {
         // The whole chain holds git command lines, raw git stderr and absolute paths. The
         // operator can see it in the log; the browser is told only what went wrong.
         eprintln!("api error: {e:#}");
-        ApiError(StatusCode::BAD_REQUEST, format!("{e}"))
+        // Something that failed on this machine is this machine's fault, and a client that
+        // retries the same request should be told so rather than told to change it.
+        let ours = e.chain().any(|c| {
+            c.downcast_ref::<std::io::Error>().is_some_and(|io| {
+                !matches!(
+                    io.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidInput
+                )
+            })
+        });
+        let status = if ours {
+            StatusCode::INTERNAL_SERVER_ERROR
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        ApiError(status, format!("{e}"))
     }
 }
 
@@ -1299,24 +1314,6 @@ fn agent_command(state: &RepoState) -> String {
     state.agent_label.clone()
 }
 
-fn agent_label(config: &crate::config::AgentConfig) -> String {
-    match config.kind.as_str() {
-        "acp" => format!("{} {}", config.command, config.args.join(" ")),
-        "claude" => config.claude_command.clone(),
-        _ => {
-            if std::process::Command::new(&config.claude_command)
-                .arg("--version")
-                .output()
-                .is_ok()
-            {
-                config.claude_command.clone()
-            } else {
-                format!("{} {}", config.command, config.args.join(" "))
-            }
-        }
-    }
-}
-
 /// Starts the agent when it is not running. Blocks for the handshake, which can take a while
 /// when `npx` has to fetch an adapter.
 async fn post_agent_start(state: Ctx) -> ApiResult<AgentStatus> {
@@ -1469,17 +1466,15 @@ struct PermissionAnswer {
 
 async fn post_agent_permission(state: Ctx, Json(body): Json<PermissionAnswer>) -> ApiResult<Ok_> {
     with_hub(&state, move |hub| {
-        let Some(pending) = hub.permission.take() else {
+        let Some(pending) = hub.permission.as_ref() else {
             return Err(Conflict("no permission request is pending".into()).into());
         };
         if let Some(answering) = &body.request_id
             && pending.id.as_str() != Some(answering.as_str())
         {
-            let id = pending.id.clone();
-            hub.permission = Some(pending);
             return Err(Conflict(format!(
                 "that answer is for another request; {} is the one waiting",
-                id.as_str().unwrap_or("another")
+                pending.id.as_str().unwrap_or("another")
             ))
             .into());
         }
@@ -1489,11 +1484,14 @@ async fn post_agent_permission(state: Ctx, Json(body): Json<PermissionAnswer>) -
             .option_id
             .as_deref()
             .filter(|id| pending.options.iter().any(|o| o.option_id == *id));
-        let id = pending.id;
+        let id = pending.id.clone();
         let Some(agent) = &mut hub.agent else {
             return Err(Conflict("the agent is not running".into()).into());
         };
+        // Only once the answer is away is the request no longer waiting: a failed write
+        // would otherwise leave the agent waiting for an answer nobody can give again.
         agent.respond_permission(&id, chosen)?;
+        hub.permission = None;
         hub.status = "working".into();
         Ok(())
     })

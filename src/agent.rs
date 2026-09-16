@@ -29,21 +29,7 @@ pub enum Agent {
 /// Starts the backend `config` selects: `claude` runs Claude Code, `acp` runs the configured
 /// ACP command, and `auto` (the default) prefers Claude Code when it is on PATH.
 pub fn spawn(config: &AgentConfig, root: &Path) -> Result<Agent> {
-    let kind = match config.kind.as_str() {
-        "auto" => {
-            if std::process::Command::new(&config.claude_command)
-                .arg("--version")
-                .output()
-                .is_ok()
-            {
-                "claude"
-            } else {
-                "acp"
-            }
-        }
-        other => other,
-    };
-    match kind {
+    match config.resolved_kind() {
         #[cfg(test)]
         "fake-acp" => Ok(Agent::Acp(crate::acp::Agent::start(
             crate::fakes::acp(),

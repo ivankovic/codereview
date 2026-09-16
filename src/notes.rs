@@ -206,20 +206,6 @@ impl NotesFile {
         }
         false
     }
-
-    /// Points file notes at a renamed path.
-    pub fn rename_target(&mut self, from: &str, to: &str) {
-        for section in &mut self.sections {
-            if section.target == from {
-                section.target = to.to_string();
-                for item in &mut section.items {
-                    if let Item::Note(n) = item {
-                        n.target = to.to_string();
-                    }
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

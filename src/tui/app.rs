@@ -25,24 +25,6 @@ use crate::tui::viewer::{DiffLayout, DiffView, Viewer};
 const LOG_PAGE: usize = 200;
 
 /// What the panel says it is starting: `claude`, or the ACP command line.
-pub fn agent_label(config: &crate::config::AgentConfig) -> String {
-    match config.kind.as_str() {
-        "acp" => format!("{} {}", config.command, config.args.join(" ")),
-        "claude" => config.claude_command.clone(),
-        _ => {
-            if std::process::Command::new(&config.claude_command)
-                .arg("--version")
-                .output()
-                .is_ok()
-            {
-                config.claude_command.clone()
-            } else {
-                format!("{} {}", config.command, config.args.join(" "))
-            }
-        }
-    }
-}
-
 fn hit_from_symbol(s: crate::symbols::Symbol) -> Hit {
     let label = match &s.container {
         Some(c) => format!("{} {} in {c}", s.kind, s.name),
@@ -447,14 +429,7 @@ impl App {
             self.error(format!("{e:#}"));
             return;
         }
-        let selected = self.tree.current().map(|n| n.path.clone());
-        let filter = self.tree.filter.clone();
-        self.tree = Tree::new(&self.session.files);
-        self.tree.filter = filter;
-        self.tree.rebuild();
-        if let Some(path) = selected {
-            self.tree.select(&path);
-        }
+        self.tree.replace_files(&self.session.files);
         if let Some(path) = self.viewer.as_ref().map(|v| v.path.clone()) {
             let (cursor, scroll) = self
                 .viewer
@@ -759,7 +734,7 @@ impl App {
     /// The configured agent's name for titles and hints, computed on first use.
     pub fn agent_label(&mut self) -> String {
         if self.agent_label.is_none() {
-            self.agent_label = Some(agent_label(&self.session.config.agent));
+            self.agent_label = Some(self.session.config.agent.label());
         }
         self.agent_label.clone().unwrap_or_default()
     }
@@ -1732,11 +1707,10 @@ impl App {
                     }
                 }
             }
-            PromptKind::Filter => {
+            PromptKind::Filter { .. } => {
                 self.tree.filter = text;
                 self.tree.rebuild();
             }
-            PromptKind::ConfirmDelete => {}
             PromptKind::Agent { context } => {
                 if text.trim().is_empty() {
                     return;
@@ -1756,19 +1730,18 @@ impl App {
             return;
         };
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) => {
-                let was_filter = matches!(p.kind, PromptKind::Filter);
-                self.prompt = None;
-                self.edit_target = None;
-                if was_filter {
+            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                // A filter applies as it is typed, so cancelling has to undo it.
+                if let PromptKind::Filter { was } = &p.kind {
+                    self.tree.filter = was.clone();
+                    self.prompt = None;
                     self.tree.rebuild();
+                } else {
+                    self.prompt = None;
                 }
+                self.edit_target = None;
             }
             (KeyCode::Enter, _) => self.submit_prompt(),
-            (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                self.prompt = None;
-                self.edit_target = None;
-            }
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
                 p.text.clear();
                 p.cursor = 0;
@@ -1780,7 +1753,7 @@ impl App {
             (KeyCode::Right, _) => p.right(),
             (KeyCode::Backspace, _) => {
                 p.backspace();
-                if matches!(p.kind, PromptKind::Filter) {
+                if matches!(p.kind, PromptKind::Filter { .. }) {
                     self.tree.filter = p.text.clone();
                     self.tree.rebuild();
                 }
@@ -1788,7 +1761,7 @@ impl App {
             (KeyCode::Delete, _) => p.delete(),
             (KeyCode::Char(c), m) if !m.contains(KeyModifiers::CONTROL) => {
                 p.insert(c);
-                if matches!(p.kind, PromptKind::Filter) {
+                if matches!(p.kind, PromptKind::Filter { .. }) {
                     self.tree.filter = p.text.clone();
                     self.tree.rebuild();
                 }
@@ -1986,10 +1959,11 @@ impl App {
                 }
             }
             KeyCode::Char('f') if ctrl => {
+                let was = self.tree.filter.clone();
                 self.prompt = Some(Prompt::new(
-                    PromptKind::Filter,
+                    PromptKind::Filter { was: was.clone() },
                     "filter",
-                    &self.tree.filter.clone(),
+                    &was,
                 ));
             }
             _ if self.focus_tree => self.handle_tree_key(key),
@@ -2023,10 +1997,11 @@ impl App {
             KeyCode::Char('z') => self.tree.collapse_all(),
             KeyCode::Char('Z') => self.tree.expand_all(),
             KeyCode::Char('/') => {
+                let was = self.tree.filter.clone();
                 self.prompt = Some(Prompt::new(
-                    PromptKind::Filter,
+                    PromptKind::Filter { was: was.clone() },
                     "filter",
-                    &self.tree.filter.clone(),
+                    &was,
                 ));
             }
             KeyCode::Enter | KeyCode::Char(' ') => {

@@ -33,6 +33,38 @@ pub struct AgentConfig {
     pub args: Vec<String>,
 }
 
+impl AgentConfig {
+    /// Which backend this configuration means. `auto` is Claude Code when its binary is
+    /// there and the ACP command otherwise, which costs a process to find out, so callers
+    /// that ask every frame should remember the answer.
+    pub fn resolved_kind(&self) -> &str {
+        match self.kind.as_str() {
+            "auto" => {
+                if std::process::Command::new(&self.claude_command)
+                    .arg("--version")
+                    .output()
+                    .is_ok()
+                {
+                    "claude"
+                } else {
+                    "acp"
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// What to call the agent until it introduces itself.
+    pub fn label(&self) -> String {
+        match self.resolved_kind() {
+            "claude" => self.claude_command.clone(),
+            _ => format!("{} {}", self.command, self.args.join(" "))
+                .trim()
+                .into(),
+        }
+    }
+}
+
 impl Default for AgentConfig {
     /// Claude Code directly. The ACP fallback is Claude Code through Zed's adapter, which
     /// needs Node 20 or newer; it is only reached when `claude` itself is missing.

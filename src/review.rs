@@ -262,25 +262,10 @@ impl ReviewFile {
         out
     }
 
-    pub fn sections(&self) -> Vec<&str> {
-        self.sections.iter().map(|s| s.heading.as_str()).collect()
-    }
-
     pub fn comments(&self) -> Vec<&Comment> {
         self.sections
             .iter()
             .flat_map(|s| s.items.iter())
-            .filter_map(|item| match item {
-                Item::Comment(c) => Some(c),
-                Item::Raw(_) => None,
-            })
-            .collect()
-    }
-
-    pub fn comments_mut(&mut self) -> Vec<&mut Comment> {
-        self.sections
-            .iter_mut()
-            .flat_map(|s| s.items.iter_mut())
             .filter_map(|item| match item {
                 Item::Comment(c) => Some(c),
                 Item::Raw(_) => None,

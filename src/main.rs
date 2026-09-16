@@ -187,7 +187,7 @@ fn main() -> Result<()> {
             if author.is_some() {
                 session.author = author;
             }
-            session.timestamps = !no_timestamp;
+            session.config.timestamps = !no_timestamp;
             // With no text the lines argument is the comment, on the path as a whole.
             let (lines, text) = match text {
                 Some(text) => (Some(parse_lines(&lines)?), text),
