@@ -12,7 +12,7 @@ use crate::anchor::{Anchored, anchor_all};
 use crate::config::Config;
 use crate::diff::FileDiff;
 use crate::notes::{GENERAL, Note, NotesFile};
-use crate::repo::{ChangedFile, Commit, Repo, StatusEntry};
+use crate::repo::{ChangedFile, Commit, FileStatus, Repo, StatusEntry, is_binary};
 use crate::review::{Comment, ReviewFile, now_timestamp};
 use crate::symbols::{Index, Location, Symbol};
 use crate::theme::Theme;
@@ -176,9 +176,7 @@ impl Session {
     fn save_config(&self) -> Result<()> {
         match &self.config_path {
             Some(p) => self.config.save_to(p),
-            None => {
-                anyhow::bail!("no config directory: set HOME, XDG_CONFIG_HOME or CODEREVIEW_CONFIG")
-            }
+            None => self.config.save(),
         }
     }
 
@@ -400,40 +398,28 @@ impl Session {
     }
 
     /// Files that differ under `target`.
+    /// The files git reports as changed on one side of the index, by path. `side` picks
+    /// which side: what is staged, or what is not.
+    fn status_files(&self, side: impl Fn(&StatusEntry) -> Option<FileStatus>) -> Vec<ChangedFile> {
+        let mut out: Vec<ChangedFile> = self
+            .status
+            .values()
+            .filter_map(|s| {
+                Some(ChangedFile {
+                    status: side(s)?,
+                    path: s.path.clone(),
+                    old_path: s.old_path.clone(),
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        out
+    }
+
     pub fn changed_files(&self, target: &DiffTarget) -> Result<Vec<ChangedFile>> {
         match target {
-            DiffTarget::Working => {
-                let mut out: Vec<ChangedFile> = self
-                    .status
-                    .values()
-                    .filter_map(|s| {
-                        let status = s.unstaged?;
-                        Some(ChangedFile {
-                            status,
-                            path: s.path.clone(),
-                            old_path: s.old_path.clone(),
-                        })
-                    })
-                    .collect();
-                out.sort_by(|a, b| a.path.cmp(&b.path));
-                Ok(out)
-            }
-            DiffTarget::Staged => {
-                let mut out: Vec<ChangedFile> = self
-                    .status
-                    .values()
-                    .filter_map(|s| {
-                        let status = s.staged?;
-                        Some(ChangedFile {
-                            status,
-                            path: s.path.clone(),
-                            old_path: s.old_path.clone(),
-                        })
-                    })
-                    .collect();
-                out.sort_by(|a, b| a.path.cmp(&b.path));
-                Ok(out)
-            }
+            DiffTarget::Working => Ok(self.status_files(|s| s.unstaged)),
+            DiffTarget::Staged => Ok(self.status_files(|s| s.staged)),
             DiffTarget::Commit { hash } => self.repo.commit_files(hash),
             DiffTarget::Revisions { from, to } => self.repo.diff_files(from, to),
         }
@@ -605,11 +591,6 @@ pub fn open_targets(
         }
     }
     Ok(targets)
-}
-
-/// A NUL in the first 8 KiB, git's own heuristic.
-pub fn is_binary(bytes: &[u8]) -> bool {
-    bytes.iter().take(8192).any(|b| *b == 0)
 }
 
 #[cfg(test)]

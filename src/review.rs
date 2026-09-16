@@ -25,7 +25,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -117,10 +117,7 @@ impl Comment {
     }
 
     pub fn location(&self) -> String {
-        match self.line_label() {
-            Some(label) => format!("{}:{label}", self.path),
-            None => self.path.clone(),
-        }
+        location(&self.path, self.line, self.end_line)
     }
 
     /// Sets the anchor from the source line, trimmed and truncated the way nvim-review does.
@@ -153,6 +150,15 @@ impl Comment {
             out.push('"');
         }
         out
+    }
+}
+
+/// How a comment is named in a message: `src/main.rs:12`, `src/main.rs:12-15`, or the path
+/// alone when the comment is on the whole of it.
+pub fn location(path: &str, line: Option<usize>, end_line: Option<usize>) -> String {
+    match line {
+        Some(line) => format!("{path}:{}", line_label(line, end_line)),
+        None => path.to_string(),
     }
 }
 
@@ -221,18 +227,11 @@ impl ReviewFile {
     }
 
     pub fn load(root: &Path) -> Result<Self> {
-        let path = root.join(FILE_NAME);
-        match std::fs::read_to_string(&path) {
-            Ok(text) => Ok(Self::parse(&text)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
-        }
+        crate::markdown::load(root, FILE_NAME, Self::parse)
     }
 
     pub fn save(&self, root: &Path) -> Result<()> {
-        let path = root.join(FILE_NAME);
-        std::fs::write(&path, self.render())
-            .with_context(|| format!("cannot write {}", path.display()))
+        crate::markdown::save(root, FILE_NAME, &self.render())
     }
 
     pub fn render(&self) -> String {
@@ -306,17 +305,17 @@ impl ReviewFile {
     /// Adds a comment under its section, dropping the "No pending comments" placeholder
     /// nvim-review leaves in an empty section.
     pub fn add(&mut self, comment: Comment) {
-        let section = self.section_mut(&comment.section.clone());
+        let section = self.section_mut(&comment.section);
+        // The placeholder a section carries while it is empty is no longer true.
         section.items.retain(|item| match item {
             Item::Raw(r) => !r.trim().eq_ignore_ascii_case("No pending comments"),
             Item::Comment(_) => true,
         });
-        // Insert before trailing blank lines so the section stays compact.
-        let mut at = section.items.len();
-        while at > 0 && matches!(&section.items[at - 1], Item::Raw(r) if r.trim().is_empty()) {
-            at -= 1;
-        }
-        section.items.insert(at, Item::Comment(comment));
+        crate::markdown::append_to_section(
+            &mut section.items,
+            Item::Comment(comment),
+            |item| matches!(item, Item::Raw(r) if r.trim().is_empty()),
+        );
     }
 
     /// Removes the comment equal to `target`, returning whether one was found.

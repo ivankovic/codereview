@@ -54,7 +54,8 @@ impl AgentConfig {
         }
     }
 
-    /// What to call the agent until it introduces itself.
+    /// What to call the agent until it introduces itself. Costs what `resolved_kind` costs,
+    /// so a caller that draws every frame should remember the answer.
     pub fn label(&self) -> String {
         match self.resolved_kind() {
             "claude" => self.claude_command.clone(),

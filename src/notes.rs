@@ -15,7 +15,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 pub const FILE_NAME: &str = "NOTES.md";
@@ -97,18 +97,11 @@ impl NotesFile {
     }
 
     pub fn load(root: &Path) -> Result<Self> {
-        let path = root.join(FILE_NAME);
-        match std::fs::read_to_string(&path) {
-            Ok(text) => Ok(Self::parse(&text)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
-        }
+        crate::markdown::load(root, FILE_NAME, Self::parse)
     }
 
     pub fn save(&self, root: &Path) -> Result<()> {
-        let path = root.join(FILE_NAME);
-        std::fs::write(&path, self.render())
-            .with_context(|| format!("cannot write {}", path.display()))
+        crate::markdown::save(root, FILE_NAME, &self.render())
     }
 
     pub fn render(&self) -> String {
@@ -173,12 +166,11 @@ impl NotesFile {
                 }
             }
         };
-        let items = &mut self.sections[idx].items;
-        let mut at = items.len();
-        while at > 0 && matches!(&items[at - 1], Item::Raw(r) if r.trim().is_empty()) {
-            at -= 1;
-        }
-        items.insert(at, Item::Note(note));
+        crate::markdown::append_to_section(
+            &mut self.sections[idx].items,
+            Item::Note(note),
+            |item| matches!(item, Item::Raw(r) if r.trim().is_empty()),
+        );
     }
 
     pub fn remove(&mut self, target: &Note) -> bool {

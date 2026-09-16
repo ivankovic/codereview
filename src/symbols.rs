@@ -132,7 +132,7 @@ impl Names {
         id
     }
 
-    fn id(&self, name: &str) -> Option<u32> {
+    fn id_of(&self, name: &str) -> Option<u32> {
         self.ids.get(name).copied()
     }
 }
@@ -184,8 +184,10 @@ impl Index {
         }
     }
 
-    /// Replaces one file's entry from text already in memory (an unsaved buffer, a version at
-    /// a commit shown in a viewer).
+    /// Replaces one file's entry from text held in memory rather than read from disk. The
+    /// entry carries no modification time, so the next `refresh` sees it as stale and indexes
+    /// the file on disk again: this is for looking something up now, not for overriding what
+    /// the repository says.
     pub fn update_text(&mut self, path: &str, text: &str) {
         let (symbols, idents) = index_text(path, text);
         let entry = self.take_in(RawEntry {
@@ -235,13 +237,14 @@ impl Index {
         out
     }
 
-    /// Every occurrence of the identifier `name`, definitions included, by path then line.
-    /// Every occurrence of `name`, at most [`MAX_REFERENCES`] of them. The cap is what
+    /// Every occurrence of `name`, definitions included, by path then line, at most
+    /// [`MAX_REFERENCES`] of them. Each file holding one is read to quote the line, so the
+    /// cap bounds the disk work as well as the answer. The cap is what
     /// keeps a one-letter identifier in a large repository from reading most of the working
     /// tree on every request; `len() == MAX_REFERENCES` means there were probably more.
     pub fn references(&self, name: &str) -> Vec<Location> {
         let mut out = Vec::new();
-        let Some(wanted) = self.names.id(name) else {
+        let Some(wanted) = self.names.id_of(name) else {
             return out;
         };
         // Sorted, so the cap keeps the same occurrences from one call to the next.
@@ -368,7 +371,7 @@ fn index_files(root: &Path, paths: &[String]) -> Vec<(String, RawEntry)> {
                         let Ok(bytes) = std::fs::read(&full) else {
                             continue;
                         };
-                        if crate::session::is_binary(&bytes) {
+                        if crate::repo::is_binary(&bytes) {
                             continue;
                         }
                         let text = String::from_utf8_lossy(&bytes);
@@ -407,19 +410,9 @@ fn parse(path: &str, text: &str) -> Option<(Language, tree_sitter::Tree)> {
 fn index_text(path: &str, text: &str) -> (Vec<Symbol>, Vec<Ident>) {
     match parse(path, text) {
         Some((language, tree)) => {
-            let mut symbols = Vec::new();
-            let mut idents = Vec::new();
-            let mut containers: Vec<(String, usize)> = Vec::new();
-            walk(
-                tree.root_node(),
-                text,
-                path,
-                language,
-                &mut containers,
-                &mut symbols,
-                &mut idents,
-            );
-            (symbols, idents)
+            let mut walk = FileWalk::new(path, text, language);
+            walk.run(tree.root_node());
+            walk.finish()
         }
         None => regex_index(path, text),
     }
@@ -437,61 +430,101 @@ const DEFINITION_SUFFIXES: &[&str] = &[
 
 /// Iterative pre-order walk; `containers` is the stack of enclosing definitions with the
 /// byte where each ends.
-fn walk(
-    root: Node,
-    text: &str,
-    path: &str,
+/// One walk over one file's syntax tree, collecting what it defines and every name it
+/// mentions. The state is here rather than in a parameter list because most of it is
+/// scratch that no caller has any use for.
+struct FileWalk<'a> {
+    bytes: &'a [u8],
+    lines: Vec<&'a str>,
+    path: &'a str,
     language: Language,
-    containers: &mut Vec<(String, usize)>,
-    symbols: &mut Vec<Symbol>,
-    idents: &mut Vec<Ident>,
-) {
-    let bytes = text.as_bytes();
-    let lines: Vec<&str> = text.lines().collect();
-    let mut cursor = root.walk();
-    let mut stack: Vec<Node> = vec![root];
-    while let Some(node) = stack.pop() {
-        while containers
-            .last()
-            .is_some_and(|(_, end)| node.start_byte() >= *end)
-        {
-            containers.pop();
+    /// Definitions the walk is inside, each with the byte where it ends. What a name is
+    /// defined in is whatever is on top when the name is reached.
+    containers: Vec<(String, usize)>,
+    symbols: Vec<Symbol>,
+    idents: Vec<Ident>,
+}
+
+impl<'a> FileWalk<'a> {
+    fn new(path: &'a str, text: &'a str, language: Language) -> Self {
+        Self {
+            bytes: text.as_bytes(),
+            lines: text.lines().collect(),
+            path,
+            language,
+            containers: Vec::new(),
+            symbols: Vec::new(),
+            idents: Vec::new(),
         }
-        let kind = node.kind();
-        if node.child_count() == 0 {
-            if node.is_named() && kind.contains("identifier") {
-                if let Ok(name) = node.utf8_text(bytes) {
-                    idents.push(Ident {
-                        name: name.to_string(),
-                        line: node.start_position().row as u32,
-                        column: node.start_position().column as u32,
-                    });
-                }
+    }
+
+    fn finish(self) -> (Vec<Symbol>, Vec<Ident>) {
+        (self.symbols, self.idents)
+    }
+
+    fn run(&mut self, root: Node) {
+        let mut cursor = root.walk();
+        let mut stack: Vec<Node> = vec![root];
+        while let Some(node) = stack.pop() {
+            self.leave_containers_ending_before(node.start_byte());
+            let kind = node.kind();
+            if node.child_count() == 0 {
+                self.note_identifier(node, kind);
+                continue;
             }
-            continue;
+            self.note_definition(node, kind);
+            // Push children in reverse so they pop in source order.
+            let children: Vec<Node> = node.children(&mut cursor).collect();
+            for child in children.into_iter().rev() {
+                stack.push(child);
+            }
         }
-        if let Some((name, label, name_node)) = definition_of(node, kind, language, bytes) {
-            let line = name_node.start_position().row;
-            symbols.push(Symbol {
-                name: name.clone(),
-                kind: label,
-                path: path.to_string(),
-                line: line + 1,
-                column: name_node.start_position().column,
-                end_line: node.end_position().row + 1,
-                container: containers.last().map(|(n, _)| n.clone()),
-                text: lines
-                    .get(line)
-                    .map(|l| l.trim().to_string())
-                    .unwrap_or_default(),
+    }
+
+    /// The walk is in source order, so a definition whose end is behind us is one we have
+    /// left.
+    fn leave_containers_ending_before(&mut self, byte: usize) {
+        while self.containers.last().is_some_and(|(_, end)| byte >= *end) {
+            self.containers.pop();
+        }
+    }
+
+    /// A leaf whose kind mentions "identifier" is a name being used: the grammars differ on
+    /// what they call it, and all of them agree on that much.
+    fn note_identifier(&mut self, node: Node, kind: &str) {
+        if !node.is_named() || !kind.contains("identifier") {
+            return;
+        }
+        if let Ok(name) = node.utf8_text(self.bytes) {
+            self.idents.push(Ident {
+                name: name.to_string(),
+                line: node.start_position().row as u32,
+                column: node.start_position().column as u32,
             });
-            containers.push((name, node.end_byte()));
         }
-        // Push children in reverse so they pop in source order.
-        let children: Vec<Node> = node.children(&mut cursor).collect();
-        for child in children.into_iter().rev() {
-            stack.push(child);
-        }
+    }
+
+    fn note_definition(&mut self, node: Node, kind: &str) {
+        let Some((name, label, name_node)) = definition_of(node, kind, self.language, self.bytes)
+        else {
+            return;
+        };
+        let line = name_node.start_position().row;
+        self.symbols.push(Symbol {
+            name: name.clone(),
+            kind: label,
+            path: self.path.to_string(),
+            line: line + 1,
+            column: name_node.start_position().column,
+            end_line: node.end_position().row + 1,
+            container: self.containers.last().map(|(n, _)| n.clone()),
+            text: self
+                .lines
+                .get(line)
+                .map(|l| l.trim().to_string())
+                .unwrap_or_default(),
+        });
+        self.containers.push((name, node.end_byte()));
     }
 }
 

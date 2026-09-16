@@ -385,6 +385,12 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
+/// Whether git would call this a binary file: a NUL byte in the first 8 KiB, which is its
+/// own rule. Text is what this tool can show, diff and index; the rest is skipped.
+pub fn is_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8192).any(|b| *b == 0)
+}
+
 /// `git -C dir`, with the messages in one language. `show` tells a missing file from a real
 /// failure by what git says, and under another locale it would say it differently.
 fn git_command(dir: &Path) -> Command {
@@ -504,12 +510,13 @@ pub fn parse_status(bytes: &[u8]) -> BTreeMap<String, StatusEntry> {
 
 fn parse_blame(bytes: &[u8]) -> Vec<BlameLine> {
     let text = String::from_utf8_lossy(bytes);
+    // Porcelain blame gives a commit's author and summary the first time it appears and
+    // only its hash afterwards, so what was said about each one has to be remembered.
     let mut commits: BTreeMap<String, BlameLine> = BTreeMap::new();
     let mut lines = Vec::new();
     let mut current: Option<String> = None;
     for line in text.lines() {
-        if let Some(rest) = line.strip_prefix('\t') {
-            let _ = rest;
+        if line.starts_with('\t') {
             if let Some(hash) = &current {
                 if let Some(info) = commits.get(hash) {
                     lines.push(info.clone());
@@ -520,6 +527,8 @@ fn parse_blame(bytes: &[u8]) -> Vec<BlameLine> {
         let mut words = line.splitn(2, ' ');
         let key = words.next().unwrap_or("");
         let value = words.next().unwrap_or("");
+        // A line that starts with a hash begins a new commit's block. Forty hexadecimal
+        // digits is SHA-1, which is what git writes here today.
         if key.len() == 40 && key.chars().all(|c| c.is_ascii_hexdigit()) {
             current = Some(key.to_string());
             commits.entry(key.to_string()).or_insert(BlameLine {

@@ -27,6 +27,7 @@ pub mod diff;
 #[cfg(test)]
 mod fakes;
 pub mod highlight;
+pub mod markdown;
 pub mod notes;
 pub mod repo;
 pub mod review;

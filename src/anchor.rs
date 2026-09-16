@@ -41,6 +41,7 @@ impl Anchored {
     /// The 0-based lines the comment is drawn over, `None` for a comment on the whole path.
     pub fn rows(&self) -> Option<std::ops::Range<usize>> {
         let first = self.line?;
+        // Lines are 1-based, so `max(1)` matters only for a hand-written `on line 0`.
         Some(first.max(1) - 1..self.end_line.unwrap_or(first).max(1))
     }
 
@@ -54,11 +55,9 @@ impl Anchored {
     }
 
     /// `path:lines`, or just the path for a comment on the whole path.
+    /// Where the comment is now, which is not where the file says once it has moved.
     pub fn location(&self) -> String {
-        match self.line_label() {
-            Some(label) => format!("{}:{label}", self.comment.path),
-            None => self.comment.path.clone(),
-        }
+        crate::review::location(&self.comment.path, self.line, self.end_line)
     }
 }
 

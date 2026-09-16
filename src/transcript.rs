@@ -36,6 +36,10 @@ pub struct Entry {
     pub version: u64,
 }
 
+/// How much of a tool's output the transcript keeps. Enough to see what happened, little
+/// enough that a command printing a whole file does not become the conversation.
+const MAX_TOOL_OUTPUT: usize = 600;
+
 /// What is known about one tool call, merged from its updates.
 #[derive(Debug, Clone, Default)]
 struct ToolInfo {
@@ -59,7 +63,7 @@ impl ToolInfo {
             line = format!("{line} {}", self.locations.join(", "));
         }
         if let Some(out) = &self.output {
-            let short: String = out.chars().take(600).collect();
+            let short: String = out.chars().take(MAX_TOOL_OUTPUT).collect();
             line.push('\n');
             line.push_str(&short);
             if out.len() > short.len() {
@@ -135,7 +139,7 @@ impl Transcript {
         self.tools.clear();
         // Not the version: a reader that has seen more must be told to start again, and a
         // version going backwards would leave it showing what is no longer there.
-        self.version += 1;
+        self.next_version();
     }
 
     /// Adds a line nobody said: what codereview itself is doing.
@@ -143,12 +147,18 @@ impl Transcript {
         self.push(EntryKind::System, text.into());
     }
 
-    fn push(&mut self, kind: EntryKind, text: String) {
+    /// The next stamp, for an entry about to be written or changed.
+    fn next_version(&mut self) -> u64 {
         self.version += 1;
+        self.version
+    }
+
+    fn push(&mut self, kind: EntryKind, text: String) {
+        let version = self.next_version();
         self.entries.push(Entry {
             kind,
             text,
-            version: self.version,
+            version,
         });
     }
 
@@ -177,8 +187,7 @@ impl Transcript {
                     .last()
                     .is_some_and(|last| last.kind == kind && kind != EntryKind::User);
                 if joins {
-                    self.version += 1;
-                    let version = self.version;
+                    let version = self.next_version();
                     if let Some(last) = self.entries.last_mut() {
                         last.text.push_str(&text);
                         last.version = version;
@@ -194,37 +203,7 @@ impl Transcript {
                 status,
                 locations,
                 output,
-            } => {
-                if !self.tools.contains_key(&id) {
-                    self.push(EntryKind::Tool, String::new());
-                    let i = self.entries.len() - 1;
-                    self.tools.insert(id.clone(), (i, ToolInfo::default()));
-                    self.turn_tools += 1;
-                }
-                self.version += 1;
-                let version = self.version;
-                let (idx, info) = self.tools.get_mut(&id).expect("just inserted");
-                if let Some(t) = title {
-                    info.title = t;
-                }
-                if kind.is_some() {
-                    info.kind = kind;
-                }
-                if status.is_some() {
-                    info.status = status;
-                }
-                if !locations.is_empty() {
-                    info.locations = locations;
-                }
-                if output.is_some() {
-                    info.output = output;
-                }
-                let (text, idx) = (info.render(), *idx);
-                if let Some(entry) = self.entries.get_mut(idx) {
-                    entry.text = text;
-                    entry.version = version;
-                }
-            }
+            } => self.merge_tool_call(id, title, kind, status, locations, output),
             Event::Plan { entries } => {
                 let text = entries
                     .iter()
@@ -238,28 +217,7 @@ impl Transcript {
                 title,
                 details,
                 options,
-            } => {
-                let names: Vec<String> = options
-                    .iter()
-                    .enumerate()
-                    .map(|(i, o)| format!("{} {}", i + 1, o.name))
-                    .collect();
-                // The whole of what is being approved goes in the transcript: a bar has room
-                // for one line, and a command's second line is where something unwanted
-                // would hide.
-                let full = match &details {
-                    Some(d) if d.trim() != title.trim() => format!("permission: {title}\n{d}"),
-                    _ => format!("permission: {title}"),
-                };
-                self.system(format!("{full}\n({})", names.join("  ")));
-                self.permission = Some(Pending {
-                    id: request_id,
-                    title,
-                    details,
-                    options,
-                });
-                self.status = "waiting for permission".into();
-            }
+            } => self.ask_permission(request_id, title, details, options),
             Event::TurnDone { stop_reason } => {
                 self.status = if stop_reason == "end_turn" {
                     "idle".into()
@@ -297,6 +255,76 @@ impl Transcript {
                 self.system(message);
             }
         }
+    }
+
+    /// A tool call is one entry, written when it starts and changed as it runs. Each update
+    /// mentions only what it knows, so the rest of what was said before is kept.
+    fn merge_tool_call(
+        &mut self,
+        id: String,
+        title: Option<String>,
+        kind: Option<String>,
+        status: Option<String>,
+        locations: Vec<String>,
+        output: Option<String>,
+    ) {
+        if !self.tools.contains_key(&id) {
+            self.push(EntryKind::Tool, String::new());
+            let i = self.entries.len() - 1;
+            self.tools.insert(id.clone(), (i, ToolInfo::default()));
+            self.turn_tools += 1;
+        }
+        let version = self.next_version();
+        let (at, info) = self.tools.get_mut(&id).expect("just inserted");
+        if let Some(t) = title {
+            info.title = t;
+        }
+        if kind.is_some() {
+            info.kind = kind;
+        }
+        if status.is_some() {
+            info.status = status;
+        }
+        if !locations.is_empty() {
+            info.locations = locations;
+        }
+        if output.is_some() {
+            info.output = output;
+        }
+        let (text, at) = (info.render(), *at);
+        if let Some(entry) = self.entries.get_mut(at) {
+            entry.text = text;
+            entry.version = version;
+        }
+    }
+
+    /// A question the agent is waiting on. The whole of what would be approved goes in the
+    /// transcript: a status bar has room for one line, and a command's second line is where
+    /// something unwanted would hide.
+    fn ask_permission(
+        &mut self,
+        request_id: Value,
+        title: String,
+        details: Option<String>,
+        options: Vec<PermissionOption>,
+    ) {
+        let names: Vec<String> = options
+            .iter()
+            .enumerate()
+            .map(|(i, o)| format!("{} {}", i + 1, o.name))
+            .collect();
+        let full = match &details {
+            Some(d) if d.trim() != title.trim() => format!("permission: {title}\n{d}"),
+            _ => format!("permission: {title}"),
+        };
+        self.system(format!("{full}\n({})", names.join("  ")));
+        self.permission = Some(Pending {
+            id: request_id,
+            title,
+            details,
+            options,
+        });
+        self.status = "waiting for permission".into();
     }
 
     /// `12.3k in / 1.1k out · $0.21` once the backend has reported any usage.
@@ -355,25 +383,26 @@ impl Transcript {
     }
 
     /// Drops the oldest entries until the transcript holds less than `max` bytes. The tool
-    /// call positions go with them, so updates to a dropped call land nowhere.
+    /// call positions go with them, so updates to a dropped call start a new entry rather
+    /// than landing on the wrong one. Everything left is stamped anew, because dropping
+    /// from the front moves every position: a reader holding entries by position has to
+    /// take them all again.
     pub fn trim_to(&mut self, max: usize) {
-        if self.bytes() <= max {
+        let mut bytes = self.bytes();
+        if bytes <= max {
             return;
         }
-        let mut bytes = self.bytes();
-        let mut dropped = 0;
-        while bytes > max && self.entries.len() > 1 {
-            bytes -= self.entries[0].text.len();
-            self.entries.remove(0);
-            dropped += 1;
+        let mut drop = 0;
+        while bytes > max && drop + 1 < self.entries.len() {
+            bytes -= self.entries[drop].text.len();
+            drop += 1;
         }
+        self.entries.drain(..drop);
         self.tools.clear();
-        self.version += 1;
-        let version = self.version;
+        let version = self.next_version();
         for entry in &mut self.entries {
             entry.version = version;
         }
-        let _ = dropped;
     }
 }
 

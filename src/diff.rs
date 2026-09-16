@@ -209,7 +209,8 @@ fn anchors(before: &[&str], bops: &[Op], after: &[&str], aops: &[Op]) -> Vec<(us
                 out.push((i, j));
                 i += 1;
                 j += 1;
-            } else if !unchanged(bops, i) || (unchanged(aops, j) && !unchanged(bops, i)) {
+            } else if !unchanged(bops, i) {
+                // A changed line pairs with nothing: step over it and look again.
                 i += 1;
             } else if !unchanged(aops, j) {
                 j += 1;
@@ -356,10 +357,14 @@ fn spans_for_line(ranges: &[&RangeMatch], row: usize, len: usize) -> Vec<Span> {
                 op: Op::from(&r.operation),
             }
         })
+        // A change on an empty line has nothing to cover, but the renderer still needs a
+        // span there to paint the line as changed.
         .filter(|s| s.end > s.start || len == 0)
         .collect();
     spans.sort_by_key(|s| (s.start, s.end));
     // Later ranges take precedence where they overlap (codediff lists the finer ones last).
+    // `spans` is sorted by start, and anything pushed below is pushed in order, so `merged`
+    // stays sorted without being sorted again.
     let mut merged: Vec<Span> = Vec::new();
     for s in spans {
         if let Some(last) = merged.last_mut() {
