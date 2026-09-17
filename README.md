@@ -245,8 +245,9 @@ through [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked
 
 `make integration-test` runs the browser UI behind a real nginx, in a container, over TLS on
 a name: the site from [docs/deploy.md](docs/deploy.md), signing in with a password, reading
-and writing through the proxy. It needs podman, curl and openssl, which is why it is not part
-of `make check`. Rootless podman is enough, and is the point: no daemon, so running the suite
+and writing through the proxy. `make browser-test` opens the page itself in a headless
+Chromium the size of a telephone and taps its way through it, which is the only test here that
+can see a layout. Both need podman, which is why neither is part of `make check`. Rootless podman is enough, and is the point: no daemon, so running the suite
 costs nobody access to every other container on the machine. `CODEREVIEW_CONTAINER_RUNTIME`
 drives another runtime — `docker` works as a drop-in.
 PLAN.md has the design and the roadmap, SPECS.md what the tool does in detail.

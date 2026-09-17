@@ -1,16 +1,16 @@
 //! The browser UI behind nginx, as `docs/deploy.md` describes it: TLS on a name, the plain
 //! port redirecting to it, and everything else proxied to codereview on loopback.
 //!
-//! This is the only test that needs something other than a Rust toolchain, so it is ignored
-//! by default and run by `make integration-test`, which needs a container runtime, curl and
-//! openssl. It runs nginx in a container sharing the host's network, so that `proxy_pass` to
+//! Ignored by default and run by `make integration-test`, which needs a container runtime,
+//! curl and openssl. It runs nginx in a container sharing the host's network, so that `proxy_pass` to
 //! `127.0.0.1` reaches the server this test starts.
 
+mod common;
+
+use common::{have, port_is_free, run, runtime, scratch_repo, wait_for_port};
 use std::io::Write;
-use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
 
 /// Fixed, and well above the privileged range: the container shares the host's network, so
 /// these are host ports, and a rootless runtime may not bind the low ones.
@@ -38,21 +38,6 @@ impl Drop for Harness {
     }
 }
 
-/// The container runtime to drive, from `CODEREVIEW_CONTAINER_RUNTIME`.
-///
-/// Podman, and rootless: it runs without a daemon, so this suite costs nobody membership of a
-/// group whose socket hands over every container on the machine, including root-owned ones
-/// that have nothing to do with this project. Anything CLI-compatible does — `docker` is a
-/// drop-in for the four commands used here. Read once: a run must not straddle two runtimes.
-fn runtime() -> &'static str {
-    static RUNTIME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    RUNTIME
-        .get_or_init(|| {
-            std::env::var("CODEREVIEW_CONTAINER_RUNTIME").unwrap_or_else(|_| "podman".to_string())
-        })
-        .as_str()
-}
-
 fn remove_container() {
     let _ = Command::new(runtime())
         .args(["rm", "-f", CONTAINER])
@@ -61,49 +46,6 @@ fn remove_container() {
         .status();
 }
 
-/// Whether `program` is there to be run. `probe` is how it is asked, which is not the same
-/// argument everywhere.
-fn have(program: &str, probe: &str) -> bool {
-    Command::new(program)
-        .arg(probe)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
-}
-
-fn run(program: &str, args: &[&str]) -> String {
-    let out = Command::new(program)
-        .args(args)
-        .output()
-        .unwrap_or_else(|e| panic!("cannot run {program}: {e}"));
-    assert!(
-        out.status.success(),
-        "{program} {args:?} failed: {}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-fn port_is_free(port: u16) -> bool {
-    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
-}
-
-fn wait_for_port(port: u16, what: &str) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline {
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    panic!("{what} never started listening on {port}");
-}
-
-/// What came back. The headers are lower-cased whole, values included, which is what lets
-/// the checks below look for `secure` and `no-store` without minding how nginx spelled them.
 struct Response {
     status: u16,
     headers: String,
@@ -158,22 +100,6 @@ fn curl(ca: &Path, args: &[&str]) -> Response {
 
 fn url(path: &str) -> String {
     format!("https://{HOST}:{HTTPS_PORT}{path}")
-}
-
-/// A repository with something in it to serve.
-fn scratch_repo(root: &Path) {
-    run("git", &["init", "-q", root.to_str().unwrap()]);
-    let git = |args: &[&str]| {
-        let mut all = vec!["-C", root.to_str().unwrap()];
-        all.extend_from_slice(args);
-        run("git", &all);
-    };
-    git(&["config", "user.email", "test@example.com"]);
-    git(&["config", "user.name", "Test"]);
-    std::fs::write(root.join("a.rs"), "fn main() {}\n").unwrap();
-    std::fs::write(root.join("REVIEW.md"), "# Pending\n\n# Completed\n").unwrap();
-    git(&["add", "-A"]);
-    git(&["commit", "-qm", "first"]);
 }
 
 #[test]

@@ -1,4 +1,4 @@
-.PHONY: build build-web test integration-test check fmt clippy install deploy
+.PHONY: build build-web test integration-test browser-test check fmt clippy install deploy
 
 build:
 	cargo build --release
@@ -14,6 +14,12 @@ test:
 # set CODEREVIEW_CONTAINER_RUNTIME=docker to drive docker instead.
 integration-test:
 	cargo nextest run --features web --run-ignored all -E 'binary(nginx_proxy)'
+
+# The page itself, in a headless Chromium at a phone's size. Needs podman, and pulls about a
+# gigabyte of browser the first time. This is the only test that can see the page: everything
+# else reads what the server sends, which a clipped menu does not change.
+browser-test:
+	cargo nextest run --features web --run-ignored all -E 'binary(browser)' --no-capture
 
 fmt:
 	cargo fmt --check

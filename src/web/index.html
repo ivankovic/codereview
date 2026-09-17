@@ -230,6 +230,10 @@ body.zen.hasmsg footer { display: flex; }
   header .tabs button { flex: 1; min-width: 0; padding: 6px 2px; font-size: 12px; border-bottom: none; border-top: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   header .tabs button.active { border-top-color: var(--accent); }
   header .tabs .badge { padding: 0 4px; }
+  /* One row, measured rather than hoped for: the path gives way before the buttons do, and
+     the line count goes — the file it counts is directly underneath. */
+  .panelhead .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .panelhead .lines { display: none; }
   /* The file's other buttons, as a menu under the one that opens it. `.panelhead` is sticky,
      which already positions the menu; saying `relative` here instead would unstick every
      panel header on the one screen that can least afford to scroll one away. */
@@ -836,7 +840,7 @@ function renderFile() {
   head.className = 'panelhead';
   head.innerHTML = `<button class="phone" data-act="up" title="back to the file tree">‹ files</button><span class="path">${esc(f.path)}</span>
     ${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
-    <span class="dim">${f.lines.length} lines</span>
+    <span class="dim lines">${f.lines.length} lines</span>
     <span class="spacer"></span>
     <button data-act="comment" title="comment on the file as a whole">Comment</button>
     <button class="phone" data-act="menu" title="everything else this file can do">⋯</button>
