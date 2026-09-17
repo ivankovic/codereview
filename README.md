@@ -17,6 +17,10 @@ line they were left on and finding it again after edits.
 - **Navigate by symbol**: jump to where the name under the cursor is defined, list every place
   it occurs, list a file's definitions, search definitions by name. Tree-sitter, no language
   server, every file in the repository, as fast as the tree changes.
+- **Run the checks** the project already has — tests, coverage, a linter, `make check` — from
+  the page, and see what they said: the exit code and the tail of the output from the run, the
+  test count and coverage from the `junit.xml` or `lcov.info` they leave behind. A repository
+  can opt in to having them run on their own, a few seconds after it stops changing.
 - **Talk to a coding agent**: ask about the code under the cursor, have one review comment
   addressed, have every pending comment worked through, or have a diff reviewed into
   `REVIEW.md`. Claude Code directly by default, no adapter; any agent that speaks the Agent

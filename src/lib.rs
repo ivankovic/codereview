@@ -20,6 +20,7 @@
 
 pub mod acp;
 pub mod agent;
+pub mod analysis;
 pub mod anchor;
 pub mod claude;
 pub mod config;

@@ -4,10 +4,12 @@
 //! as `Authorization: Bearer` on the API, so no other site open in the same browser can read
 //! the repository or write to REVIEW.md. The server binds loopback unless told otherwise.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Query, Request, State};
@@ -20,6 +22,7 @@ use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{Agent, Event as AgentEvent, PermissionOption, prompts};
+use crate::analysis::{Figures, Run as CheckRun};
 use crate::anchor::Anchored;
 use crate::diff::{FileDiff, Op};
 use crate::highlight::Segment;
@@ -87,10 +90,13 @@ impl AppState {
     }
 }
 
-/// One served repository: its session and its agent.
+/// One served repository: its session, its agent, and the checks that have been run in it.
 struct RepoState {
     session: Arc<Mutex<Session>>,
     hub: Arc<Mutex<AgentHub>>,
+    /// The last run of each check, by name, in flight or finished. Held for as long as the
+    /// server is, and no longer: what outlives a run is the artefact it wrote.
+    checks: Arc<Mutex<HashMap<String, crate::analysis::Running>>>,
     /// What the configured agent is called, found out once: the `auto` kind probes PATH, and
     /// the page asks for the status twice a second.
     agent_label: String,
@@ -102,6 +108,7 @@ impl RepoState {
             agent_label: session.config.agent.label(),
             session: Arc::new(Mutex::new(session)),
             hub: Arc::new(Mutex::new(AgentHub::default())),
+            checks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -340,10 +347,143 @@ pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
                 eprintln!("could not open a browser: {e}");
             }
         }
+        watch_repositories(state.clone());
         axum::serve(listener, router(state))
             .with_graceful_shutdown(shutdown_signal())
             .await
             .context("server")
+    })
+}
+
+/// How often each repository is looked at, and how long it must then hold still before a
+/// check runs. A save in an editor is usually followed by another; a build started on the
+/// first one is a build thrown away.
+const TICK: Duration = Duration::from_secs(5);
+const SETTLE: Duration = Duration::from_secs(10);
+/// However much a repository is worked on, nothing of it is built more often than this.
+const MIN_BETWEEN: Duration = Duration::from_secs(120);
+
+/// Watches every served repository and runs the checks that named it.
+///
+/// Nothing here belongs to a browser: this is the difference between a page that shows what
+/// the last run said and a machine that has already run it by the time anyone looks. A
+/// repository is only watched when a check in the user's own configuration names it, so the
+/// default for a repository that was cloned rather than written is that nothing runs in it.
+///
+/// One run at a time across the whole server, whatever it is serving: fifteen repositories
+/// building at once is a machine nobody can use, and the second build would be waiting on the
+/// first for the same lock anyway.
+fn watch_repositories(state: AppState) {
+    // Nothing to watch, nothing to spawn: the usual case, and it should cost nothing.
+    let watched: Vec<usize> = state
+        .repos
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| {
+            let s = r.session.lock().unwrap_or_else(|e| e.into_inner());
+            let root = s.root().to_path_buf();
+            s.config
+                .analysis
+                .iter()
+                .any(|c| crate::analysis::watches(c, &root))
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if watched.is_empty() {
+        return;
+    }
+    println!(
+        "watching {} of {} repositories for checks to run",
+        watched.len(),
+        state.repos.len()
+    );
+    tokio::task::spawn_blocking(move || {
+        // Per repository: the fingerprint last seen, when it last moved, and when each check
+        // was last started here. All of it dies with the process, like every other run.
+        let mut seen: HashMap<usize, (u64, Instant)> = HashMap::new();
+        // When each check last started here, and what the repository looked like then.
+        let mut ran: HashMap<(usize, String), (Instant, u64)> = HashMap::new();
+        loop {
+            std::thread::sleep(TICK);
+            for &i in &watched {
+                let repo = &state.repos[i];
+                let (fingerprint, root, checks) = {
+                    let s = repo.session.lock().unwrap_or_else(|e| e.into_inner());
+                    let root = s.root().to_path_buf();
+                    match s.fingerprint(None) {
+                        Ok(f) => (f, root, s.config.analysis.clone()),
+                        // A repository that cannot be read right now — mid-rebase, mid-clone —
+                        // is not a reason to give up watching it.
+                        Err(_) => continue,
+                    }
+                };
+                let now = Instant::now();
+                let (last, changed_at) = *seen.get(&i).unwrap_or(&(fingerprint, now));
+                if last != fingerprint {
+                    seen.insert(i, (fingerprint, now));
+                    continue;
+                }
+                seen.insert(i, (fingerprint, changed_at));
+                // Still holding the value it settled on, and settled long enough ago.
+                if now.duration_since(changed_at) < SETTLE {
+                    continue;
+                }
+                for check in checks.iter().filter(|c| crate::analysis::watches(c, &root)) {
+                    let key = (i, check.name.clone());
+                    let before = ran.get(&key).copied();
+                    if !due(
+                        now.duration_since(changed_at),
+                        before.map(|(at, _)| now.duration_since(at)),
+                        before.map(|(_, f)| f),
+                        fingerprint,
+                    ) {
+                        continue;
+                    }
+                    // One at a time across the whole server, not merely within one
+                    // repository: fifteen builds at once is a machine nobody can use.
+                    if anything_running(&state) {
+                        continue;
+                    }
+                    let mut runs = repo.checks.lock().unwrap_or_else(|e| e.into_inner());
+                    match crate::analysis::start(check, &root) {
+                        Ok(run) => {
+                            runs.insert(check.name.clone(), run);
+                            ran.insert(key, (now, fingerprint));
+                        }
+                        Err(e) => eprintln!("cannot start {}: {e:#}", check.name),
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Whether a watched check is due to run.
+///
+/// Three things have to hold, and the middle one is the one worth stating: the repository has
+/// held still long enough to be worth building, it has *changed since this check last ran in
+/// it*, and enough time has passed since that run. Without the middle test the floor between
+/// runs becomes a schedule, and a repository nobody has touched for a month is rebuilt every
+/// two minutes for ever.
+fn due(
+    settled_for: Duration,
+    since_last_run: Option<Duration>,
+    ran_at: Option<u64>,
+    fingerprint: u64,
+) -> bool {
+    settled_for >= SETTLE
+        && ran_at != Some(fingerprint)
+        && since_last_run.is_none_or(|d| d >= MIN_BETWEEN)
+}
+
+/// Whether any check is running anywhere on this server.
+fn anything_running(state: &AppState) -> bool {
+    state.repos.iter().any(|r| {
+        r.checks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .any(|run| run.lock().unwrap_or_else(|e| e.into_inner()).running)
     })
 }
 
@@ -401,6 +541,8 @@ fn router(state: AppState) -> Router {
         .route("/notes/edit", post(api::post_note_edit))
         .route("/notes/delete", post(api::post_note_delete))
         .route("/commit", post(api::post_commit))
+        .route("/analysis", get(api::get_analysis))
+        .route("/analysis/run", post(api::post_analysis_run))
         .route("/version", get(api::get_version))
         .route("/refresh", post(api::post_refresh))
         .route("/reanchor", post(api::post_reanchor))

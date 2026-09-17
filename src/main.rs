@@ -327,7 +327,12 @@ fn open_targets(
     from: &std::path::Path,
     paths: &[String],
 ) -> Result<Vec<(Session, Option<String>)>> {
-    codereview::session::open_targets(from, paths, None, |m| eprintln!("{m}"))
+    // The user's own file, the same one `Session::open` reads for every other subcommand.
+    // Passing `None` here means the defaults, which is not the same thing at all: it is a
+    // colour scheme the page cannot save, an agent that cannot be configured, and no checks.
+    codereview::session::open_targets(from, paths, codereview::config::Config::path(), |m| {
+        eprintln!("{m}")
+    })
 }
 
 /// One prompt, answer streamed to stdout, permission requests answered on stdin (or

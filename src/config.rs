@@ -16,6 +16,43 @@ pub struct Config {
     /// Whether new comments carry a timestamp.
     pub timestamps: bool,
     pub agent: AgentConfig,
+    /// The checks this machine may run in a repository: tests, coverage, a linter. Named
+    /// `analysis` because that is what the page calls them; `[[analysis]]` in the file.
+    pub analysis: Vec<Check>,
+}
+
+/// One check: what to call it, what to run, and what to read afterwards.
+///
+/// The command goes through `sh -c` from the repository root, so a pipeline or a redirection
+/// works as it would by hand. It comes from this file and never from a repository, which is
+/// what keeps a clone from choosing what runs on the machine that serves it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Check {
+    pub name: String,
+    pub run: String,
+    /// The artefact the command leaves behind, relative to the repository root, if any:
+    /// `target/nextest/default/junit.xml`, `lcov.info`.
+    pub reads: Option<String>,
+    /// How to read that artefact: `junit`, `lcov`, or empty for an exit code and no figures.
+    pub kind: String,
+    /// Repository roots where this check may also run without being asked. Empty, the
+    /// default, means it runs only when someone presses the button: a command that starts
+    /// itself in a repository that was cloned rather than written is code execution from a
+    /// clone, and that has to be chosen one repository at a time.
+    pub watch: Vec<String>,
+}
+
+impl Default for Check {
+    fn default() -> Self {
+        Self {
+            name: "check".into(),
+            run: String::new(),
+            reads: None,
+            kind: String::new(),
+            watch: Vec::new(),
+        }
+    }
 }
 
 /// The agent both front ends can talk to.
@@ -87,6 +124,7 @@ impl Default for Config {
             layout: "auto".into(),
             timestamps: true,
             agent: AgentConfig::default(),
+            analysis: Vec::new(),
         }
     }
 }
@@ -166,6 +204,13 @@ mod tests {
                 claude_args: vec!["--model".into(), "opus".into()],
                 ..AgentConfig::default()
             },
+            analysis: vec![Check {
+                name: "tests".into(),
+                run: "cargo nextest run".into(),
+                reads: Some("target/nextest/default/junit.xml".into()),
+                kind: "junit".into(),
+                watch: vec!["/srv/review/repos/one".into()],
+            }],
         };
         config.save_to(&path).unwrap();
         assert!(path.exists(), "the directory was made as well");

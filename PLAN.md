@@ -60,7 +60,8 @@ grammar for (Makefiles, for one) fall back to its plain-text line diff.
 
 Phases 1 to 3 are built (2026-09-10), then colour schemes, symbol navigation and the ACP
 agent (2026-09-11), Claude Code driven directly, the agent tab on the page, and several
-repositories in one process (2026-09-16). Phase 4 is open; TODO.md tracks it.
+repositories in one process (2026-09-16), committing from the page, the status view and
+phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
 
 1. **Core** (`src/repo.rs`, `src/review.rs`, `src/notes.rs`, `src/anchor.rs`, `src/diff.rs`,
    `src/highlight.rs`): git access, the two Markdown files with round-trip parsing, comment
@@ -95,10 +96,11 @@ repositories in one process (2026-09-16). Phase 4 is open; TODO.md tracks it.
      commands come from the user's own configuration file for that reason, and a per-repository
      file would have to be trusted first, the way git trusts a directory's ownership.
 
-   Two things are open and are to be settled before the third step: where the record of a run
-   nobody watched lives — `.git/` keeps it local and uncommitted, a dotted directory in the
-   tree keeps it readable — and whether a tick should run at all while no browser is connected,
-   which is the difference between a server and someone's laptop.
+   Both of the questions this left open answered themselves in the building. There is no
+   record of a run on disk, because there did not need to be one: the artefact is the record,
+   and a run whose figures outlive it has already written them down. And the tick runs whether
+   or not a browser is connected, since a check that waits for someone to look is not proactive
+   at all; what keeps a laptop quiet is that nothing is watched until a check names it.
 
 ## Layout
 

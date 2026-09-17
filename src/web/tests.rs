@@ -613,6 +613,98 @@ fn api_round_trip() {
     assert!(body.contains("\"c\""));
 }
 
+/// A check through the API: started, polled while it runs, and its figures read from the
+/// artefact on disk, which is there whether anything ran in this server or not.
+#[test]
+fn running_a_check_through_the_api() {
+    let dir = scratch_repo();
+    std::fs::write(
+        dir.path().join("junit.xml"),
+        r#"<testsuites tests="9" failures="1" errors="0" skipped="0"></testsuites>"#,
+    )
+    .unwrap();
+    // The config file lives inside .git, where `ls-files` cannot see it; scratch_session puts
+    // it there, so writing it before the server opens is how a check gets configured.
+    let config = dir.path().join(".git").join("codereview-config.toml");
+    std::fs::write(
+        &config,
+        r#"[[analysis]]
+name = "tests"
+run = "echo hello; exit 0"
+reads = "junit.xml"
+kind = "junit"
+"#,
+    )
+    .unwrap();
+
+    let (addr, token, _rt) = serve(&[dir.path()]);
+    let t = Some(token.as_str());
+
+    let (status, body) = request(addr, "GET", "/api/analysis", t, None);
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v[0]["name"], "tests");
+    assert!(v[0]["last"].is_null(), "nothing has run in this server");
+    assert_eq!(
+        v[0]["figures"]["tests"], 9,
+        "read from the artefact: {body}"
+    );
+    assert_eq!(v[0]["figures"]["failed"], 1);
+    assert_eq!(v[0]["watched"], false, "no repository opted in");
+
+    let (status, body) = request(
+        addr,
+        "POST",
+        "/api/analysis/run",
+        t,
+        Some(r#"{"name":"tests"}"#),
+    );
+    assert_eq!(status, 200, "{body}");
+
+    // It finishes in its own time; the page finds out by asking again.
+    let mut last = serde_json::Value::Null;
+    for _ in 0..200 {
+        let (_, body) = request(addr, "GET", "/api/analysis", t, None);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        last = v[0]["last"].clone();
+        if last["running"] == false {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(last["exit"], 0, "{last}");
+    assert_eq!(last["output"], "hello\n");
+
+    // A check nobody configured is a bad request, not a silent nothing.
+    let (status, body) = request(
+        addr,
+        "POST",
+        "/api/analysis/run",
+        t,
+        Some(r#"{"name":"nope"}"#),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no check called"), "{body}");
+}
+
+/// When a watched check is due. The middle condition is the one that matters: without it the
+/// floor between runs would be a schedule, and a repository nobody has touched for a month
+/// would be rebuilt every two minutes for ever.
+#[test]
+fn a_watched_check_runs_on_a_change_and_not_on_a_timer() {
+    let long = MIN_BETWEEN + Duration::from_secs(1);
+    // Nothing has ever run here: one settled repository is enough.
+    assert!(due(SETTLE, None, None, 7));
+    // Still being written in.
+    assert!(!due(SETTLE - Duration::from_millis(1), None, None, 7));
+    // It ran at this very fingerprint, however long ago: there is nothing new to build.
+    assert!(!due(SETTLE, Some(long), Some(7), 7));
+    // It changed since that run, but that run was moments ago.
+    assert!(!due(SETTLE, Some(Duration::from_secs(1)), Some(6), 7));
+    // Changed since the last run, and long enough after it.
+    assert!(due(SETTLE, Some(long), Some(6), 7));
+}
+
 /// Committing what has just been reviewed, and what a page is told when a hook refuses: its
 /// own words, which have to survive the trip out.
 #[test]

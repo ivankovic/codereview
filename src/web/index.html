@@ -113,6 +113,18 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .list .item { padding: 4px 8px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
 .list .item:hover, .list .item.selected { background: var(--cursor); }
 .list .item .mono { font-family: ui-monospace, monospace; }
+/* The checks, under the repositories: one row each, with what the last run said. */
+.checks { padding: 8px 12px 16px; }
+.checks .head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+.checks .head .path { font-weight: 600; }
+.checks .check { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; row-gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.checks .check .name { font-weight: 600; min-width: 6em; }
+.checks .check .verdict { font-size: 12px; }
+.checks .check.passed .verdict { color: var(--ins-fg); }
+.checks .check.failed .verdict { color: var(--del-fg); }
+.checks .check.running .verdict { color: var(--accent); }
+.checks .check .figures { font-size: 12px; }
+.checks .check .badge { font-size: 11px; }
 /* The status list: a repository a row, with the reasons to open it beside its name. */
 .list.status .item.repo { flex-wrap: wrap; row-gap: 4px; align-items: center; }
 .list.status .name { font-weight: 600; cursor: pointer; }
@@ -1270,8 +1282,59 @@ async function showStatus() {
       on(el, 'changed', e => { e.stopPropagation(); go('changed').catch(fail); });
       list.appendChild(el);
     });
+    await renderChecks(list);
     hint('Click a count to go straight to it.', 'Tap a count to go straight to it.');
   } catch (e) { fail(e); }
+}
+
+// The checks configured for this machine, as they stand in the repository the page is on: what
+// the last run did, and what its artefact says, which are two different things — a figure can
+// be there with no run behind it, left by the same command typed in a terminal.
+async function renderChecks(after) {
+  let checks;
+  try { checks = await api('/analysis'); } catch (e) { return fail(e); }
+  const section = document.createElement('div');
+  section.className = 'checks';
+  const repo = state.repos[state.repo];
+  if (!checks.length) {
+    section.innerHTML = `<div class="dim">No checks configured. <code>[[analysis]]</code> in the config file names one: a label, a command, and what it leaves behind.</div>`;
+    after.after(section);
+    return;
+  }
+  section.innerHTML = `<div class="head"><span class="path">checks</span><span class="dim">in ${esc(repo ? repo.name : 'this repository')}</span></div>`;
+  for (const c of checks) {
+    const last = c.last;
+    const figures = c.figures;
+    const state_ = last && last.running ? 'running' : last ? (last.exit === 0 ? 'passed' : 'failed') : '';
+    const bits = [];
+    if (figures && figures.tests !== null && figures.tests !== undefined) {
+      bits.push(`${figures.tests} tests`);
+      if (figures.failed) bits.push(`${figures.failed} failed`);
+      if (figures.skipped) bits.push(`${figures.skipped} skipped`);
+    }
+    if (figures && figures.coverage !== null && figures.coverage !== undefined) bits.push(figures.coverage.toFixed(1) + '% covered');
+    if (figures && figures.as_of) bits.push('as of ' + ago(figures.as_of));
+    const el = document.createElement('div');
+    el.className = 'check ' + state_;
+    el.innerHTML = `<span class="name">${esc(c.name)}</span>
+      <span class="verdict">${last && last.running ? 'running, ' + ago(last.started).replace(' ago', '') : last ? (last.exit === 0 ? 'passed' : 'failed (' + last.exit + ')') + ' in ' + last.seconds.toFixed(1) + 's, ' + ago(last.started) : 'not run here yet'}</span>
+      <span class="figures dim">${esc(bits.join(' · '))}</span>
+      ${c.watched ? '<span class="badge" title="this check also runs on its own when the repository settles">watched</span>' : ''}
+      <span class="spacer"></span>
+      <button class="small" data-act="run" ${last && last.running ? 'disabled' : ''} title="${esc(c.run)}">Run</button>
+      ${last && last.output ? '<button class="small" data-act="output">Output</button>' : ''}`;
+    on(el, 'run', () => api('/analysis/run', { body: { name: c.name } })
+      .then(() => { msg(c.name + ' started'); setTimeout(showStatus, 400); })
+      .catch(fail));
+    on(el, 'output', () => askText(c.name, '', 'Close', last.output));
+    section.appendChild(el);
+  }
+  after.after(section);
+  // While something is running, keep the page honest about it without asking the user to.
+  if (checks.some(c => c.last && c.last.running) && state.view === 'status') {
+    clearTimeout(state.checkTimer);
+    state.checkTimer = setTimeout(() => { if (state.view === 'status') showStatus(); }, 2000);
+  }
 }
 
 // ----- log and history ------------------------------------------------------------------------

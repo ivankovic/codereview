@@ -548,6 +548,82 @@ pub(super) async fn get_identifier(
     Ok(Json(IdentifierResponse { name }))
 }
 
+// ----- analysis ------------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub(super) struct CheckStatus {
+    name: String,
+    /// What it runs, so the page can say what a button is about to do.
+    run: String,
+    /// Whether this repository is one where it may also run unasked.
+    watched: bool,
+    /// The last run in this server's lifetime, in flight or finished; `None` if it has not
+    /// been run since the server started, which is not the same as never having run.
+    last: Option<CheckRun>,
+    /// What its artefact says, read now. This survives a restart because the file does.
+    figures: Option<Figures>,
+}
+
+/// Every configured check, with whatever is known about it: what the last run did, and what
+/// the artefact on disk says. The two are independent — a figure can be there with no run
+/// behind it, left by a `make check` in a terminal.
+pub(super) async fn get_analysis(state: Ctx) -> ApiResult<Vec<CheckStatus>> {
+    let checks = state.checks.clone();
+    let root = with_session(&state, |s| Ok(s.root().to_path_buf())).await?;
+    let list = with_session(&state, move |s| {
+        let runs = checks.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(s.config
+            .analysis
+            .iter()
+            .map(|c| CheckStatus {
+                name: c.name.clone(),
+                run: c.run.clone(),
+                watched: crate::analysis::watches(c, &root),
+                last: runs
+                    .get(&c.name)
+                    .map(|r| r.lock().unwrap_or_else(|e| e.into_inner()).clone()),
+                figures: crate::analysis::figures(c, &root),
+            })
+            .collect())
+    })
+    .await?;
+    Ok(Json(list))
+}
+
+#[derive(Deserialize)]
+pub(super) struct RunCheck {
+    name: String,
+}
+
+/// Starts one check. Returns at once: what it is doing arrives through `/analysis`.
+pub(super) async fn post_analysis_run(
+    state: Ctx,
+    Json(body): Json<RunCheck>,
+) -> ApiResult<CheckRun> {
+    let checks = state.checks.clone();
+    let run = with_session(&state, move |s| {
+        let check = s
+            .config
+            .analysis
+            .iter()
+            .find(|c| c.name == body.name)
+            .cloned()
+            .with_context(|| format!("no check called {:?}", body.name))?;
+        let mut runs = checks.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = runs.get(&check.name) {
+            if existing.lock().unwrap_or_else(|e| e.into_inner()).running {
+                anyhow::bail!(Conflict(format!("{} is already running", check.name)));
+            }
+        }
+        let started = crate::analysis::start(&check, s.root())?;
+        runs.insert(check.name.clone(), started.clone());
+        let run = started.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        Ok(run)
+    })
+    .await?;
+    Ok(Json(run))
+}
+
 // ----- committing ----------------------------------------------------------------------------
 
 #[derive(Deserialize)]

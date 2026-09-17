@@ -179,10 +179,40 @@ the Light or Dark scheme and highlights with Dark's syntax theme.
 
 The config file is `$CODEREVIEW_CONFIG`, else `$XDG_CONFIG_HOME/codereview/config.toml`, else
 `~/.config/codereview/config.toml`: `theme`, `layout` (`auto`, `side-by-side`, `unified`),
-`timestamps`, and `[agent]` with `kind`, `claude_command`, `claude_args`, `command` and
-`args`. Missing keys take defaults; a malformed file is an error. The terminal UI saves
+`timestamps`, `[agent]` with `kind`, `claude_command`, `claude_args`, `command` and
+`args`, and any number of `[[analysis]]` checks. Missing keys take defaults; a malformed file
+is an error. The terminal UI saves
 on Enter in the picker (`t`; `j`/`k` preview live, `Esc` restores) and on every layout change
 (`v`); the browser UI saves from its header dropdown. Both read the file when they start.
+
+## Analysis
+
+The checks a project already has, run from the tool. Each `[[analysis]]` entry in the config
+file has a `name`, a `run` command, optionally the artefact it leaves behind (`reads`, relative
+to the repository root) with how to read it (`kind`: `junit` or `lcov`), and `watch`, the
+repository roots where it may also run without being asked.
+
+A run is a process; its result is a file. The command runs through `sh -c` from the repository
+root with its error output folded into its ordinary output and no terminal at all, so anything
+that would stop to ask fails instead of waiting. What a run reports is an exit code, how long
+it took, and the last 64 KiB of what it printed, whole lines only; all of it is held in memory
+for as long as the server runs and no longer. What survives is the artefact: `junit.xml` read
+for tests, failures and errors together, and skipped — from the wrapping `<testsuites>` when
+there is one, otherwise the suites added up — and `lcov.info` read for `LF`/`LH` as a
+percentage of lines covered. Figures are read on request and carry the artefact's own
+modification time, so a figure with no run behind it, left by the same command typed in a
+terminal, is shown and dated rather than hidden. An artefact path that is absolute or climbs
+out of the repository is ignored.
+
+Starting a check that is already running is a conflict; naming one that is not configured is a
+bad request. A repository named in a check's `watch` is also watched: every five seconds its
+fingerprint is taken, and when it has held the same value for ten seconds the checks that named
+it run — but only if the repository has changed since that check last ran in it, so that the
+two minutes between runs is a floor and not a schedule. One check runs at a time across the
+whole server, however many repositories it serves. Nothing is watched unless a check names it:
+a command that starts itself in a repository that was cloned rather than written is code
+execution from a clone, so it is chosen one repository at a time, in the user's own config file
+and never from anything inside a repository.
 
 ## Highlighting
 
@@ -233,34 +263,35 @@ do it can do for anyone who signs in: there is no read-only mode, and no way to 
 repository without the agent, the comments or the commit. The server stops on SIGTERM as well as
 on Ctrl-C. The API mirrors the session: state, file with highlighting and change markers, blame,
 log, commit files, changes, a summary of every repository, diff with highlighting on both sides
-and anchored comments, comments and notes (list, add, toggle, edit, delete), commit, refresh and
-re-anchor, the theme list and config, a version, symbols (file symbols, definitions, occurrences,
-search, identifier at a position), and the agent (start, poll for events since a sequence number,
-prompt with text or a preset, answer a permission, cancel, stop, clear). The version is a
-fingerprint of everything a front end draws: the status of every path, the branch, and the size
-and modification time of both Markdown files and of one named file, hashed into a number that
-means nothing on its own. It costs one `git status`, and it moves whenever anything on screen
-would look different, whoever made the change; a status alone would not, since a file written
-twice is modified either way. The server writes the transcript itself, the same way the terminal
-does, and answers a poll with the entries that changed since the version the page names, each with
-the position it belongs at: a tool call is one entry, filled in as it runs, so entries are not
-append-only. It also sends what the turn is doing and what it has cost, already worded, so the
-page only draws. The page has a status view the terminal UI has not, and otherwise the same:
-explorer with tree and file, changes, log and history, diff, review, notes, and the agent tab;
-clicking a name in code offers its definition and usages in a side drawer. A comment on a whole
-file comes from the Comment button in the file header and is shown above the first line; one on a
-directory from the `+` on its row in the tree. A range is chosen with shift-click, or with the
-comment form's Extend range button followed by the line number at the other end, which keeps the
-text typed so far. Editing a comment or a note, and commenting on a file or a directory, opens a
-text sheet of the page's own rather than the browser's prompt. The file header's Zen button, and
-`z`, leave the file alone on the screen: the header, the tabs, the tree, that header itself and
-the footer go, and what stays is the code, its line numbers, its comment rows and one button at
-the bottom right to come back, which `z` and `Esc` also do. A message still shows the footer for
-as long as it has something to say, and a key that reaches for a field in the header comes out of
-zen first. Zen is a way of reading rather than a view, so it has no address, and leaving the file
-leaves it. `w`, and the same menu's Wrap lines, wraps long lines where the screen ends instead of
-scrolling sideways, with each continuation indented past the start of the code so a wrapped line
-still reads as one; the choice is kept in that browser's own storage.
+and anchored comments, comments and notes (list, add, toggle, edit, delete), commit, the
+configured checks and starting one, refresh and re-anchor, the theme list and config, a version,
+symbols (file symbols, definitions, occurrences, search, identifier at a position), and the agent
+(start, poll for events since a sequence number, prompt with text or a preset, answer a
+permission, cancel, stop, clear). The version is a fingerprint of everything a front end draws:
+the status of every path, the branch, and the size and modification time of both Markdown files
+and of one named file, hashed into a number that means nothing on its own. It costs one `git
+status`, and it moves whenever anything on screen would look different, whoever made the change; a
+status alone would not, since a file written twice is modified either way. The server writes the
+transcript itself, the same way the terminal does, and answers a poll with the entries that
+changed since the version the page names, each with the position it belongs at: a tool call is one
+entry, filled in as it runs, so entries are not append-only. It also sends what the turn is doing
+and what it has cost, already worded, so the page only draws. The page has a status view the
+terminal UI has not, and otherwise the same: explorer with tree and file, changes, log and
+history, diff, review, notes, and the agent tab; clicking a name in code offers its definition and
+usages in a side drawer. A comment on a whole file comes from the Comment button in the file
+header and is shown above the first line; one on a directory from the `+` on its row in the tree.
+A range is chosen with shift-click, or with the comment form's Extend range button followed by the
+line number at the other end, which keeps the text typed so far. Editing a comment or a note, and
+commenting on a file or a directory, opens a text sheet of the page's own rather than the
+browser's prompt. The file header's Zen button, and `z`, leave the file alone on the screen: the
+header, the tabs, the tree, that header itself and the footer go, and what stays is the code, its
+line numbers, its comment rows and one button at the bottom right to come back, which `z` and
+`Esc` also do. A message still shows the footer for as long as it has something to say, and a key
+that reaches for a field in the header comes out of zen first. Zen is a way of reading rather than
+a view, so it has no address, and leaving the file leaves it. `w`, and the same menu's Wrap lines,
+wraps long lines where the screen ends instead of scrolling sideways, with each continuation
+indented past the start of the code so a wrapped line still reads as one; the choice is kept in
+that browser's own storage.
 
 A review that ends in "this is good" ends in a commit, from the changes view: the working tree
 side stages everything it lists and commits that, the staged side commits the index as it
@@ -285,7 +316,10 @@ The status view is every served repository at once, a row each: its name, its br
 comments are pending, how many paths git calls changed, and the subject and age of its last
 commit. Each count is read afresh rather than taken from that repository's session, since a
 repository nobody is looking at is refreshed by nobody, and each is a way in — the name opens
-its tree, the counts open its review or its changes, switching repository on the way. A phone
+its tree, the counts open its review or its changes, switching repository on the way. Under
+them are the configured checks as they stand in the repository the page is on: what the last
+run in this server did, what the artefact says and how old it is, a button to run one, and its
+output when there is any. While one runs the view redraws itself every two seconds. A phone
 opening the page with no address of its own starts here rather than at the tree.
 
 Every view has an address in the URL fragment, which never reaches the server: the tree, a file
