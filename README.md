@@ -120,7 +120,8 @@ wrong passwords are answered more and more slowly. Binding a non-loopback addres
 password is refused outright.
 
 To reach the page from another machine, put nginx in front of it rather than opening the port:
-[docs/deploy.md](docs/deploy.md) has a TLS site on a custom domain, a systemd unit, and what to
+[docs/deploy.md](docs/deploy.md) has a TLS site on a custom domain, a systemd unit for serving
+someone else's machine and a user unit for serving your own, `make deploy`, and what to
 weigh first. Weigh it seriously: the tool is meant to change the repositories it serves —
 comments, notes, commits, and an agent running commands in them — so whoever can sign in can do
 all of that, and nothing turns it off.

@@ -67,6 +67,14 @@ Group=review
 WorkingDirectory=/srv/review
 EnvironmentFile=/etc/codereview.env
 Environment=CODEREVIEW_CONFIG=/srv/review/config.toml
+# The agent's own state — its configuration, its sessions — goes wherever HOME points, and
+# it has to land somewhere this unit may write. Pointing HOME inside /srv/review is what
+# lets `ProtectHome=yes` stay: /home is hidden and nothing here wants it.
+Environment=HOME=/srv/review
+# `[agent] kind = "auto"` decides which backend to use by looking for the claude binary on
+# PATH. A unit's PATH is not a login shell's, so name the directory it is really in, or the
+# agent quietly becomes the other backend instead of failing where you can see it.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/bin/codereview web \
     --host 127.0.0.1 --port 8765 --no-open \
     --public-url https://review.example.com \
@@ -74,7 +82,8 @@ ExecStart=/usr/local/bin/codereview web \
 Restart=on-failure
 RestartSec=2
 
-# codereview reads the repositories and writes REVIEW.md and NOTES.md inside them.
+# codereview reads the repositories and writes REVIEW.md and NOTES.md inside them, commits
+# them, and runs an agent in them.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
@@ -85,7 +94,6 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LockPersonality=yes
-MemoryDenyWriteExecute=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -94,16 +102,21 @@ WantedBy=multi-user.target
 Notes on that unit:
 
 - The service user must own the repositories, or git refuses to touch them. If it does not,
-  add them to `safe.directory` in that user's git config.
+  add them to `safe.directory` in that user's git config. It must also be able to commit:
+  give it a `user.name` and `user.email`, or every commit from the page fails.
 - `CODEREVIEW_CONFIG` matters here: the config file otherwise lives under the service user's
-  home, which `ProtectHome=yes` hides, and picking a colour scheme on the page saves it. Put
-  it somewhere in `ReadWritePaths`, as above.
-- `ProtectHome=yes` hides `/home`, so keep the repositories somewhere else, `/srv/review` here.
-  Every path in `ExecStart` is a repository, a directory inside one, or a directory of
-  checkouts, whose repositories are all opened. See the main README.
-- Drop `MemoryDenyWriteExecute` and loosen `ProtectHome` if you ever serve **with** the agent:
-  Claude Code runs on Node, which needs both.
-- `systemctl restart` works cleanly; the server shuts down on SIGTERM.
+  home, and picking a colour scheme on the page saves it. Put it somewhere in
+  `ReadWritePaths`, as above.
+- `ProtectHome=yes` hides `/home`, so keep the repositories somewhere else, `/srv/review` here,
+  and install the agent's binaries somewhere outside `/home` as well — a `claude` under
+  `~/.local/bin` or an nvm node is invisible to this unit however plainly it is there. Every
+  path in `ExecStart` is a repository, a directory inside one, or a directory of checkouts,
+  whose repositories are all opened. See the main README.
+- There is no `MemoryDenyWriteExecute` here, and there cannot be: the agent runs on Node,
+  which needs writable executable pages. The tool always serves the agent.
+- `systemctl restart` works cleanly; the server shuts down on SIGTERM. It also signs everyone
+  out: sessions are held in memory, so each restart costs every browser and phone another
+  sign-in.
 - What the hardening block protects is the **host**, not the repositories. Nothing there stops
   an agent from doing as it likes inside `ReadWritePaths`, and `RestrictAddressFamilies`
   leaves it full outbound network. Keep `/srv/review` to what you are willing to lose.
@@ -113,6 +126,71 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now codereview
 systemctl status codereview          # prints the URL to open
 ```
+
+### Or a user service, for your own repositories
+
+The unit above is for serving a machine's repositories to other people. Serving your own, on
+a box you already log into, a user unit fits better: the repositories stay in `$HOME` where
+git already trusts their ownership, the binary stays in `~/.cargo/bin`, and nothing needs
+root. `loginctl enable-linger <user>` once, so it runs without you logged in.
+
+`~/.config/systemd/user/codereview.service`:
+
+```ini
+[Unit]
+Description=codereview browser UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/src
+EnvironmentFile=/etc/codereview.env
+# A user manager's PATH has no ~/.local/bin, and `[agent] kind = "auto"` looks for the claude
+# binary on PATH. Without this the agent quietly becomes the other backend.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.cargo/bin/codereview web \
+    --host 127.0.0.1 --port 8765 --no-open \
+    --public-url https://review.example.com \
+    %h/src
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now codereview
+journalctl --user -u codereview -f
+```
+
+There is no sandbox in that one, on purpose. It serves an agent meant to run commands in
+those repositories and a button that commits them; `ProtectSystem` and its neighbours would
+guard the host against a service whose whole job is to change what is under `%h/src`, while
+breaking node in ways that read as bugs in the tool. What protects the machine is the
+password and the proxy in front of it.
+
+### Shipping a new build
+
+`make deploy` builds, installs and restarts the unit, then prints whether it came back and
+when the binary landed:
+
+```sh
+make deploy                                    # the user unit above
+make deploy SYSTEMCTL='sudo systemctl' DEPLOY_UNIT=codereview.service   # a system one
+```
+
+Both facts are printed because `codereview --version` cannot tell two builds of the same
+`0.0.x` apart: the way a deploy fails is that every command succeeds and the page keeps
+serving the old code.
+
+A `codereview.path` unit watching the binary would restart the service on its own whenever
+one is installed. Consider what that costs before adding it: a restart signs out every
+browser and phone, since sessions are held in memory, and it stops an agent turn in the
+middle. A deploy is better as a thing you decide than a thing that happens.
 
 ## The certificate
 
