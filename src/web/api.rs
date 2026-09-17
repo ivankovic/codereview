@@ -43,6 +43,35 @@ pub(super) async fn get_repos(State(state): State<AppState>) -> ApiResult<Vec<Re
     Ok(Json(list))
 }
 
+/// What a repository looks like when you open it. Costs a handful of git commands and a stat
+/// per file, so it is asked for when that view is drawn.
+pub(super) async fn get_overview(state: Ctx) -> ApiResult<crate::overview::Overview> {
+    Ok(Json(with_session(&state, |s| s.overview()).await?))
+}
+
+#[derive(Deserialize)]
+pub(super) struct LeansQuery {
+    #[serde(default = "default_leaning")]
+    most: usize,
+}
+
+fn default_leaning() -> usize {
+    8
+}
+
+/// Which files the rest of the tree leans on. Separate from the overview because the first
+/// one of these on a repository builds its symbol index, which is seconds of parsing, and the
+/// rest of the view should not wait for it.
+pub(super) async fn get_leans_on(
+    state: Ctx,
+    Query(q): Query<LeansQuery>,
+) -> ApiResult<Vec<crate::symbols::Reach>> {
+    let most = q.most.clamp(1, 50);
+    Ok(Json(
+        with_session(&state, move |s| Ok(s.leans_on(most))).await?,
+    ))
+}
+
 /// Every served repository from a distance, for the status view: the one page that answers
 /// "what needs me" without opening anything. Each repository costs two git commands and a
 /// file read, so this is asked for when that view is drawn and not on every refresh.

@@ -102,6 +102,16 @@ impl Commit {
     }
 }
 
+/// What was done to a repository over some stretch of time.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Activity {
+    pub commits: usize,
+    /// Everyone who made one, first seen first.
+    pub authors: Vec<String>,
+    pub added: usize,
+    pub removed: usize,
+}
+
 /// Working tree state of one path, from `git status --porcelain`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatusEntry {
@@ -205,6 +215,60 @@ impl Repo {
         files.sort();
         files.dedup();
         Ok(files)
+    }
+
+    /// What has been done to the repository lately: how many commits since `since` (anything
+    /// git's `--since` understands, `7.days` for one week), who made them, and how many lines
+    /// they added and removed. One command, because a page that shows all four should not pay
+    /// for four.
+    pub fn activity(&self, since: &str) -> Result<Activity> {
+        // \x01 heads each commit's record, so its author cannot be mistaken for a file whose
+        // name contains a tab, and `--no-renames` keeps a rename from counting as both.
+        let out = self.git(&[
+            "log",
+            &format!("--since={since}"),
+            "--numstat",
+            "--no-renames",
+            "--format=%x01%an",
+        ])?;
+        let mut activity = Activity::default();
+        for line in String::from_utf8_lossy(&out).lines() {
+            if let Some(author) = line.strip_prefix('\u{1}') {
+                activity.commits += 1;
+                let author = author.to_string();
+                if !activity.authors.contains(&author) {
+                    activity.authors.push(author);
+                }
+                continue;
+            }
+            // `added<TAB>removed<TAB>path`, with `-` for both on a binary file.
+            let mut fields = line.split('\t');
+            let (added, removed) = (fields.next(), fields.next());
+            activity.added += added.and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+            activity.removed += removed.and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+        }
+        Ok(activity)
+    }
+
+    /// How many tracked lines match `pattern`, as whole words, case sensitively. git's own
+    /// grep, so it searches what is tracked and skips what is ignored — which is the
+    /// difference between counting a project's `TODO`s and counting its dependencies'.
+    ///
+    /// An unmatched pattern is not an error: git grep says so with an exit code, and "none"
+    /// is the answer, not a failure.
+    pub fn grep_count(&self, pattern: &str) -> Result<usize> {
+        let output = git_command(&self.root)
+            .args(["grep", "-c", "-w", "-E", "--", pattern])
+            .output()
+            .context("cannot run git grep")?;
+        if !output.status.success() {
+            return Ok(0);
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|l| l.rsplit_once(':'))
+            .filter_map(|(_, n)| n.trim().parse::<usize>().ok())
+            .sum())
     }
 
     /// Working tree and index status, keyed by path.

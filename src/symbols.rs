@@ -10,7 +10,7 @@
 //! (or a `type` field, for a Rust `impl`). Occurrences are every leaf node whose kind contains
 //! `identifier`. Files without a grammar (Makefiles) get a small regex fallback.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -137,6 +137,38 @@ impl Names {
     }
 }
 
+/// Whether a name is this project's vocabulary or the language's.
+///
+/// Matching is by spelling and nothing else — there is no resolver here — so a file defining
+/// a method called `push` collects every `Vec::push` in the repository. What separates the
+/// two, without knowing a single language's standard library, is shape: `Session`,
+/// `parse_review` and `AnchorState` are a project's own words, while `push`, `open`, `text`
+/// and `len` are everybody's. A capital, a separator, or length is a coarse test, and it
+/// costs some genuinely local short names like `diff` — which are also the ones most likely
+/// to collide with everybody else's.
+fn worth_counting(name: &str) -> bool {
+    name.chars().count() >= 8
+        || name.chars().any(|c| c.is_uppercase())
+        || name.contains('_')
+        || name.contains('-')
+}
+
+/// How many files may define a name before it says nothing about who leans on whom. Three
+/// files with a `Config` between them are still telling you something; twenty with a `new`
+/// are not.
+const SHARED_NAME: usize = 3;
+
+/// How far one file's definitions reach into the rest of the tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Reach {
+    pub path: String,
+    /// Other files reached, with each name shared out among the files that define it. A
+    /// number to sort by and to compare with the others here; it means nothing on its own.
+    pub score: f64,
+    /// The names that carried it, widest first.
+    pub names: Vec<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct Index {
     root: PathBuf,
@@ -224,6 +256,108 @@ impl Index {
 
     pub fn symbol_count(&self) -> usize {
         self.files.values().map(|f| f.symbols.len()).sum()
+    }
+
+    /// How far each file's definitions reach: for every name a file defines, the number of
+    /// *other* files that mention it, divided by how many files define that name.
+    ///
+    /// Three things keep this from being a list of whoever spelled `new` most often, and the
+    /// first two were found by running it over a codebase whose answer was already known:
+    ///
+    /// - **Fields are not definitions here.** `path`, `name` and `text` are declared by
+    ///   twenty different structs and written in every file that touches one, which drowned
+    ///   everything else. A file is leaned on for what it *is* — its types, its functions,
+    ///   its modules — not for having a field with a popular name.
+    /// - **A name defined in more than [`SHARED_NAME`] files is nobody's.** `new`, `run` and
+    ///   `tests` say nothing about who depends on whom, and no amount of dividing rescues
+    ///   them; they are dropped outright.
+    /// - **A plain short word is everybody's**, since nothing here resolves a name to what it
+    ///   means: see [`worth_counting`].
+    ///
+    /// What is left is divided anyway: a name defined in one place and used in forty is that
+    /// file's reach, and one defined in three is worth a third to each.
+    ///
+    /// One pass over the symbols and one over the occurrences, rather than a query per name:
+    /// [`definitions`](Self::definitions) walks every file, and there are thousands of names.
+    /// Returns every file that reaches anything, highest first, each with the names that
+    /// carried it.
+    pub fn reach(&self) -> Vec<Reach> {
+        // Files as indices, so the sets below are sets of integers.
+        let paths: Vec<&String> = {
+            let mut p: Vec<&String> = self.files.keys().collect();
+            p.sort();
+            p
+        };
+        // Which files define each name, and which mention it.
+        let mut defined: HashMap<u32, Vec<usize>> = HashMap::new();
+        let mut mentioned: HashMap<u32, HashSet<usize>> = HashMap::new();
+        for (i, path) in paths.iter().enumerate() {
+            let entry = &self.files[*path];
+            for symbol in &entry.symbols {
+                if !worth_counting(&symbol.name) || symbol.kind == "field" {
+                    continue;
+                }
+                if let Some(id) = self.names.id_of(&symbol.name) {
+                    let files = defined.entry(id).or_default();
+                    if !files.contains(&i) {
+                        files.push(i);
+                    }
+                }
+            }
+            for occurrence in &entry.idents {
+                mentioned.entry(occurrence.name).or_default().insert(i);
+            }
+        }
+
+        // A name's weight, and where it was spent.
+        let mut scores: HashMap<usize, (f64, Vec<(String, usize)>)> = HashMap::new();
+        let by_id: HashMap<u32, &str> = self
+            .names
+            .ids
+            .iter()
+            .map(|(name, id)| (*id, name.as_str()))
+            .collect();
+        for (id, definers) in &defined {
+            if definers.len() > SHARED_NAME {
+                continue;
+            }
+            let Some(users) = mentioned.get(id) else {
+                continue;
+            };
+            let share = 1.0 / definers.len() as f64;
+            for &definer in definers {
+                let elsewhere = users.iter().filter(|&&u| u != definer).count();
+                if elsewhere == 0 {
+                    continue;
+                }
+                let entry = scores.entry(definer).or_insert((0.0, Vec::new()));
+                entry.0 += elsewhere as f64 * share;
+                if let Some(name) = by_id.get(id) {
+                    entry.1.push(((*name).to_string(), elsewhere));
+                }
+            }
+        }
+
+        let mut out: Vec<Reach> = scores
+            .into_iter()
+            .map(|(file, (score, mut names))| {
+                // The names that carried the file, widest first, and only a few of them.
+                names.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                names.truncate(4);
+                Reach {
+                    path: paths[file].to_string(),
+                    score,
+                    names: names.into_iter().map(|(name, _)| name).collect(),
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.path.cmp(&b.path))
+        });
+        out
     }
 
     /// Every definition named exactly `name`, by path then line.
@@ -713,6 +847,43 @@ pub fn word_at(line: &str, column: usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ranking behind "what does this codebase lean on": a file whose names are used
+    /// everywhere outranks one nobody calls, and a name everyone defines counts for little.
+    #[test]
+    fn reach_finds_what_the_rest_of_the_tree_leans_on() {
+        let dir = tempfile::tempdir().unwrap();
+        // `core` defines what the two others call.
+        std::fs::write(
+            dir.path().join("core.rs"),
+            "pub fn parse_review() {}\npub fn write_review() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("one.rs"),
+            "fn run() { parse_review(); write_review(); }\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("two.rs"), "fn run() { parse_review(); }\n").unwrap();
+        // A file nobody calls, defining a name everybody else also defines.
+        std::fs::write(dir.path().join("lonely.rs"), "fn run() {}\n").unwrap();
+        let files: Vec<String> = ["core.rs", "one.rs", "two.rs", "lonely.rs"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let index = Index::build(dir.path(), &files);
+
+        let reach = index.reach();
+        assert_eq!(reach[0].path, "core.rs", "{reach:?}");
+        assert!(
+            reach[0].names.contains(&"parse_review".to_string()),
+            "{reach:?}"
+        );
+        // `run` is defined in three files, so it is worth a third to each and cannot put a
+        // file that nothing calls above the one everything calls.
+        let lonely = reach.iter().find(|r| r.path == "lonely.rs");
+        assert!(lonely.is_none_or(|l| l.score < reach[0].score), "{reach:?}");
+    }
 
     #[test]
     fn rust_definitions_and_identifiers() {

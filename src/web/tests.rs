@@ -613,6 +613,63 @@ fn api_round_trip() {
     assert!(body.contains("\"c\""));
 }
 
+/// What a repository answers when it is opened, and the ranking behind "what does the rest of
+/// it lean on", which is a second request because the first one builds the symbol index.
+#[test]
+fn opening_a_repository_through_the_api() {
+    let dir = scratch_repo();
+    std::fs::write(
+        dir.path().join("README.md"),
+        "# scratch\n\nWhat this repository is for, in a sentence long enough to quote.\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("src/core.rs"),
+        "pub fn parse_review() {}\npub struct ReviewFile;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("src/main.rs"),
+        "fn main() { parse_review(); let _f = ReviewFile; }\n",
+    )
+    .unwrap();
+
+    let (addr, token, _rt) = serve(&[dir.path()]);
+    let t = Some(token.as_str());
+
+    let (status, body) = request(addr, "GET", "/api/overview", t, None);
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["readme"]["path"], "README.md");
+    assert!(
+        v["readme"]["opening"]
+            .as_str()
+            .unwrap()
+            .starts_with("What this repository is for"),
+        "the title is the name, not the description: {body}"
+    );
+    let entries: Vec<&str> = v["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["path"].as_str().unwrap())
+        .collect();
+    assert!(entries.contains(&"src/main.rs"), "{entries:?}");
+    assert_eq!(v["state"]["branch"], "main");
+    assert_eq!(v["state"]["commits"], 2, "{body}");
+    assert!(v["state"]["changed"].as_u64().unwrap() > 0);
+
+    let (status, body) = request(addr, "GET", "/api/leans_on?most=3", t, None);
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        v[0]["path"], "src/core.rs",
+        "main.rs uses what core.rs defines: {body}"
+    );
+    assert!(v.as_array().unwrap().len() <= 3, "{body}");
+}
+
 /// A check through the API: started, polled while it runs, and its figures read from the
 /// artefact on disk, which is there whether anything ran in this server or not.
 #[test]

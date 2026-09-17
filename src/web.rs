@@ -527,6 +527,8 @@ fn router(state: AppState) -> Router {
         .route("/repos", get(api::get_repos))
         .route("/state", get(api::get_state))
         .route("/status", get(api::get_status))
+        .route("/overview", get(api::get_overview))
+        .route("/leans_on", get(api::get_leans_on))
         .route("/file", get(api::get_file))
         .route("/blame", get(api::get_blame))
         .route("/log", get(api::get_log))

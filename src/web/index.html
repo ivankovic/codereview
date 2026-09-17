@@ -51,7 +51,8 @@ header .tabs button.active { border-bottom-color: var(--accent); color: var(--ac
 .dim { color: var(--dim); }
 main { flex: 1; display: flex; min-height: 0; }
 aside#tree { width: 280px; min-width: 180px; max-width: 50vw; overflow: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 6px 0; resize: horizontal; }
-body:not([data-view=explore]) #tree { display: none; }
+/* The tree is the explorer's, and the overview is where the explorer starts. */
+body:not([data-view=explore]):not([data-view=overview]) #tree { display: none; }
 aside#tree .row { padding: 1px 8px; cursor: pointer; white-space: nowrap; display: flex; gap: 4px; align-items: center; }
 aside#tree .row:hover { background: var(--cursor); }
 aside#tree .row.selected { background: var(--visual); }
@@ -113,6 +114,22 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .list .item { padding: 4px 8px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
 .list .item:hover, .list .item.selected { background: var(--cursor); }
 .list .item .mono { font-family: ui-monospace, monospace; }
+/* The overview: what a repository opens on. Sections of plain prose and short lists, since
+   the point is to be read rather than operated. */
+.overview { padding: 10px 14px 20px; overflow: auto; }
+.overview section { margin-bottom: 18px; }
+.overview h3 { margin: 0 0 6px; font-size: 13px; color: var(--accent); }
+.overview .readme { margin: 0; white-space: pre-wrap; font-family: inherit; font-size: 13px; max-width: 80ch; }
+.overview .item { display: flex; gap: 10px; align-items: baseline; padding: 3px 6px; cursor: pointer; border-radius: 4px; }
+.overview .item:hover { background: var(--cursor); }
+.overview .item .why { font-size: 12px; text-align: right; }
+.overview .figures { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 6px; }
+.overview .fig { font-size: 13px; }
+.overview .fig b { font-size: 15px; }
+.overview .fig.live { color: var(--accent); cursor: pointer; }
+.overview .fig.warn { color: var(--moved); cursor: pointer; }
+.overview .ins { color: var(--ins-fg); } .overview .del { color: var(--del-fg); }
+.overview .state { border-bottom: 1px solid var(--border); padding-bottom: 10px; }
 /* The checks, under the repositories: one row each, with what the last run said. */
 .checks { padding: 8px 12px 16px; }
 .checks .head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
@@ -258,10 +275,12 @@ body.zen.hasmsg footer { display: flex; }
   body.hasmsg footer #hint { display: none; }
   /* Log lives under Changes and Notes under Review here; both views keep their own address. */
   header .tabs button[data-view=log], header .tabs button[data-view=notes] { display: none; }
-  /* Explore is the tree, or the file, never both. */
+  /* Explore is the tree, or the file, never both; the overview is neither and takes it all. */
   aside#tree { width: auto; min-width: 0; max-width: none; flex: 1; border-right: none; }
   body[data-view=explore]:not(.showfile) #content { display: none; }
   body[data-view=explore].showfile #tree { display: none; }
+  body[data-view=overview] #tree { display: none; }
+  .overview .item .why { flex-basis: 100%; text-align: left; }
   /* Log: the commits, or one commit. */
   .split > div:first-child { max-width: none; border-right: none; }
   .split:not(.detail) > div:last-child { display: none; }
@@ -307,6 +326,7 @@ body.zen.hasmsg footer { display: flex; }
   <nav class="tabs">
     <button data-view="status">Status</button>
     <button data-view="explore" class="active">Explore</button>
+    <button data-view="overview" hidden></button>
     <button data-view="changes">Changes</button>
     <button data-view="log">Log</button>
     <button data-view="review">Review <span id="pending" class="badge"></span></button>
@@ -1239,6 +1259,100 @@ async function commitChanges(staged, files) {
   }
 }
 
+// ----- overview -------------------------------------------------------------------------------
+
+// What a repository opens on: what it says it is, where to start reading, what the rest of it
+// leans on, and how it is doing. Two requests, because the last of those needs the symbol
+// index and the first one on a cold repository is seconds of parsing — the page draws what it
+// has and fills that part in when it arrives.
+async function showOverview() {
+  setZen(false);
+  setTabs('overview');
+  navigate(routes.overview());
+  document.body.classList.remove('showfile');
+  const content = $('#content');
+  content.innerHTML = '<div class="center">reading the repository…</div>';
+  try {
+    const o = await api('/overview');
+    const repo = state.repos[state.repo];
+    const st = o.state;
+    const num = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
+    content.innerHTML = `<div class="panelhead"><span class="path">${esc(repo ? repo.name : 'repository')}</span>
+      <span class="dim mono">${esc(st.branch)}</span>
+      <span class="spacer"></span>
+      <button data-act="files">Files</button>
+      <button data-act="explain" title="have the agent write an orientation into NOTES.md">Explain this repository</button></div>
+      <div class="overview">
+        <section class="state">
+          <div class="figures">
+            <span class="fig"><b>${st.files}</b> files</span>
+            <span class="fig ${st.changed ? 'live' : ''}" data-act="changed"><b>${st.changed}</b> changed</span>
+            <span class="fig ${st.pending ? 'live' : ''}" data-act="pending"><b>${st.pending}</b> pending</span>
+            ${st.stale || st.moved ? `<span class="fig warn" data-act="pending" title="comments whose lines have moved or gone">${st.stale ? num(st.stale, 'stale') : ''}${st.stale && st.moved ? ', ' : ''}${st.moved ? num(st.moved, 'moved') : ''}</span>` : ''}
+            <span class="fig"><b>${st.commits}</b> commits this week</span>
+            ${st.commits ? `<span class="fig"><span class="ins">+${st.added}</span> <span class="del">−${st.removed}</span></span>` : ''}
+            ${st.todos ? `<span class="fig"><b>${st.todos}</b> TODO/FIXME</span>` : ''}
+          </div>
+          ${st.authors.length ? `<div class="dim">this week: ${esc(st.authors.join(', '))}</div>` : ''}
+          ${st.last ? `<div class="dim">last commit ${esc(st.last.subject)} · ${esc(st.last.author)} · ${ago(st.last.date)}</div>` : '<div class="dim">no commits yet</div>'}
+        </section>
+        ${o.readme ? `<section><h3>${esc(o.readme.path)}</h3><pre class="readme">${esc(o.readme.opening)}</pre></section>` : ''}
+        <section><h3>Start here</h3><div class="entries"></div></section>
+        <section><h3>What the rest of it leans on</h3><div class="leaning dim">reading the symbols…</div></section>
+        ${o.docs.length ? '<section><h3>Also written down</h3><div class="docs"></div></section>' : ''}
+        ${st.biggest.length ? '<section><h3>Biggest files</h3><div class="biggest"></div></section>' : ''}
+      </div>`;
+    on(content, 'files', showTree);
+    on(content, 'explain', explainRepository);
+    on(content, 'changed', () => showChanges());
+    on(content, 'pending', showReview);
+
+    const link = (into, path, why) => {
+      const el = document.createElement('div');
+      el.className = 'item';
+      el.innerHTML = `<span class="mono grow">${esc(path)}</span><span class="dim why">${esc(why)}</span>`;
+      el.onclick = () => openFile(path);
+      into.appendChild(el);
+    };
+    const entries = content.querySelector('.entries');
+    if (!o.entries.length) entries.innerHTML = '<div class="dim">Nothing this page knows the conventions for. The tree is a tap away.</div>';
+    for (const e of o.entries) link(entries, e.path, e.why);
+    const docs = content.querySelector('.docs');
+    if (docs) for (const d of o.docs) link(docs, d, '');
+    const big = content.querySelector('.biggest');
+    if (big) for (const b of st.biggest) link(big, b.path, (b.bytes / 1024).toFixed(0) + ' KiB');
+
+    // The slow half, once the rest is on screen.
+    try {
+      const leaning = await api('/leans_on');
+      const into = content.querySelector('.leaning');
+      if (!into) return;
+      into.className = 'leaning';
+      into.innerHTML = '';
+      if (!leaning.length) {
+        into.className = 'leaning dim';
+        into.textContent = 'Nothing here defines names the rest of the tree uses.';
+        return;
+      }
+      for (const l of leaning) link(into, l.path, l.names.join(', '));
+    } catch (e) {
+      const into = content.querySelector('.leaning');
+      if (into) into.textContent = 'could not read the symbols: ' + e.message;
+    }
+  } catch (e) { fail(e); }
+}
+
+// Prose beats any ranking, and the agent can write it. It goes into NOTES.md under General,
+// where it is a file anyone can read and the next reader finds it without asking again.
+function explainRepository() {
+  askAgent({
+    preset: 'about_code',
+    text: 'Orient someone who has never seen this repository. In a few short paragraphs: what it is for, '
+      + 'which files to read first and in what order, and anything about its shape that would surprise a newcomer. '
+      + 'Then write what you said into NOTES.md under the General heading, as notes, keeping whatever is already there.',
+  });
+}
+
 // ----- status ---------------------------------------------------------------------------------
 
 // How long ago, in the roughest terms that are still true. A review is not a stopwatch.
@@ -1284,7 +1398,7 @@ async function showStatus() {
         if (i !== state.repo) await switchRepo(i);
         if (what === 'pending') showReview();
         else if (what === 'changed') showChanges();
-        else showTree();
+        else showOverview();
       };
       el.querySelector('.name').onclick = () => go('tree').catch(fail);
       on(el, 'pending', e => { e.stopPropagation(); go('pending').catch(fail); });
@@ -1703,6 +1817,7 @@ function setTabs(view) {
 function rerenderCurrentView() {
   switch (state.view) {
     case 'status': return showStatus();
+    case 'overview': return showOverview();
     case 'changes': return showChanges(!!state.changesStaged);
     case 'log': return showLog(state.log && state.log.path, true);
     case 'review': return showReview();
@@ -1720,7 +1835,10 @@ document.querySelectorAll('header .tabs button').forEach(b => b.onclick = () => 
   // A tab always starts its view afresh, rather than redrawing what was there. Explore
   // goes back to the open file, or, tapped again on a phone while a file is up, to the tree.
   if (v === 'explore') {
-    if (!state.file || (phone() && state.view === 'explore' && document.body.classList.contains('showfile'))) showTree();
+    // Nothing open: the overview. A file open: that file. On a phone, tapped again while the
+    // file is up: the tree, which is how you get to the next one.
+    if (phone() && state.view === 'explore' && document.body.classList.contains('showfile')) showTree();
+    else if (!state.file) showOverview();
     else { setTabs('explore'); navigate(routes.file(state.file.path)); renderFile(); }
   }
   if (v === 'status') showStatus();
@@ -1880,7 +1998,8 @@ $('#theme').onchange = async e => {
 // never reaches the server. With several repositories, `/r<N>` leads.
 const routes = {
   prefix: () => state.repo ? `#/r${state.repo}` : '#',
-  tree: () => routes.prefix() + '/',
+  overview: () => routes.prefix() + '/',
+  tree: () => routes.prefix() + '/tree',
   file: (path, line) => routes.prefix() + '/file/' + encodeURIComponent(path).replace(/%2F/g, '/') + (line ? '?line=' + line : ''),
   changes: staged => routes.prefix() + '/changes' + (staged ? '?staged=1' : ''),
   log: (path, commit) => routes.prefix() + '/log' + (path || commit ? '?' + qs({ path, commit }) : ''),
@@ -1919,17 +2038,13 @@ async function route() {
   if (path === '/log') return showLog(params.path || null, true, params.commit || null);
   if (path === '/diff' && params.path) return showDiff(params, [{ path: params.path, old_path: params.old_path || null, status: params.status || 'M' }], 0);
   if (path === '/status') return showStatus();
+  if (path === '/tree') return showTree();
   if (path === '/review') return showReview();
   if (path === '/notes') return showNotes();
   if (path === '/agent') return showAgent();
-  // A phone opening the app with nothing to go on starts at the status, which is what a small
-  // screen is good at; a wide one starts at the tree, where there is room for it.
-  if (!path || path === '/') {
-    if (phone() && !state.file) return showStatus();
-  }
-  setTabs('explore');
-  document.body.classList.remove('showfile');
-  renderFile();
+  // What is left is the repository itself, which opens on what it is and how it is doing
+  // rather than on a file tree that says neither.
+  return showOverview();
 }
 window.addEventListener('hashchange', () => { if (location.hash !== currentRoute) route().catch(fail); });
 

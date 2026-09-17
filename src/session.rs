@@ -237,6 +237,21 @@ impl Session {
         self.repo.root()
     }
 
+    /// What a repository looks like when you open it: where to start reading, and how it is
+    /// doing. Everything that costs a git command or a file read; the ranking that needs the
+    /// symbol index is [`Self::leans_on`], so that one cold index does not hold up the rest.
+    pub fn overview(&self) -> Result<crate::overview::Overview> {
+        crate::overview::of(self)
+    }
+
+    /// Which files the rest of the tree leans on, highest first. Builds the symbol index on
+    /// first use, which is seconds on a large repository and nothing afterwards.
+    pub fn leans_on(&mut self, most: usize) -> Vec<crate::symbols::Reach> {
+        let mut reach = self.index().reach();
+        reach.truncate(most);
+        reach
+    }
+
     /// What one repository looks like from a distance: enough for a list of every repository
     /// being served, without opening any of them. Read from git and from `REVIEW.md` rather
     /// than from this session's own copies, because the session a page is not looking at is

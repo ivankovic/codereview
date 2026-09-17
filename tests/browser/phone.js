@@ -55,14 +55,46 @@ const hittable = sel => {
 
   ok('the phone stylesheet applies', await page.evaluate(() => matchMedia('(max-width: 700px), (max-height: 500px)').matches));
   ok('a finger, not a pointer', await page.evaluate(() => matchMedia('(hover: none)').matches));
-  ok('a phone with no address starts at the status', page.url().endsWith('#/status'));
+  ok('a repository opens on its overview', page.url().endsWith('#/'), page.url());
+  ok('with what it says it is', await page.evaluate(() => {
+    const el = document.querySelector('.overview .readme');
+    return !!el && el.textContent.length > 40;
+  }));
+  // Scrolled to before it is asked about: a section below the fold is not a broken section,
+  // and `hittable` rightly refuses anything off screen.
+  const inView = async sel => {
+    await page.evaluate(s => document.querySelector(s)?.scrollIntoView({ block: 'center' }), sel);
+    return page.evaluate(hittable, sel);
+  };
+  ok('where to start reading', await inView('.overview .entries .item'));
+  ok('and how it is doing', await page.evaluate(() => {
+    const figs = [...document.querySelectorAll('.overview .fig')].map(f => f.textContent);
+    return figs.length >= 4 ? true : 'only ' + JSON.stringify(figs);
+  }));
+  // The slow half arrives on its own, after the symbol index is built.
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.overview .leaning');
+    return el && !el.textContent.includes('reading the symbols');
+  }, { timeout: 30000 });
+  ok('what the tree leans on, once the symbols are read', await inView('.overview .leaning .item'));
+
+  // The status view is still every repository at once, one tap away.
+  await page.click('header .tabs [data-view=status]');
+  await page.waitForSelector('.list.status .item.repo');
   ok('every repository is listed', await page.evaluate(() => !!document.querySelector('.list.status .item.repo')));
+  await page.click('header .tabs [data-view=explore]');
+  await page.waitForSelector('.overview');
 
   // The header's own menu: search, colour scheme, refresh, sign out, help. It hangs below the
   // header, which is why an `overflow: hidden` on the header once made it untappable.
   await page.click('#more');
   ok('the header menu opens', await page.evaluate(hittable, '#refresh'));
   await page.click('#refresh');
+
+  // Files is one tap from the overview, and the tree is what it opens.
+  await page.click('#content .panelhead [data-act=files]');
+  await page.waitForSelector('#tree .row');
+  ok('Files opens the tree', await page.evaluate(() => location.hash.endsWith('/tree')), await page.evaluate(() => location.hash));
 
   // The file, by its address, and its own header.
   await page.goto(url.split('#')[0] + '#/file/long.rs', { waitUntil: 'networkidle0' });

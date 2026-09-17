@@ -30,6 +30,7 @@ mod fakes;
 pub mod highlight;
 pub mod markdown;
 pub mod notes;
+pub mod overview;
 pub mod prompts;
 pub mod repo;
 pub mod review;

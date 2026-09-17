@@ -262,7 +262,8 @@ the URL printed at start-up, and an HTTPS one marks the cookie `Secure`. Everyth
 do it can do for anyone who signs in: there is no read-only mode, and no way to serve the
 repository without the agent, the comments or the commit. The server stops on SIGTERM as well as
 on Ctrl-C. The API mirrors the session: state, file with highlighting and change markers, blame,
-log, commit files, changes, a summary of every repository, diff with highlighting on both sides
+log, commit files, changes, a summary of every repository, a repository's overview and what it
+leans on, diff with highlighting on both sides
 and anchored comments, comments and notes (list, add, toggle, edit, delete), commit, the
 configured checks and starting one, refresh and re-anchor, the theme list and config, a version,
 symbols (file symbols, definitions, occurrences, search, identifier at a position), and the agent
@@ -312,6 +313,26 @@ keeps the scroll where it was, says nothing in the footer, and leaves the agent'
 agent's own poll. A write of the page's own moves the version too, so the next reading after one
 becomes the baseline instead of redrawing what the page has just drawn.
 
+A repository opens on its overview, not on its file tree. It is what the project says it is —
+the opening paragraphs of its README, with the title line dropped, since that is the name the
+page is already showing — then where to start reading, what the rest of the tree leans on, the
+other documents beside the code, and the biggest files. Above all of it: the branch, how many
+files and how many are changed, how many comments are pending and how many of those have lost
+the lines they were left on, the commits of the last week with who made them and how many lines
+they added and removed, and the count of `TODO`, `FIXME`, `HACK` and `XXX` in tracked files.
+Every count is a way in, and every path opens. The tree is one button away, at its own address.
+
+Where to start reading is convention and nothing cleverer: `src/main.rs`, `src/lib.rs`,
+`__main__.py`, `package.json`, `main.go`, a `Makefile`, an `index.html`, each with a few words
+saying why. What the tree leans on is computed, and asked for separately because the first one
+builds the symbol index: for every name a file defines, how many *other* files mention it,
+divided by how many files define that name. Fields are left out, names of one or two characters
+are left out, a name defined in more than three files is dropped as nobody's, and a plain short
+word is dropped as everybody's — nothing here resolves a name to what it means, so a file
+defining a method called `push` would otherwise collect every `push` in the repository. What is
+left is a project's own vocabulary, and the ranking is shown with the names that earned it, so
+a reader can see why a file is there and disbelieve it.
+
 The status view is every served repository at once, a row each: its name, its branch, how many
 comments are pending, how many paths git calls changed, and the subject and age of its last
 commit. Each count is read afresh rather than taken from that repository's session, since a
@@ -322,7 +343,8 @@ run in this server did, what the artefact says and how old it is, a button to ru
 output when there is any. While one runs the view redraws itself every two seconds. A phone
 opening the page with no address of its own starts here rather than at the tree.
 
-Every view has an address in the URL fragment, which never reaches the server: the tree, a file
+Every view has an address in the URL fragment, which never reaches the server: the overview at
+the root, the tree, a file
 with an optional line, the working tree or staged changes, the log with an optional path and
 commit, a diff with its parameters, and the review, notes and agent tabs, prefixed with the
 repository's number when it is not the first. The browser's back returns to the previous view, a

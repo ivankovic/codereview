@@ -5,6 +5,10 @@ Markdown files anyone can read. Built for codebases that change quickly, typical
 much of the code is written with AI assistance: comments survive the churn by remembering the
 line they were left on and finding it again after edits.
 
+- **Open a repository** on what it is rather than on a file tree: what its README says, where
+  to start reading, which files the rest of the tree leans on — computed from the symbols, not
+  declared anywhere — and how it is doing, down to how many review comments have lost the lines
+  they were left on.
 - **Explore** the working tree with syntax highlighting, change markers against HEAD, and blame.
 - **Comment** on a line or a range. Comments go to `REVIEW.md`, pending or completed, in the
   format [nvim-review](https://codeberg.org/ivankovic/nvim-review) uses, so both tools can share

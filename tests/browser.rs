@@ -67,6 +67,27 @@ fn the_phone_layout_works_in_a_real_browser() {
         })
         .collect();
     std::fs::write(repo.join("long.rs"), long).unwrap();
+    // And something for the overview to have an opinion about: prose, an entry point by
+    // convention, and one file whose names the others use.
+    std::fs::write(
+        repo.join("README.md"),
+        "# scratch\n\nA repository the browser test looks at. It exists so that the overview \
+         has a README to quote, an entry point to find, and a module for the rest of it to \
+         lean on.\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("Makefile"), "all:\n\techo hi\n").unwrap();
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    std::fs::write(
+        repo.join("src/core.rs"),
+        "pub fn parse_review() {}\npub fn write_review() {}\npub struct ReviewFile;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join("src/main.rs"),
+        "fn main() { parse_review(); write_review(); let _r = ReviewFile; }\n",
+    )
+    .unwrap();
 
     let server = Command::new(env!("CARGO_BIN_EXE_codereview"))
         .args([

@@ -112,6 +112,8 @@ src/session.rs     one repository for the UIs: files, comments, notes, config, s
 src/repo.rs        git: root, status, file list, log, file log, blob at revision, commit files
 src/review.rs      REVIEW.md: Comment model, parse, write
 src/notes.rs       NOTES.md: Note model, parse, write
+src/overview.rs    what a repository looks like when you open it: its own words, where to
+                   start, and how it is doing
 src/anchor.rs      re-anchoring comments after edits
 src/diff.rs        codediff wrapper, per-line paint model shared by both UIs
 src/highlight.rs   syntect highlighting into UI-independent segments
