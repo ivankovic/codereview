@@ -35,6 +35,17 @@ grammar for (Makefiles, for one) fall back to its plain-text line diff.
   stale. `codereview reanchor` rewrites `REVIEW.md` with the new line numbers.
 - **The browser UI is a local server**, bound to loopback with a per-session token, serving a
   single embedded page. No build step, no node toolchain. Same approach as `codediff-web`.
+- **The server keeps no state of its own.** What is worth remembering goes in `REVIEW.md` and
+  `NOTES.md`, where any editor can read it; what is merely where you are — the open file, the
+  tab, the scroll, a review half worked through — belongs to the browser that is looking, in
+  its address and its own storage. This is why there is no database, no per-user store, and no
+  progress tracking on the server: two people reviewing the same repository share the files and
+  nothing else, and a restart costs nobody anything they had not already written down. An agent
+  transcript is the one thing the server builds and holds, because both front ends have to draw
+  the same one, and it is deliberately not kept past a restart. Signing in is the price of that
+  rule and is paid knowingly: a session lives in memory, so a restart ends every one of them.
+  Keeping them would mean either credentials on disk or a cookie the server can no longer take
+  back, and neither is worth a re-typed password after a deploy.
 - **AGPL-3.0-or-later**, like codediff.
 
 ## Phases
@@ -52,9 +63,8 @@ repositories in one process (2026-09-16). Phase 4 is open; TODO.md tracks it.
    file notes; per-file history with diffs; repository log with per-commit file lists and
    diffs; working-tree and staged diffs; review panel listing every comment with jump-to.
 3. **Web UI**: the same views over a JSON API, in one embedded page.
-4. **Later**: blame-to-commit jumps; comment
-   threads (replies) if the Markdown format can carry them without hurting readability;
-   multi-file review sessions ("review this commit range") with progress tracking.
+4. **Later**: blame-to-commit jumps; comment threads (replies) if the Markdown format can
+   carry them without hurting readability.
 
 ## Layout
 

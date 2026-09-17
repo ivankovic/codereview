@@ -188,9 +188,9 @@ Both facts are printed because `codereview --version` cannot tell two builds of 
 serving the old code.
 
 A `codereview.path` unit watching the binary would restart the service on its own whenever
-one is installed. Consider what that costs before adding it: a restart signs out every
-browser and phone, since sessions are held in memory, and it stops an agent turn in the
-middle. A deploy is better as a thing you decide than a thing that happens.
+one is installed. Don't. Sessions are held in memory by design (see PLAN.md), so every
+restart signs out every browser and phone, and it stops an agent turn in the middle. A
+deploy is a thing to decide, not a thing that happens while someone is reading.
 
 ## The certificate
 
