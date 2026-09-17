@@ -46,6 +46,14 @@ grammar for (Makefiles, for one) fall back to its plain-text line diff.
   rule and is paid knowingly: a session lives in memory, so a restart ends every one of them.
   Keeping them would mean either credentials on disk or a cookie the server can no longer take
   back, and neither is worth a re-typed password after a deploy.
+- **A run is a process; its result is a file.** The tool can run the checks a project already
+  has — tests, coverage, a linter, `make check` — and show what came back. Nothing about a run
+  is kept in the server: while it runs it is live progress, the same deliberate exception the
+  agent transcript is, and what outlives it is whatever the command itself wrote, a
+  `junit.xml` or an `lcov.info` or an exit code. The page reads those when asked. So two
+  browsers see the same numbers because they are looking at the same files, a restart loses
+  nothing that was not already on disk, and the rule above survives a feature that would
+  otherwise have needed a database.
 - **AGPL-3.0-or-later**, like codediff.
 
 ## Phases
@@ -65,6 +73,32 @@ repositories in one process (2026-09-16). Phase 4 is open; TODO.md tracks it.
 3. **Web UI**: the same views over a JSON API, in one embedded page.
 4. **Later**: blame-to-commit jumps; comment threads (replies) if the Markdown format can
    carry them without hurting readability.
+5. **Analysis** (`src/analysis.rs`, used by both front ends): the checks a project already has,
+   run from the tool and read back as figures worth a glance. A `[[analysis]]` entry in the
+   configuration names one — a label, a command, and optionally the artefact it leaves behind
+   and how to read it. Three steps, in this order, because the first two need no new state and
+   the third is where the question gets hard:
+   - **On demand.** A button per entry, in the status view and beside a diff. The command runs
+     from the repository root, its output streams to the page the way an agent turn does, and
+     what comes back is an exit code, a duration and the tail of what it printed. That much is
+     useful for anything: `make check`, a linter, a type checker, a build.
+   - **Numbers.** Where an entry names an artefact, it is parsed for what belongs on a
+     dashboard: `junit.xml` for tests run, failed and skipped, `lcov.info` for line coverage.
+     Read on request and never stored, and shown with the artefact's own modification time, so
+     a stale number says how stale it is instead of pretending.
+   - **On its own.** A tick per repository computes the same fingerprint the page polls; when
+     it settles — a few seconds of quiet, so that saving a file in an editor is not a build —
+     the entries marked for it run. One run per repository at a time, a global limit well
+     below the number of repositories served, and a floor on how often any one may be built.
+     Being run without anyone asking is opt-in per repository: a command that runs on its own,
+     in a repository that was cloned rather than written, is code execution from a clone. The
+     commands come from the user's own configuration file for that reason, and a per-repository
+     file would have to be trusted first, the way git trusts a directory's ownership.
+
+   Two things are open and are to be settled before the third step: where the record of a run
+   nobody watched lives — `.git/` keeps it local and uncommitted, a dotted directory in the
+   tree keeps it readable — and whether a tick should run at all while no browser is connected,
+   which is the difference between a server and someone's laptop.
 
 ## Layout
 

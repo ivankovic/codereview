@@ -8,6 +8,22 @@
 - Author name override in the config file (today it is always git's user.name).
 - Comment replies, if a readable Markdown form for them exists.
 
+## The phone is cramped (2026-09-17)
+
+Measured on a 360x640 screen: the file's own toolbar costs 110-150 pixels, more than the
+header, the tab bar and the footer together, because its seven buttons are about 560 pixels
+of content on a 360 pixel screen.
+
+- Put all of the file toolbar except Comment behind one `...` button, the way the header's
+  tools already work. One row instead of three.
+- Drop the footer's hint on a phone; keep the row only while there is a message, which the
+  `hasmsg` rule from zen already does.
+- Hide the header on scroll down and bring it back on scroll up, as phone browsers do.
+- Soft-wrap long lines, optionally, with a hanging indent: reading a 200-column file on a
+  phone means scrolling sideways through every line of it.
+- Six tabs is too many at 12 pixels. Log folds into Changes as a switch, Notes into Review as
+  one, which leaves room for a status view without a seventh.
+
 ## From the code health review (2026-09-16)
 
 All of it is done except one, deliberately:
