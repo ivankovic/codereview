@@ -19,6 +19,21 @@ use crate::review::{Comment, ReviewFile, now_timestamp};
 use crate::symbols::{Index, Location, Symbol};
 use crate::theme::Theme;
 
+/// One repository as a list of them shows it: where it is, what is waiting, and what was done
+/// to it last. Every field is what a front end draws; nothing here is a handle on anything.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Summary {
+    pub name: String,
+    pub root: String,
+    pub branch: String,
+    /// Comments under `Pending` in `REVIEW.md`.
+    pub pending: usize,
+    /// Paths git calls changed, staged and unstaged and untracked together.
+    pub changed: usize,
+    /// `None` in a repository with no commits yet.
+    pub last: Option<Commit>,
+}
+
 /// Which two versions of a file a diff compares.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -220,6 +235,24 @@ impl Session {
 
     pub fn root(&self) -> &Path {
         self.repo.root()
+    }
+
+    /// What one repository looks like from a distance: enough for a list of every repository
+    /// being served, without opening any of them. Read from git and from `REVIEW.md` rather
+    /// than from this session's own copies, because the session a page is not looking at is
+    /// refreshed by nobody and its counts would be as old as the last time someone visited.
+    /// Two git commands and a file, so a page may ask for all of them at once.
+    pub fn summary(&self) -> Result<Summary> {
+        let status = self.repo.status()?;
+        let review = ReviewFile::load(self.repo.root())?;
+        Ok(Summary {
+            name: self.name(),
+            root: self.root().display().to_string(),
+            branch: self.repo.head_label(),
+            pending: review.pending_count(),
+            changed: status.len(),
+            last: self.repo.commit("HEAD").ok(),
+        })
     }
 
     /// A fingerprint of everything a front end draws: the status of every path in the working

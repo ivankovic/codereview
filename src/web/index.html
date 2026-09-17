@@ -113,6 +113,14 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .list .item { padding: 4px 8px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
 .list .item:hover, .list .item.selected { background: var(--cursor); }
 .list .item .mono { font-family: ui-monospace, monospace; }
+/* The status list: a repository a row, with the reasons to open it beside its name. */
+.list.status .item.repo { flex-wrap: wrap; row-gap: 4px; align-items: center; }
+.list.status .name { font-weight: 600; cursor: pointer; }
+.list.status .name:hover { color: var(--accent); }
+.list.status .counts { display: flex; gap: 6px; align-items: center; }
+.list.status .counts button[disabled] { opacity: .45; }
+.list.status .counts button.has { border-color: var(--accent); color: var(--accent); }
+.list.status .last { flex-basis: 100%; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list .item .grow { flex: 1; }
 .split { display: flex; height: 100%; min-height: 0; }
 .split > div { flex: 1; overflow: auto; min-width: 0; }
@@ -276,6 +284,7 @@ body.zen.hasmsg footer { display: flex; }
   <select id="repo" title="which repository the page shows" hidden></select>
   <span id="branch" class="dim"></span>
   <nav class="tabs">
+    <button data-view="status">Status</button>
     <button data-view="explore" class="active">Explore</button>
     <button data-view="changes">Changes</button>
     <button data-view="log">Log</button>
@@ -1209,6 +1218,62 @@ async function commitChanges(staged, files) {
   }
 }
 
+// ----- status ---------------------------------------------------------------------------------
+
+// How long ago, in the roughest terms that are still true. A review is not a stopwatch.
+function ago(iso) {
+  const then = Date.parse(iso);
+  if (!then) return '';
+  const secs = Math.max(0, (Date.now() - then) / 1000);
+  for (const [limit, size, name] of [[90, 1, 'second'], [5400, 60, 'minute'], [172800, 3600, 'hour'], [Infinity, 86400, 'day']]) {
+    if (secs < limit) {
+      const n = Math.round(secs / size);
+      return `${n} ${name}${n === 1 ? '' : 's'} ago`;
+    }
+  }
+}
+
+// Every repository at once, which is the one screen a phone is better at than a laptop: what
+// is waiting, where, without opening anything. Each row is three answers to "why would I open
+// this", and each of them opens it at the right place.
+async function showStatus() {
+  setTabs('status');
+  navigate(routes.view('status'));
+  const content = $('#content');
+  content.innerHTML = `<div class="panelhead"><span class="path">status</span><span class="dim">reading…</span></div>`;
+  try {
+    const repos = await api('/status');
+    content.innerHTML = `<div class="panelhead"><span class="path">status</span>
+      <span class="dim">${repos.length} ${repos.length === 1 ? 'repository' : 'repositories'}</span>
+      <span class="spacer"></span><button data-act="again" title="read every repository again">Refresh</button></div><div class="list status"></div>`;
+    on(content, 'again', showStatus);
+    const list = content.querySelector('.list');
+    repos.forEach((r, i) => {
+      const el = document.createElement('div');
+      el.className = 'item repo';
+      el.innerHTML = `<span class="grow name">${esc(r.name)}</span>
+        <span class="counts">
+          <button class="small ${r.pending ? 'has' : ''}" data-act="pending" ${r.pending ? '' : 'disabled'}>${r.pending} pending</button>
+          <button class="small ${r.changed ? 'has' : ''}" data-act="changed" ${r.changed ? '' : 'disabled'}>${r.changed} changed</button>
+          <span class="branch mono dim">${esc(r.branch)}</span>
+        </span>
+        <span class="last dim">${r.last ? esc(r.last.subject) + ' · ' + ago(r.last.date) : 'no commits yet'}</span>`;
+      // Every way in switches to that repository first; the page holds one at a time.
+      const go = async what => {
+        if (i !== state.repo) await switchRepo(i);
+        if (what === 'pending') showReview();
+        else if (what === 'changed') showChanges();
+        else showTree();
+      };
+      el.querySelector('.name').onclick = () => go('tree').catch(fail);
+      on(el, 'pending', e => { e.stopPropagation(); go('pending').catch(fail); });
+      on(el, 'changed', e => { e.stopPropagation(); go('changed').catch(fail); });
+      list.appendChild(el);
+    });
+    hint('Click a count to go straight to it.', 'Tap a count to go straight to it.');
+  } catch (e) { fail(e); }
+}
+
 // ----- log and history ------------------------------------------------------------------------
 
 // `commit` names one to open, as a page address does; without it the first is shown beside
@@ -1565,6 +1630,7 @@ function setTabs(view) {
 // have their own list, which drifted.
 function rerenderCurrentView() {
   switch (state.view) {
+    case 'status': return showStatus();
     case 'changes': return showChanges(!!state.changesStaged);
     case 'log': return showLog(state.log && state.log.path, true);
     case 'review': return showReview();
@@ -1585,6 +1651,7 @@ document.querySelectorAll('header .tabs button').forEach(b => b.onclick = () => 
     if (!state.file || (phone() && state.view === 'explore' && document.body.classList.contains('showfile'))) showTree();
     else { setTabs('explore'); navigate(routes.file(state.file.path)); renderFile(); }
   }
+  if (v === 'status') showStatus();
   if (v === 'changes') showChanges();
   if (v === 'log') showLog(null, true);
   if (v === 'review') showReview();
@@ -1778,9 +1845,15 @@ async function route() {
   if (path === '/changes') return showChanges(params.staged === '1');
   if (path === '/log') return showLog(params.path || null, true, params.commit || null);
   if (path === '/diff' && params.path) return showDiff(params, [{ path: params.path, old_path: params.old_path || null, status: params.status || 'M' }], 0);
+  if (path === '/status') return showStatus();
   if (path === '/review') return showReview();
   if (path === '/notes') return showNotes();
   if (path === '/agent') return showAgent();
+  // A phone opening the app with nothing to go on starts at the status, which is what a small
+  // screen is good at; a wide one starts at the tree, where there is room for it.
+  if (!path || path === '/') {
+    if (phone() && !state.file) return showStatus();
+  }
   setTabs('explore');
   document.body.classList.remove('showfile');
   renderFile();

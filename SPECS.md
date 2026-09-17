@@ -220,33 +220,32 @@ Signing in works one of two ways. With `CODEREVIEW_PASSWORD_HASH` set, to an Arg
 `codereview hash-password`, the page is a sign-in form and the password is checked against it;
 wrong answers are counted and sign-in then stops answering for a doubling delay, capped at a
 quarter of an hour, which a success clears. Otherwise a token opens a session: `CODEREVIEW_TOKEN`
-when set, which keeps one URL across restarts and must be at least sixteen characters, otherwise
-a fresh random one for the run. Setting both is an error, and a non-loopback address without a
+when set, which keeps one URL across restarts and must be at least sixteen characters, otherwise a
+fresh random one for the run. Setting both is an error, and a non-loopback address without a
 password is refused. Either way the browser ends up with a session: a cookie holding an
-identifier, and a second secret embedded in the page which every API request must send as a
-bearer header, never the cookie, so a page on another site cannot act as the signed-in browser. A
-session lasts a week, at most thirty-two are kept, and signing out ends one. Secrets are compared
-without stopping at the first wrong byte. Every response forbids storing, referrers and framing,
-and restricts the page to its own origin. `--public-url` names what a reverse proxy publishes: it
-is the URL printed at start-up, and an HTTPS one marks the cookie `Secure`. Everything the tool
-can do it can do for anyone who signs in: there is no read-only mode, and no way to serve the
+identifier, and a second secret embedded in the page which every API request must send as a bearer
+header, never the cookie, so a page on another site cannot act as the signed-in browser. A session
+lasts a week, at most thirty-two are kept, and signing out ends one. Secrets are compared without
+stopping at the first wrong byte. Every response forbids storing, referrers and framing, and
+restricts the page to its own origin. `--public-url` names what a reverse proxy publishes: it is
+the URL printed at start-up, and an HTTPS one marks the cookie `Secure`. Everything the tool can
+do it can do for anyone who signs in: there is no read-only mode, and no way to serve the
 repository without the agent, the comments or the commit. The server stops on SIGTERM as well as
-on Ctrl-C. The API mirrors the session: state, file with highlighting
-and change markers, blame, log, commit files, changes, diff with highlighting on both sides and
-anchored comments, comments and notes (list, add, toggle, edit, delete), commit, refresh and
-re-anchor,
-the theme list and config, a version, symbols (file symbols, definitions, occurrences, search,
-identifier at a position), and the agent (start, poll for events since a sequence number, prompt
-with text or a preset, answer a permission, cancel, stop, clear). The version is a fingerprint of
-everything a front end draws: the status of every path, the branch, and the size and modification
-time of both Markdown files and of one named file, hashed into a number that means nothing on its
-own. It costs one `git status`, and it moves whenever anything on screen would look different,
-whoever made the change; a status alone would not, since a file written twice is modified either
-way. The server writes the transcript itself, the
-same way the terminal does, and answers a poll with the entries that changed since the version
-the page names, each with the position it belongs at: a tool call is one entry, filled in as it
-runs, so entries are not append-only. It also sends what the turn is doing and what it has cost,
-already worded, so the page only draws. The page has the same views as the terminal UI:
+on Ctrl-C. The API mirrors the session: state, file with highlighting and change markers, blame,
+log, commit files, changes, a summary of every repository, diff with highlighting on both sides
+and anchored comments, comments and notes (list, add, toggle, edit, delete), commit, refresh and
+re-anchor, the theme list and config, a version, symbols (file symbols, definitions, occurrences,
+search, identifier at a position), and the agent (start, poll for events since a sequence number,
+prompt with text or a preset, answer a permission, cancel, stop, clear). The version is a
+fingerprint of everything a front end draws: the status of every path, the branch, and the size
+and modification time of both Markdown files and of one named file, hashed into a number that
+means nothing on its own. It costs one `git status`, and it moves whenever anything on screen
+would look different, whoever made the change; a status alone would not, since a file written
+twice is modified either way. The server writes the transcript itself, the same way the terminal
+does, and answers a poll with the entries that changed since the version the page names, each with
+the position it belongs at: a tool call is one entry, filled in as it runs, so entries are not
+append-only. It also sends what the turn is doing and what it has cost, already worded, so the
+page only draws. The page has a status view the terminal UI has not, and otherwise the same:
 explorer with tree and file, changes, log and history, diff, review, notes, and the agent tab;
 clicking a name in code offers its definition and usages in a side drawer. A comment on a whole
 file comes from the Comment button in the file header and is shown above the first line; one on a
@@ -257,11 +256,11 @@ text sheet of the page's own rather than the browser's prompt. The file header's
 `z`, leave the file alone on the screen: the header, the tabs, the tree, that header itself and
 the footer go, and what stays is the code, its line numbers, its comment rows and one button at
 the bottom right to come back, which `z` and `Esc` also do. A message still shows the footer for
-as long as it has something to say, and a key that reaches for a field in the header comes out
-of zen first. Zen is a way of reading rather than a view, so it has no address, and leaving the
-file leaves it. `w`, and the same menu's Wrap lines, wraps long lines where the screen ends
-instead of scrolling sideways, with each continuation indented past the start of the code so a
-wrapped line still reads as one; the choice is kept in that browser's own storage.
+as long as it has something to say, and a key that reaches for a field in the header comes out of
+zen first. Zen is a way of reading rather than a view, so it has no address, and leaving the file
+leaves it. `w`, and the same menu's Wrap lines, wraps long lines where the screen ends instead of
+scrolling sideways, with each continuation indented past the start of the code so a wrapped line
+still reads as one; the choice is kept in that browser's own storage.
 
 A review that ends in "this is good" ends in a commit, from the changes view: the working tree
 side stages everything it lists and commits that, the staged side commits the index as it
@@ -281,6 +280,13 @@ while the text sheet is up and while the menu over a name is open, and a refresh
 keeps the scroll where it was, says nothing in the footer, and leaves the agent's own view to the
 agent's own poll. A write of the page's own moves the version too, so the next reading after one
 becomes the baseline instead of redrawing what the page has just drawn.
+
+The status view is every served repository at once, a row each: its name, its branch, how many
+comments are pending, how many paths git calls changed, and the subject and age of its last
+commit. Each count is read afresh rather than taken from that repository's session, since a
+repository nobody is looking at is refreshed by nobody, and each is a way in — the name opens
+its tree, the counts open its review or its changes, switching repository on the way. A phone
+opening the page with no address of its own starts here rather than at the tree.
 
 Every view has an address in the URL fragment, which never reaches the server: the tree, a file
 with an optional line, the working tree or staged changes, the log with an optional path and

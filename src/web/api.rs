@@ -43,6 +43,25 @@ pub(super) async fn get_repos(State(state): State<AppState>) -> ApiResult<Vec<Re
     Ok(Json(list))
 }
 
+/// Every served repository from a distance, for the status view: the one page that answers
+/// "what needs me" without opening anything. Each repository costs two git commands and a
+/// file read, so this is asked for when that view is drawn and not on every refresh.
+pub(super) async fn get_status(State(state): State<AppState>) -> ApiResult<Vec<Summary>> {
+    let repos = state.repos.clone();
+    let list = tokio::task::spawn_blocking(move || {
+        repos
+            .iter()
+            .map(|r| {
+                let s = r.session.lock().unwrap_or_else(|e| e.into_inner());
+                s.summary()
+            })
+            .collect::<Result<Vec<_>>>()
+    })
+    .await
+    .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))??;
+    Ok(Json(list))
+}
+
 #[derive(Serialize)]
 pub(super) struct StateResponse {
     name: String,

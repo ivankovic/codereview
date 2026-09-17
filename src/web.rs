@@ -26,7 +26,7 @@ use crate::highlight::Segment;
 use crate::notes::Note;
 use crate::repo::{BlameLine, ChangedFile, Commit, FileStatus};
 use crate::review::Comment;
-use crate::session::{DiffTarget, FileView, Session};
+use crate::session::{DiffTarget, FileView, Session, Summary};
 use crate::symbols::{Location, Symbol};
 use crate::transcript::{Entry, Transcript};
 
@@ -386,6 +386,7 @@ fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/repos", get(api::get_repos))
         .route("/state", get(api::get_state))
+        .route("/status", get(api::get_status))
         .route("/file", get(api::get_file))
         .route("/blame", get(api::get_blame))
         .route("/log", get(api::get_log))

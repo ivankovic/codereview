@@ -689,6 +689,23 @@ fn several_repositories() {
     assert_eq!(v[1]["pending"], 1);
     let b_root = b.path().canonicalize().unwrap().display().to_string();
     assert_eq!(v[1]["root"], b_root);
+    // The status view asks about every repository at once, not just the one on screen. Its
+    // counts are read fresh, so the repository nobody has opened is as current as the other.
+    let (status, body) = request(addr, "GET", "/api/status", t, None);
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 2);
+    assert_eq!(v[0]["pending"], 0);
+    assert_eq!(
+        v[1]["pending"], 1,
+        "read from REVIEW.md, not from a stale session"
+    );
+    // scratch_repo leaves a.rs edited and new.py untracked; b has REVIEW.md on top of those.
+    assert_eq!(v[0]["changed"], 2, "{body}");
+    assert_eq!(v[1]["changed"], 3, "{body}");
+    assert_eq!(v[0]["last"]["subject"], "second");
+    assert_eq!(v[0]["branch"], "main");
+
     // The selector reaches the second repository; the default is the first.
     let (_, body) = request(addr, "GET", "/api/state?repo=1", t, None);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
