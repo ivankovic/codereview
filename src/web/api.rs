@@ -45,8 +45,6 @@ pub(super) async fn get_repos(State(state): State<AppState>) -> ApiResult<Vec<Re
 
 #[derive(Serialize)]
 pub(super) struct StateResponse {
-    /// Whether this server runs an agent at all; the page hides every way to one when not.
-    agent: bool,
     name: String,
     root: String,
     branch: String,
@@ -64,7 +62,6 @@ pub(super) struct StateResponse {
 }
 
 pub(super) async fn get_state(state: Ctx) -> ApiResult<StateResponse> {
-    let agent = state.agent;
     let r = with_session(&state, move |s| {
         let status = s
             .files
@@ -72,7 +69,6 @@ pub(super) async fn get_state(state: Ctx) -> ApiResult<StateResponse> {
             .filter_map(|p| s.status_letter(p).map(|c| (p.clone(), c)))
             .collect();
         Ok(StateResponse {
-            agent,
             name: s.name(),
             root: s.root().display().to_string(),
             branch: s.repo.head_label(),
@@ -533,7 +529,53 @@ pub(super) async fn get_identifier(
     Ok(Json(IdentifierResponse { name }))
 }
 
+// ----- committing ----------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(super) struct NewCommit {
+    message: String,
+    /// Stage the whole working tree first, which is what the working-tree view shows. Without
+    /// it only what is already staged is committed, which is what the staged view shows.
+    #[serde(default)]
+    all: bool,
+}
+
+/// Commits what the reviewer has just read. Hooks run; a refusal from one comes back as the
+/// error, so the page can show what the hook said.
+pub(super) async fn post_commit(state: Ctx, Json(body): Json<NewCommit>) -> ApiResult<Commit> {
+    if body.message.trim().is_empty() {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "a commit needs a message".into(),
+        ));
+    }
+    let r = with_session(&state, move |s| s.commit(&body.message, body.all)).await?;
+    Ok(Json(r))
+}
+
 // ----- maintenance ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(super) struct VersionQuery {
+    /// The file the page has open, if any: a second write to a file already counted as
+    /// modified does not move the status, but it does move the file's own stamp.
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(super) struct Version {
+    version: String,
+}
+
+/// What the page polls to notice that the repository changed under it, whoever changed it.
+/// The number means nothing on its own; a page compares it with the last one it saw.
+pub(super) async fn get_version(state: Ctx, Query(q): Query<VersionQuery>) -> ApiResult<Version> {
+    let version = with_session(&state, move |s| s.fingerprint(q.path.as_deref())).await?;
+    Ok(Json(Version {
+        version: version.to_string(),
+    }))
+}
 
 pub(super) async fn post_refresh(state: Ctx) -> ApiResult<Ok_> {
     with_session(&state, |s| s.refresh()).await?;

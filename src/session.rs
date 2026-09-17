@@ -3,6 +3,8 @@
 //! something goes through here, so the TUI and the web page cannot drift apart in behaviour.
 
 use std::collections::BTreeMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -218,6 +220,63 @@ impl Session {
 
     pub fn root(&self) -> &Path {
         self.repo.root()
+    }
+
+    /// A fingerprint of everything a front end draws: the status of every path in the working
+    /// tree, the branch, and the size and modification time of the two Markdown files and of
+    /// one file being looked at. It moves whenever anything on screen would look different,
+    /// whoever made the change, and costs one `git status`, so a page can ask for it every few
+    /// seconds and re-read only when it has moved. It is a number to compare and nothing else:
+    /// it says that something changed, never what.
+    pub fn fingerprint(&self, open: Option<&str>) -> Result<u64> {
+        let mut hasher = DefaultHasher::new();
+        for (path, entry) in self.repo.status()? {
+            path.hash(&mut hasher);
+            entry.staged.map(FileStatus::letter).hash(&mut hasher);
+            entry.unstaged.map(FileStatus::letter).hash(&mut hasher);
+            entry.old_path.hash(&mut hasher);
+        }
+        // A branch switch can leave the status untouched while every file reads differently.
+        self.repo.head_label().hash(&mut hasher);
+        // Status only says *that* a file is modified, so a file written twice looks the same
+        // twice over. The three files a page has on screen are stamped as well.
+        let root = self.repo.root();
+        stamp(&root.join(crate::review::FILE_NAME)).hash(&mut hasher);
+        stamp(&root.join(crate::notes::FILE_NAME)).hash(&mut hasher);
+        // Resolved rather than joined: `open` comes from a request.
+        if let Some(path) = open {
+            if let Some(full) = self.repo.working_path(path)? {
+                stamp(&full).hash(&mut hasher);
+            }
+        }
+        Ok(hasher.finish())
+    }
+
+    /// Commits the change under review: the whole working tree when `all`, otherwise whatever
+    /// is already staged. The session is re-read afterwards, since every file's status has
+    /// just changed, so a caller can draw the result without asking for a refresh.
+    pub fn commit(&mut self, message: &str, all: bool) -> Result<Commit> {
+        let status = self.repo.status()?;
+        let ready = status.values().any(|e| {
+            if all {
+                e.staged.is_some() || e.unstaged.is_some()
+            } else {
+                e.staged.is_some()
+            }
+        });
+        if !ready {
+            bail!(
+                "{}",
+                if all {
+                    "nothing to commit: the working tree is clean"
+                } else {
+                    "nothing is staged to commit"
+                }
+            );
+        }
+        let commit = self.repo.create_commit(message, all)?;
+        self.refresh()?;
+        Ok(commit)
     }
 
     /// Re-reads the file list, status and both Markdown files from disk.
@@ -491,6 +550,17 @@ impl Session {
 /// The repositories directly below `dir` (child directories with a `.git` entry, hidden ones
 /// left out), sorted by name; what `codereview` opens when run in a directory of checkouts
 /// such as `~/src`.
+/// Size and modification time, or nothing at all when the file is not there. Two files that
+/// differ in neither are taken to be unchanged, which is what every build tool assumes.
+fn stamp(path: &Path) -> Option<(u64, Option<std::time::Duration>)> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+    Some((meta.len(), modified))
+}
+
 pub fn repos_below(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -619,6 +689,100 @@ pub(crate) mod tests {
         assert!(!target.label().is_empty());
         assert_eq!(short(&forty), forty);
         assert_eq!(short(&"a".repeat(40)), "aaaaaaa");
+    }
+
+    /// The end of a review that went well. `scratch_repo` leaves `a.rs` edited and `new.py`
+    /// untracked, which is the shape the working-tree view shows.
+    #[test]
+    fn a_review_can_end_in_a_commit() {
+        let dir = scratch_repo();
+        let mut session = scratch_session(dir.path());
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        let commits = || {
+            Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(["rev-list", "--count", "HEAD"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap()
+        };
+        let before = commits();
+
+        // A message is required, and git is never run without one.
+        assert!(session.commit("   ", true).is_err());
+        // Nothing is staged yet, and the staged view commits only what is.
+        let refused = session.commit("too early", false).unwrap_err().to_string();
+        assert!(refused.contains("nothing is staged"), "{refused}");
+        assert_eq!(commits(), before, "nothing was committed");
+
+        // The staged view: one file staged by hand is all that goes in.
+        git(&["add", "new.py"]);
+        let made = session.commit("add the script", false).unwrap();
+        assert_eq!(made.subject, "add the script");
+        assert!(
+            session.status.contains_key("a.rs"),
+            "the unstaged edit is still waiting: {:?}",
+            session.status
+        );
+        // The session was re-read, so the file it just committed is tracked now.
+        assert!(session.files.contains(&"new.py".to_string()));
+
+        // The working-tree view: everything that is left.
+        let made = session.commit("finish the review", true).unwrap();
+        assert_eq!(made.subject, "finish the review");
+        assert!(session.status.is_empty(), "{:?}", session.status);
+        assert_ne!(commits(), before);
+
+        // And now there is nothing to commit at all.
+        let refused = session.commit("again", true).unwrap_err().to_string();
+        assert!(refused.contains("nothing to commit"), "{refused}");
+    }
+
+    /// A page polls the fingerprint to notice a change it did not make itself, so it has to
+    /// move for every kind of change and stand still when there was none.
+    #[test]
+    fn the_fingerprint_moves_only_when_something_did() {
+        let dir = scratch_repo();
+        let mut session = scratch_session(dir.path());
+        let taken = |s: &Session| s.fingerprint(Some("a.rs")).unwrap();
+
+        let first = taken(&session);
+        assert_eq!(first, taken(&session), "nothing happened in between");
+
+        // The open file is written again. Its status was already `modified`, so this moves
+        // nothing but the file's own stamp: the case a status alone would miss.
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "fn a() {}\nfn b() {}\nfn c() {}\nfn d() {}\n",
+        )
+        .unwrap();
+        let edited = taken(&session);
+        assert_ne!(first, edited, "the open file was written");
+
+        // A file nobody is looking at: this one the status carries.
+        std::fs::write(dir.path().join("fresh.txt"), "hello\n").unwrap();
+        let added = taken(&session);
+        assert_ne!(edited, added, "a file appeared");
+
+        // And a comment, which rewrites REVIEW.md.
+        session
+            .add_comment("a.rs", Some((2, 2)), "why b?", None)
+            .unwrap();
+        assert_ne!(added, taken(&session), "REVIEW.md was written");
+
+        // A path from a request cannot lead out of the repository.
+        assert!(session.fingerprint(Some("../outside")).is_err());
+        // One that is simply not there is no error: the file may have just been deleted.
+        assert!(session.fingerprint(Some("gone.rs")).is_ok());
     }
 
     #[test]

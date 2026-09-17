@@ -125,10 +125,22 @@ footer .msg.error { color: var(--del-fg); }
 #help h3 { margin: 8px 0 4px; color: var(--accent); }
 #help table td { padding: 1px 12px 1px 0; }
 #help kbd { font-family: ui-monospace, monospace; background: var(--bg); padding: 0 4px; border-radius: 3px; border: 1px solid var(--border); }
+/* Zen: the file and nothing else. Everything that frames it goes, and one button stays to
+   bring it back, at the bottom right, clear of the code, of the drawer's own close button and
+   of a phone's notch; the tab bar that usually sits there is gone in zen too. The comment rows
+   stay: they are part of the file, not of the frame. */
+#zen { position: fixed; z-index: 8; opacity: .4; box-shadow: 0 2px 8px rgba(0,0,0,.3);
+  bottom: calc(10px + env(safe-area-inset-bottom)); right: calc(12px + env(safe-area-inset-right)); }
+#zen:hover, #zen:focus { opacity: 1; }
+body.zen header, body.zen footer, body.zen #tree, body.zen #content .panelhead { display: none; }
+/* Without this an error would have nowhere to appear; it goes again with the message. */
+body.zen.hasmsg footer { display: flex; }
 /* The text editor: what used to be the browser's prompt(). A sheet on a phone. */
 #editor { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
 #editor .sheet { background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; padding: 12px 16px; width: min(560px, calc(100vw - 32px)); }
 #editor .title { font-weight: 600; margin-bottom: 6px; }
+/* What a sheet is about, when a title is not enough: the files a commit would take. */
+#editor .note { color: var(--dim); font-size: 12px; white-space: pre-wrap; margin-bottom: 8px; max-height: 30vh; overflow: auto; }
 #editor textarea { min-height: 5em; }
 .hunknav { display: contents; }
 #popover { position: fixed; z-index: 20; max-width: 90vw; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
@@ -154,9 +166,6 @@ footer .msg.error { color: var(--del-fg); }
 #agent .progress { color: var(--accent); font-size: 12px; }
 #agent .permission pre.perm { margin: 6px 0 0; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
   border-radius: 4px; max-height: 12em; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
-/* A server started with --no-agent offers no way to one. */
-body.no-agent [data-view=agent], body.no-agent [data-act=ask], body.no-agent [data-act=askall],
-body.no-agent [data-act=review] { display: none !important; }
 #agent .usage { color: var(--dim); font-size: 12px; }
 #agent .compose { border-top: 1px solid var(--border); padding: 8px 12px; background: var(--panel); }
 #agent .compose textarea { min-height: 2.6em; }
@@ -177,12 +186,14 @@ body.no-agent [data-act=review] { display: none !important; }
   table.code td.n { min-width: 44px; padding: 0 8px; }
   #drawer .list .item { min-height: 48px; }
   aside#tree { resize: none; }
+  #zen { opacity: .75; min-height: 44px; }
 }
 /* A phone, upright or on its side: one header row, the tabs along the bottom edge, and one
    pane at a time. */
 @media (max-width: 700px), (max-height: 500px) {
   .phone { display: revert; }
   body { padding-bottom: calc(46px + env(safe-area-inset-bottom)); }
+  body.zen { padding-bottom: 0; }
   header { padding: 6px 10px; gap: 8px; }
   header #branch { max-width: 40vw; }
   header #more { padding: 4px 10px; font-size: 16px; line-height: 1; }
@@ -213,7 +224,20 @@ body.no-agent [data-act=review] { display: none !important; }
   .hunknav button { min-width: 44px; min-height: 44px; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
   footer { gap: 8px; }
   footer span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #editor { align-items: flex-end; }
+  /* Writing a comment takes over the screen: a text box and four buttons do not fit between
+     two lines of code on a phone, and the keyboard covers what little room there is. */
+  tr.form td { padding: 0; }
+  tr.form .form { position: fixed; top: 0; left: 0; right: 0; width: auto; height: var(--vvh, 100%);
+    z-index: 30; background: var(--panel);
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  tr.form .form .where { font-size: 13px; word-break: break-all; }
+  tr.form .form textarea { flex: 1; }
+  tr.form .form .row { margin-top: 0; flex-wrap: wrap; }
+  tr.form .form .row button { flex: 1 1 auto; min-height: 44px; white-space: nowrap; }
+  /* Extending a range needs the code back, so the form waits, hidden, for the second line. */
+  tr.form.picking .form { display: none; }
+  #editor { align-items: flex-end; height: var(--vvh, 100%); }
   #editor .sheet { width: 100%; border-radius: 10px 10px 0 0; border-bottom: none; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
   #popover { max-width: calc(100vw - 16px); }
   #agent .transcript { padding: 10px 12px; }
@@ -250,8 +274,9 @@ body.no-agent [data-act=review] { display: none !important; }
   <section id="content"><div class="center">Pick a file from the tree.</div></section>
   <aside id="drawer" hidden></aside>
 </main>
+<button id="zen" hidden title="leave zen mode (z, or Esc)">✕ zen</button>
 <div id="popover" hidden></div>
-<div id="editor" hidden><div class="sheet"><div class="title"></div><textarea></textarea>
+<div id="editor" hidden><div class="sheet"><div class="title"></div><div class="note" hidden></div><textarea></textarea>
   <div class="form"><div class="row"><button class="primary" data-act="ok">Save</button><button data-act="cancel">Cancel</button></div></div></div></div>
 <footer><span id="hint" class="dim"></span><span id="msg" class="msg"></span></footer>
 <div id="help" hidden></div>
@@ -261,9 +286,13 @@ const TOKEN = __TOKEN__;
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// The fingerprint of the repository the page last drew, for the watcher at the bottom of the
+// script; `null` means "take the next reading as the baseline".
+const watch = { version: null, busy: false, every: 2000 };
+
 const state = {
-  repo: 0, repos: [], agentEnabled: true,
-  view: 'explore', files: [],
+  repo: 0, repos: [],
+  view: 'explore', files: [], zen: false,
   // path -> the one-letter change mark, which is not the same shape as a ChangedFile's
   // `status`, a word.
   statusLetters: {}, pending: 0, hasCommits: true,
@@ -309,6 +338,9 @@ async function api(path, opts = {}) {
     init.method = 'POST';
   }
   // Every call names the repository the page is on; the server defaults to the first.
+  // A write of the page's own moves the fingerprint as well, and the page draws the result
+  // itself, so the watcher takes its next reading as a new baseline rather than redrawing.
+  if (init.method === 'POST') watch.version = null;
   const res = await fetch('/api' + path + (path.includes('?') ? '&' : '?') + 'repo=' + state.repo, init);
   let data = null;
   try { data = await res.json(); } catch (e) { /* no body */ }
@@ -320,8 +352,14 @@ function msg(text, isError = false) {
   const el = $('#msg');
   el.textContent = text || '';
   el.className = 'msg' + (isError ? ' error' : '');
+  // Zen hides the footer, so the class brings it back for as long as there is a message.
+  document.body.classList.toggle('hasmsg', !!text);
   // Clear it later, unless something newer has been said in the meantime.
-  if (text) setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 6000);
+  if (text) setTimeout(() => {
+    if (el.textContent !== text) return;
+    el.textContent = '';
+    document.body.classList.remove('hasmsg');
+  }, 6000);
 }
 function fail(e) { console.error(e); msg(e.message || String(e), true); }
 
@@ -329,15 +367,24 @@ function fail(e) { console.error(e); msg(e.message || String(e), true); }
 const TOUCH = window.matchMedia && window.matchMedia('(hover: none)').matches;
 // A narrow or a short screen shows one pane at a time; the stylesheet draws the same line.
 const phone = () => window.matchMedia && window.matchMedia('(max-width: 700px), (max-height: 500px)').matches;
+// A phone's keyboard shrinks the visual viewport but leaves the layout one alone, so a panel
+// fixed to the window would hide its buttons behind the keyboard. `--vvh` is what is left.
+if (window.visualViewport) {
+  const measure = () => document.documentElement.style.setProperty('--vvh', window.visualViewport.height + 'px');
+  window.visualViewport.addEventListener('resize', measure);
+  measure();
+}
 function hint(mouse, touch) { $('#hint').textContent = TOUCH ? (touch === undefined ? mouse : touch) : mouse; }
 
 // Asks for a piece of text in a sheet of the page's own, with a real textarea: the
 // browser's prompt() is one line and looks foreign on a phone. Resolves to null on cancel.
-function askText(title, initial = '', okLabel = 'Save') {
+function askText(title, initial = '', okLabel = 'Save', note = '') {
   return new Promise(resolve => {
     const ed = $('#editor');
     const ta = ed.querySelector('textarea');
     ed.querySelector('.title').textContent = title;
+    ed.querySelector('.note').textContent = note;
+    ed.querySelector('.note').hidden = !note;
     ed.querySelector('[data-act=ok]').textContent = okLabel;
     ta.value = initial;
     ed.hidden = false;
@@ -394,8 +441,6 @@ function applyTheme(t) {
 
 async function loadState() {
   const s = await api('/state');
-  state.agentEnabled = s.agent !== false;
-  document.body.classList.toggle('no-agent', !state.agentEnabled);
   state.files = s.files;
   state.theme = s.theme;
   const sel = $('#theme');
@@ -428,6 +473,7 @@ async function loadRepos() {
 /// repository's events.
 async function switchRepo(index) {
   state.repo = index;
+  watch.version = null;
   state.file = null; state.diff = null; state.log = null; state.allComments = undefined;
   state.tree.collapsed = new Set(); state.tree.filter = '';
   Object.assign(agent, { version: 0, entries: [], permission: null, running: false, name: '', status: 'not started',
@@ -610,12 +656,13 @@ function commentForm(path, line, endLine, sourceLine, colspan, onDone, onExtend,
   const tr = document.createElement('tr');
   tr.className = 'form';
   const label = line ? ':' + (endLine > line ? `${line}-${endLine}` : `${line}`) : '';
-  tr.innerHTML = `<td colspan="${colspan}"><div class="form"><div class="dim">comment on ${esc(path)}${label}</div>
+  tr.innerHTML = `<td colspan="${colspan}"><div class="form"><div class="dim where">comment on ${esc(path)}${label}</div>
     <textarea placeholder="${TOUCH ? 'Your comment' : 'Enter saves, Esc cancels; Shift-Enter for a new line'}"></textarea>
     <div class="row"><button class="primary" data-act="save">Add to REVIEW.md</button><button data-act="ask" title="send the text as a question about these lines instead">Ask agent</button>${onExtend ? '<button data-act="extend" title="the next line number you tap ends the range">Extend range</button>' : ''}<button data-act="cancel">Cancel</button></div></div></td>`;
   const ta = tr.querySelector('textarea');
   ta.value = initial;
-  on(tr, 'extend', () => onExtend(ta.value));
+  // On a phone the form covers the code, so it steps aside until the second line is tapped.
+  on(tr, 'extend', () => { tr.classList.add('picking'); onExtend(ta.value); });
   const save = () => {
     const text = ta.value.trim();
     if (!text) return;
@@ -645,6 +692,8 @@ let commentAnchorLine = null, extending = false;
 async function openFile(path, line) {
   try {
     const f = await api('/file?path=' + encodeURIComponent(path));
+    // The fingerprint stamps the open file, so another file is another baseline.
+    watch.version = null;
     state.file = { ...f, blame: null };
     state.view = 'explore';
     navigate(routes.file(path, line));
@@ -660,8 +709,23 @@ function fileHint() {
   hint('Click a line number to comment; shift-click extends the range.', 'Tap a line number to comment, or a name in the code for its definition.');
 }
 
+// Zen: the file, its line numbers and its comments, with the header, the tabs, the tree, the
+// file's own toolbar and the footer out of the way. It is a way of reading rather than a view,
+// so it has no address of its own, and anything that leaves the file leaves it as well.
+// On a phone the explorer shows the tree or the file, and zen over the tree would leave an
+// empty screen, so the key only works where the Zen button itself would be.
+const fileOnScreen = () => state.view === 'explore' && !!state.file
+  && (!phone() || document.body.classList.contains('showfile'));
+
+function setZen(on) {
+  state.zen = on;
+  document.body.classList.toggle('zen', on);
+  $('#zen').hidden = !on;
+}
+
 // Back to the tree, on a phone; on a wide screen the tree never left.
 function showTree() {
+  setZen(false);
   setTabs('explore');
   document.body.classList.remove('showfile');
   navigate(routes.tree());
@@ -700,7 +764,8 @@ function renderFile() {
     <button data-act="note">Note</button>
     <button data-act="history" ${state.hasCommits ? '' : 'disabled'}>History</button>
     <button data-act="diff" ${st && st !== '?' ? '' : 'disabled'}>Diff vs HEAD</button>
-    <button data-act="blame" ${state.hasCommits && st !== '?' ? '' : 'disabled'}>${f.blame ? 'Hide blame' : 'Blame'}</button>`;
+    <button data-act="blame" ${state.hasCommits && st !== '?' ? '' : 'disabled'}>${f.blame ? 'Hide blame' : 'Blame'}</button>
+    <button data-act="zen" title="${TOUCH ? 'the file and nothing else' : 'the file and nothing else (z)'}">Zen</button>`;
   content.appendChild(head);
   on(head, 'up', showTree);
   on(head, 'note', () => addNote(f.path));
@@ -708,6 +773,7 @@ function renderFile() {
   on(head, 'symbols', () => showFileSymbols(f.path));
   on(head, 'history', () => showLog(f.path));
   on(head, 'diff', () => showDiff({ kind: 'working', path: f.path, status: st }, [{ path: f.path, status: st, old_path: null }], 0));
+  on(head, 'zen', () => setZen(true));
   on(head, 'blame', async () => {
     if (f.blame) { f.blame = null; renderFile(); return; }
     try { f.blame = await api('/blame?path=' + encodeURIComponent(f.path)); renderFile(); } catch (e) { fail(e); }
@@ -914,11 +980,11 @@ async function agentPoll() {
 }
 
 function startAgentPolling() {
-  if (agent.timer || !state.agentEnabled) return;
+  if (agent.timer) return;
   // A page in a background tab, or a phone in a pocket, does not poll; it catches up when
   // it is looked at again.
-  agent.timer = setInterval(() => { if (state.agentEnabled && !document.hidden && (state.view === 'agent' || agent.running)) agentPoll(); }, 500);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && state.agentEnabled && (state.view === 'agent' || agent.running)) agentPoll(); });
+  agent.timer = setInterval(() => { if (!document.hidden && (state.view === 'agent' || agent.running)) agentPoll(); }, 500);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && (state.view === 'agent' || agent.running)) agentPoll(); });
 }
 
 async function agentStart() {
@@ -958,13 +1024,11 @@ async function agentSend(body) {
 }
 
 function askAgent(body) {
-  if (!state.agentEnabled) { msg('this server runs without an agent', true); return; }
   showAgent();
   agentSend(body);
 }
 
 function showAgent() {
-  if (!state.agentEnabled) { msg('this server runs without an agent', true); return; }
   setTabs('agent');
   navigate(routes.view('agent'));
   startAgentPolling();
@@ -1024,13 +1088,17 @@ function renderAgent() {
 
 async function showChanges(staged = false) {
   setTabs('changes');
+  // Which side the view is on, so a redraw — a refresh, or the watcher — stays on it.
+  state.changesStaged = staged;
   navigate(routes.changes(staged));
   try {
     const files = await api('/changes?staged=' + staged);
     const content = $('#content');
     content.innerHTML = `<div class="panelhead"><span class="path">${staged ? 'staged' : 'working tree'}</span><span class="dim">${files.length} files</span>
-      <span class="spacer"></span><button data-act="switch">${staged ? 'Show working tree' : 'Show staged'}</button></div><div class="list"></div>`;
+      <span class="spacer"></span><button data-act="switch">${staged ? 'Show working tree' : 'Show staged'}</button>
+      <button class="primary" data-act="commit" ${files.length ? '' : 'disabled'} title="${staged ? 'commit what is staged' : 'stage everything below and commit it'}">Commit ${files.length} ${files.length === 1 ? 'file' : 'files'}</button></div><div class="list"></div>`;
     on(content, 'switch', () => showChanges(!staged));
+    on(content, 'commit', () => commitChanges(staged, files));
     const list = content.querySelector('.list');
     if (!files.length) list.innerHTML = '<div class="center">nothing here</div>';
     files.forEach((f, i) => {
@@ -1041,8 +1109,41 @@ async function showChanges(staged = false) {
       el.onclick = () => showDiff({ kind: staged ? 'staged' : 'working', path: f.path, old_path: f.old_path || '', status: letter }, files, i);
       list.appendChild(el);
     });
-    hint('Click a file to see its diff.', 'Tap a file to see its diff.');
+    hint('Click a file to see its diff; Commit records what is listed.', 'Tap a file to see its diff; Commit records what is listed.');
   } catch (e) { fail(e); }
+}
+
+// A review that ends in "this is good" ends in a commit. What is about to go in is spelled
+// out above the message box, files and all, together with anything still pending on those
+// files in REVIEW.md: an unanswered comment on a change is the one thing not to commit by
+// accident. The working-tree view stages everything it lists first; the staged view commits
+// the index as it stands.
+async function commitChanges(staged, files) {
+  const paths = files.map(f => f.path);
+  const pending = (state.allComments || []).filter(a => a.comment.section === 'Pending'
+    && paths.some(p => p === a.comment.path || p.startsWith(a.comment.path + '/')));
+  const shown = files.slice(0, 12).map(f => '  ' + statusLetter(f) + ' ' + (f.old_path ? f.old_path + ' → ' + f.path : f.path));
+  if (files.length > shown.length) shown.push(`  … and ${files.length - shown.length} more`);
+  const note = shown.join('\n')
+    + (pending.length ? `\n\n${pending.length} comment${pending.length === 1 ? '' : 's'} still pending on ${pending.length === 1 ? 'one of these files' : 'these files'}.` : '');
+  const title = staged ? `Commit ${files.length} staged ${files.length === 1 ? 'file' : 'files'}` : `Commit ${files.length} ${files.length === 1 ? 'file' : 'files'} from the working tree`;
+  // A hook that refuses says why over several lines, where the footer holds one, so what it
+  // said heads the sheet that comes back — with the message kept, since it is usually the
+  // repository that needs fixing and not the wording.
+  let message = '', trouble = '';
+  for (;;) {
+    message = await askText(title, message, trouble ? 'Try again' : 'Commit', trouble ? trouble + '\n\n' + note : note);
+    if (!message) return;
+    try {
+      const commit = await api('/commit', { body: { message, all: !staged } });
+      msg(`committed ${commit.short} ${commit.subject}`);
+      await doRefresh({ quiet: true });
+      return;
+    } catch (e) {
+      console.error(e);
+      trouble = e.message;
+    }
+  }
 }
 
 // ----- log and history ------------------------------------------------------------------------
@@ -1383,6 +1484,7 @@ function setTabs(view) {
   document.querySelectorAll('header .tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   // The stylesheet shows the tree for the explorer only, and on a phone either it or the file.
   document.body.dataset.view = view;
+  if (view !== 'explore') setZen(false);
   document.querySelector('header').classList.remove('open');
   hidePopover();
   if (view !== 'explore') $('#drawer').hidden = true;
@@ -1392,7 +1494,7 @@ function setTabs(view) {
 // have their own list, which drifted.
 function rerenderCurrentView() {
   switch (state.view) {
-    case 'changes': return showChanges();
+    case 'changes': return showChanges(!!state.changesStaged);
     case 'log': return showLog(state.log && state.log.path, true);
     case 'review': return showReview();
     case 'notes': return showNotes();
@@ -1423,17 +1525,63 @@ $('#signout').onclick = async () => {
   location.href = '/';
 };
 
-$('#refresh').onclick = async () => {
+// The Refresh button, and what the watcher below runs on its own. A refresh nobody asked for
+// keeps the scroll where the reader left it and says nothing; the agent's own view is left
+// alone, since its poll is already drawing it.
+async function doRefresh({ quiet = false } = {}) {
+  const content = $('#content');
+  const top = content.scrollTop, left = content.scrollLeft;
+  await api('/refresh', { post: true });
+  state.allComments = await api('/comments');
+  await loadState();
+  await loadRepos();
+  if (state.view === 'explore' && state.file) await openFile(state.file.path);
+  else if (!(quiet && state.view === 'agent')) rerenderCurrentView();
+  if (!quiet) { msg('refreshed'); return; }
+  content.scrollTop = top;
+  content.scrollLeft = left;
+}
+
+$('#refresh').onclick = () => doRefresh().catch(fail);
+// ----- watching the repository ----------------------------------------------------------------
+
+// Whatever writes to the repository — the agent in its panel, an editor in another window, a
+// git command in a terminal — shows up here without anyone pressing Refresh. The server keeps
+// a fingerprint of what the page draws; this asks for it while the page is on screen and
+// re-reads when it moves. `version` of null means "take whatever comes next as the baseline",
+// which is also how a write of the page's own is kept from redrawing what it just drew.
+// What must not be redrawn under the reader's hands: a comment being written, the text sheet,
+// and the menu over a name in the code. Each holds something typed or pointed at.
+function pageIsBusy() {
+  return !!$('#content .form') || !$('#editor').hidden || !$('#popover').hidden;
+}
+
+async function watchPoll() {
+  if (watch.busy || document.hidden || pageIsBusy()) return;
+  watch.busy = true;
   try {
-    await api('/refresh', { post: true });
-    state.allComments = await api('/comments');
-    await loadState();
-    await loadRepos();
-    if (state.view === 'explore' && state.file) await openFile(state.file.path);
-    else rerenderCurrentView();
-    msg('refreshed');
-  } catch (e) { fail(e); }
-};
+    const path = state.view === 'explore' && state.file ? state.file.path : '';
+    const r = await api('/version' + (path ? '?path=' + encodeURIComponent(path) : ''));
+    const first = watch.version === null;
+    const moved = !first && r.version !== watch.version;
+    watch.version = r.version;
+    if (moved) await doRefresh({ quiet: true });
+  } catch (e) {
+    // Nothing is said about a poll that fails: the agent's own poll already reports a server
+    // that has gone away, and a review that cannot reach it is obvious soon enough.
+    console.error(e);
+  } finally {
+    watch.busy = false;
+  }
+}
+
+function startWatching() {
+  setInterval(watchPoll, watch.every);
+  // A page in a background tab, or a phone in a pocket, does not ask; it catches up at once
+  // when it is looked at again.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) watchPoll(); });
+}
+
 $('#search').oninput = e => { state.search = e.target.value; if (state.view === 'explore' && state.file) renderFile(); else if (state.diff && document.querySelector('.sbs, table.code')) renderDiff(); };
 $('#search').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; state.search = ''; e.target.blur(); if (state.file) renderFile(); } };
 
@@ -1445,7 +1593,10 @@ const HELP = `
 <tr><td><kbd>Note</kbd></td><td>a note on the file, kept in NOTES.md</td></tr>
 <tr><td><kbd>History</kbd></td><td>every commit that touched the file, and the diff of each</td></tr>
 <tr><td><kbd>Diff vs HEAD</kbd></td><td>what changed in the working tree</td></tr>
-<tr><td><kbd>Blame</kbd></td><td>last commit per line</td></tr></table>
+<tr><td><kbd>Blame</kbd></td><td>last commit per line</td></tr>
+<tr><td><kbd>Zen</kbd> or <kbd>z</kbd></td><td>the file, its line numbers and its comments, and nothing else; <kbd>z</kbd> or <kbd>Esc</kbd> comes back</td></tr></table>
+<h3>Changes</h3><table>
+<tr><td><kbd>Commit</kbd></td><td>in the working tree view, stages everything listed and commits it; in the staged view, commits what is staged. The sheet names the files and any comment still pending on them, and hooks run as they do on the command line</td></tr></table>
 <h3>Symbols</h3><table>
 <tr><td><kbd>click a name</kbd></td><td>Definition or Usages, found with tree-sitter across the repository</td></tr>
 <tr><td><kbd>@</kbd></td><td>symbols defined in the open file</td></tr>
@@ -1467,14 +1618,24 @@ const HELP = `
 <p class="dim">Comments live in REVIEW.md, notes in NOTES.md, both at the repository root. Every view has an address, so the browser's back returns to the previous one and a file or a diff can be linked to. Esc closes this.</p>`;
 $('#help').innerHTML = HELP;
 $('#helpbtn').onclick = () => { $('#help').hidden = !$('#help').hidden; };
+$('#zen').onclick = () => setZen(false);
 
 document.addEventListener('keydown', e => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea') return;
-  if (e.key === 'Escape') { $('#help').hidden = true; $('#content .form')?.closest('tr')?.remove(); return; }
+  if (e.key === 'Escape') {
+    // Esc closes whatever is open, innermost first, and only then leaves zen.
+    const help = !$('#help').hidden, form = $('#content .form')?.closest('tr');
+    $('#help').hidden = true;
+    form?.remove();
+    if (!help && !form && state.zen) setZen(false);
+    return;
+  }
   if (e.key === '?') { $('#help').hidden = !$('#help').hidden; return; }
-  if (e.key === '/') { e.preventDefault(); $('#search').focus(); $('#search').select(); return; }
-  if (e.key === '#') { e.preventDefault(); $('#symbol').focus(); $('#symbol').select(); return; }
+  if (e.key === 'z' && fileOnScreen()) { setZen(!state.zen); return; }
+  // Both fields live in the header, which zen hides, so reaching for one comes out of zen.
+  if (e.key === '/') { e.preventDefault(); setZen(false); $('#search').focus(); $('#search').select(); return; }
+  if (e.key === '#') { e.preventDefault(); setZen(false); $('#symbol').focus(); $('#symbol').select(); return; }
   if (e.key === '@' && state.file) { showFileSymbols(state.file.path); return; }
   if (e.key === 'r' && !e.ctrlKey && !e.metaKey) { $('#refresh').click(); return; }
   if (state.diff && document.querySelector('#content table.code') && state.view !== 'explore') {
@@ -1554,6 +1715,7 @@ async function route() {
 window.addEventListener('hashchange', () => { if (location.hash !== currentRoute) route().catch(fail); });
 
 startAgentPolling();
+startWatching();
 (async () => {
   try {
     state.themesByName = Object.fromEntries((await api('/themes')).map(t => [t.name, t]));

@@ -8,12 +8,8 @@ use std::net::TcpStream;
 /// A server on a token, already signed in: the string is the API token of a session,
 /// which is what every request below sends.
 fn serve(roots: &[&Path]) -> (SocketAddr, String, tokio::runtime::Runtime) {
-    serve_with(roots, true)
-}
-
-fn serve_with(roots: &[&Path], agent: bool) -> (SocketAddr, String, tokio::runtime::Runtime) {
     let token = auth::random_secret();
-    let (addr, rt) = listen(test_router(roots, agent, Auth::Token(token.clone())));
+    let (addr, rt) = listen(test_router(roots, Auth::Token(token.clone())));
     let api_token = sign_in_with_token(addr, &token);
     (addr, api_token, rt)
 }
@@ -21,7 +17,7 @@ fn serve_with(roots: &[&Path], agent: bool) -> (SocketAddr, String, tokio::runti
 /// A server on a password, nobody signed in.
 fn serve_password(roots: &[&Path], password: &str) -> (SocketAddr, tokio::runtime::Runtime) {
     let hash = auth::hash_password(password).unwrap();
-    listen(test_router(roots, true, Auth::Password(hash)))
+    listen(test_router(roots, Auth::Password(hash)))
 }
 
 fn listen(router: Router) -> (SocketAddr, tokio::runtime::Runtime) {
@@ -177,7 +173,7 @@ fn the_home_screen_files_need_no_session() {
 fn the_token_opens_a_session_and_a_cookie_keeps_it() {
     let dir = scratch_repo();
     let token = auth::random_secret();
-    let (addr, _rt) = listen(test_router(&[dir.path()], true, Auth::Token(token.clone())));
+    let (addr, _rt) = listen(test_router(&[dir.path()], Auth::Token(token.clone())));
     // A wrong token is refused, for the page and for the API.
     assert_eq!(request_full(addr, "GET", "/?t=wrong", &[], None).0, 403);
     assert_eq!(
@@ -299,7 +295,6 @@ fn a_password_opens_a_session_and_guessing_is_slowed() {
     );
 }
 
-/// `--no-agent`: the routes are gone and the page is told, so it hides every way to one.
 /// The other backend, all the way through the API: a turn, the whole command in the
 /// permission question, an answer, and the transcript the server wrote.
 #[test]
@@ -369,26 +364,6 @@ fn a_claude_turn_through_the_api() {
         text.contains("turn finished in"),
         "what the turn cost: {text}"
     );
-}
-
-#[test]
-fn the_agent_can_be_turned_off() {
-    let dir = scratch_repo();
-    let (addr, token, _rt) = serve_with(&[dir.path()], false);
-    let t = Some(token.as_str());
-    let (status, body) = request(addr, "GET", "/api/state", t, None);
-    assert_eq!(status, 200);
-    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["agent"], false);
-    assert_eq!(request(addr, "GET", "/api/agent/events", t, None).0, 404);
-    assert_eq!(request(addr, "POST", "/api/agent/start", t, None).0, 404);
-    let prompt = serde_json::json!({ "text": "hello" }).to_string();
-    assert_eq!(
-        request(addr, "POST", "/api/agent/prompt", t, Some(&prompt)).0,
-        404
-    );
-    // Everything else still works.
-    assert_eq!(request(addr, "GET", "/api/repos", t, None).0, 200);
 }
 
 /// The limit on requests in flight must give a permit back every time, including on
@@ -466,6 +441,16 @@ fn api_round_trip() {
     assert_eq!(v["lines"].as_array().unwrap().len(), 3);
     assert_eq!(v["line_ops"][2], "insert");
 
+    // What the page polls to notice a change nobody told it about.
+    let version = |path: &str| {
+        let (status, body) = request(addr, "GET", &format!("/api/version?path={path}"), t, None);
+        assert_eq!(status, 200, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        v["version"].as_str().unwrap().to_string()
+    };
+    let before = version("a.rs");
+    assert_eq!(before, version("a.rs"), "nothing changed in between");
+
     let (status, body) = request(
         addr,
         "POST",
@@ -476,6 +461,7 @@ fn api_round_trip() {
     assert_eq!(status, 200, "{body}");
     let comment: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(comment["anchor"], "fn b() {}");
+    assert_ne!(before, version("a.rs"), "REVIEW.md was written");
 
     let (status, body) = request(addr, "GET", "/api/comments", t, None);
     assert_eq!(status, 200);
@@ -625,6 +611,63 @@ fn api_round_trip() {
     );
     let (_, body) = request(addr, "GET", "/api/symbol_search?q=c", t, None);
     assert!(body.contains("\"c\""));
+}
+
+/// Committing what has just been reviewed, and what a page is told when a hook refuses: its
+/// own words, which have to survive the trip out.
+#[test]
+#[cfg(unix)]
+fn committing_through_the_api() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_repo();
+    let (addr, token, _rt) = serve(&[dir.path()]);
+    let t = Some(token.as_str());
+
+    // Without a message git is never asked.
+    let (status, body) = request(
+        addr,
+        "POST",
+        "/api/commit",
+        t,
+        Some(r#"{"message":"   ","all":true}"#),
+    );
+    assert_eq!(status, 400, "{body}");
+
+    // A pre-commit hook that says no, on stdout, as they do.
+    let hook = dir.path().join(".git/hooks/pre-commit");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\necho 'the formatter is unhappy'\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (status, body) = request(
+        addr,
+        "POST",
+        "/api/commit",
+        t,
+        Some(r#"{"message":"looks good","all":true}"#),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("the formatter is unhappy"), "{body}");
+
+    // With the hook gone the commit goes in, and the working tree is left clean.
+    std::fs::remove_file(&hook).unwrap();
+    let (status, body) = request(
+        addr,
+        "POST",
+        "/api/commit",
+        t,
+        Some(r#"{"message":"looks good","all":true}"#),
+    );
+    assert_eq!(status, 200, "{body}");
+    let made: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(made["subject"], "looks good");
+    let (_, body) = request(addr, "GET", "/api/changes", t, None);
+    let left: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+    assert!(left.is_empty(), "{body}");
 }
 
 #[test]

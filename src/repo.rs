@@ -213,6 +213,29 @@ impl Repo {
         Ok(parse_status(&out))
     }
 
+    /// Stages the whole working tree when `all`, then commits the index with `message`, and
+    /// reads back the commit it made. The repository's own hooks run, exactly as they do on
+    /// the command line: a `pre-commit` that refuses stops the commit and what it printed is
+    /// what comes back. git is given no terminal, so anything that would ask a question —
+    /// a passphrase for a signature, a credential — fails instead of waiting forever.
+    pub fn create_commit(&self, message: &str, all: bool) -> Result<Commit> {
+        let message = message.trim();
+        if message.is_empty() {
+            bail!("a commit needs a message");
+        }
+        if all {
+            self.git(&["add", "-A"])?;
+        }
+        let output = git_command(&self.root)
+            .args(["commit", "-m", message])
+            .output()
+            .context("cannot run git commit")?;
+        if !output.status.success() {
+            bail!("{}", complaint(&output));
+        }
+        self.commit("HEAD")
+    }
+
     /// The most recent `limit` commits reachable from `rev` (or HEAD), newest first, skipping
     /// the first `skip`. When `path` is given, only commits touching it, following renames.
     pub fn log(
@@ -383,6 +406,25 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
         );
     }
     Ok(output.stdout)
+}
+
+/// What git said when a command failed: its complaints first, then what it printed, since a
+/// hook that refuses usually says why on stdout. A few lines only, so a chatty hook cannot
+/// fill the page that shows this.
+fn complaint(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stderr
+        .lines()
+        .chain(stdout.lines())
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .take(5)
+        .collect();
+    if lines.is_empty() {
+        return "git commit failed and said nothing".to_string();
+    }
+    lines.join("\n")
 }
 
 /// Whether git would call this a binary file: a NUL byte in the first 8 KiB, which is its

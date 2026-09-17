@@ -2,26 +2,25 @@
 
 `codereview web` is a plain HTTP server meant for a loopback address. To reach it from a
 browser on another machine, put nginx in front of it: nginx terminates TLS on your domain and
-forwards to the loopback port, and codereview itself never listens on a public address. With
-the agent on, the agent still makes outbound connections of its own to whatever model it
-uses.
+forwards to the loopback port, and codereview itself never listens on a public address. The
+agent still makes outbound connections of its own to whatever model it uses.
 
 ## Read this before you publish anything
 
-The password is the only thing between the internet and your repositories. Whoever knows it
-reads every file and every commit of every repository you serve, and writes to `REVIEW.md`
-and `NOTES.md`.
+**The tool changes the repositories it serves, and the password is the only thing between the
+internet and that.** Whoever knows it reads every file and every commit of every repository
+you serve, writes to `REVIEW.md` and `NOTES.md`, commits, and runs the agent — Claude Code, or
+an ACP agent, started in the repository root, asking for permission according to its own
+settings, where a permission mode of `auto` approves most tool calls without asking anyone.
+Committing runs the repository's own hooks. There is no read-only mode and no switch that
+takes any of this away: a reviewer who cannot act on what they find is not what this tool is
+for.
 
-**With the agent on, that person can also make it run commands in those repositories.** The
-agent is Claude Code (or an ACP agent) started in the repository root, and it asks for
-permission according to its own settings: a permission mode of `auto` approves most tool
-calls without asking anyone. Serve with `--no-agent` unless you are the only person who can
-reach the site and you accept what a leaked token means. `--no-agent` does not merely hide
-the buttons: the routes are not served at all, and the page is told there is no agent.
-
-There are no accounts and no per-repository access: one token opens everything. If you need
-more than that, put nginx's own authentication in front of it as well, see the end of this
-page.
+So publish it only where you would hand someone a shell in those repositories, give it a
+password you would protect as well as an SSH key, and keep backups and a remote you can
+recover from. There are no accounts and no per-repository access: one password opens
+everything. If you need more than that, put nginx's own authentication in front of it as
+well, see the end of this page.
 
 ## The service
 
@@ -69,7 +68,7 @@ WorkingDirectory=/srv/review
 EnvironmentFile=/etc/codereview.env
 Environment=CODEREVIEW_CONFIG=/srv/review/config.toml
 ExecStart=/usr/local/bin/codereview web \
-    --host 127.0.0.1 --port 8765 --no-open --no-agent \
+    --host 127.0.0.1 --port 8765 --no-open \
     --public-url https://review.example.com \
     /srv/review/repos
 Restart=on-failure

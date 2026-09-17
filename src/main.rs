@@ -69,10 +69,6 @@ enum Command {
         /// print, and over HTTPS the session cookie is marked `Secure`.
         #[arg(long, value_name = "URL")]
         public_url: Option<String>,
-        /// Do not serve the agent: no routes, and the page offers no way to one. Sensible
-        /// whenever the page can be reached from outside the machine.
-        #[arg(long)]
-        no_agent: bool,
         /// Repositories to serve; the page switches between them.
         paths: Vec<String>,
     },
@@ -154,7 +150,6 @@ fn main() -> Result<()> {
             port,
             no_open,
             public_url,
-            no_agent,
             paths,
         }) => {
             let all: Vec<String> = cli.paths.iter().chain(&paths).cloned().collect();
@@ -169,7 +164,6 @@ fn main() -> Result<()> {
                     port,
                     open_browser: !no_open,
                     public_url,
-                    agent: !no_agent,
                 },
             )
         }

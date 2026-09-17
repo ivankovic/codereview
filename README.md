@@ -1,9 +1,9 @@
 # codereview
 
 Explore and review a repository from the terminal or a browser, and keep the review in two
-Markdown files anyone can read without the tool. Built for codebases that change quickly,
-typically because much of the code is written with AI assistance: comments survive the churn
-by remembering the line they were left on and finding it again after edits.
+Markdown files anyone can read. Built for codebases that change quickly, typically because
+much of the code is written with AI assistance: comments survive the churn by remembering the
+line they were left on and finding it again after edits.
 
 - **Explore** the working tree with syntax highlighting, change markers against HEAD, and blame.
 - **Comment** on a line or a range. Comments go to `REVIEW.md`, pending or completed, in the
@@ -34,6 +34,10 @@ cargo install codereview --features web   # terminal and browser UI
 
 You need a Rust toolchain (edition 2024, rustc 1.85 or later), a C compiler for the tree-sitter
 grammars, and `git` on `PATH`.
+
+## License
+
+AGPL-3.0-or-later. Copyright 2026 Marko Ivankovic.
 
 ## Usage
 
@@ -108,7 +112,7 @@ For anything reachable from another machine, use a password instead of a token:
 ```sh
 codereview hash-password                 # asks twice, prints an Argon2 hash
 export CODEREVIEW_PASSWORD_HASH='$argon2id$...'
-codereview web --public-url https://review.example.com --no-agent --no-open
+codereview web --public-url https://review.example.com --no-open
 ```
 
 The page is then a sign-in form, a session lasts a week, **Sign out** ends it, and repeated
@@ -117,14 +121,20 @@ password is refused outright.
 
 To reach the page from another machine, put nginx in front of it rather than opening the port:
 [docs/deploy.md](docs/deploy.md) has a TLS site on a custom domain, a systemd unit, and what to
-weigh first. `--no-agent` serves everything except the agent, which is the right default for
-anything reachable from outside the machine, since an agent runs commands in the repository.
+weigh first. Weigh it seriously: the tool is meant to change the repositories it serves —
+comments, notes, commits, and an agent running commands in them — so whoever can sign in can do
+all of that, and nothing turns it off.
 
 Click a line number to comment, shift-click to extend the range (or the form's Extend range
 button and another line number, on a phone); the Comment button in the file header comments
 on the whole file, and the `+` on a directory in the tree on the directory. Everything the
 terminal UI does is a button or a tab. Every view has an address, so the browser's back
-returns to the previous view and a file, a diff or a commit can be linked to.
+returns to the previous view and a file, a diff or a commit can be linked to. The page keeps
+itself current: when the agent, another window or a git command changes the repository, it
+notices within a couple of seconds and redraws where you are, without moving the scroll.
+The `Zen` button, or `z`, leaves the file alone on the screen. When the change reads well,
+**Commit** in the changes view records it: the sheet names the files going in and any comment
+on them still pending, and the repository's hooks run as they would in a terminal.
 
 The page works on a phone: one pane at a time, the tabs along the bottom, and it can be added
 to the home screen as an app. Review comments, diffs and the agent's transcript are what a
@@ -230,10 +240,8 @@ through [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked
 
 `make integration-test` runs the browser UI behind a real nginx, in a container, over TLS on
 a name: the site from [docs/deploy.md](docs/deploy.md), signing in with a password, reading
-and writing through the proxy. It needs docker, curl and openssl, which is why it is not part
-of `make check`.
+and writing through the proxy. It needs podman, curl and openssl, which is why it is not part
+of `make check`. Rootless podman is enough, and is the point: no daemon, so running the suite
+costs nobody access to every other container on the machine. `CODEREVIEW_CONTAINER_RUNTIME`
+drives another runtime — `docker` works as a drop-in.
 PLAN.md has the design and the roadmap, SPECS.md what the tool does in detail.
-
-## License
-
-AGPL-3.0-or-later. Copyright 2026 Marko Ivankovic.

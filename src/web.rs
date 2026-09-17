@@ -75,9 +75,6 @@ struct AppState {
     sessions: Arc<Mutex<Sessions>>,
     /// Mark the session cookie `Secure`: set when the page is published over HTTPS.
     secure_cookie: bool,
-    /// Whether the agent is available at all. When it is off the routes are not registered
-    /// and the page hides every way of reaching them.
-    agent: bool,
     /// One permit per request the API is working on.
     in_flight: Arc<tokio::sync::Semaphore>,
 }
@@ -114,7 +111,6 @@ impl RepoState {
 struct Ctx {
     repos: Arc<Vec<RepoState>>,
     index: usize,
-    agent: bool,
 }
 
 impl Deref for Ctx {
@@ -153,7 +149,6 @@ impl FromRequestParts<AppState> for Ctx {
         Ok(Ctx {
             repos: state.repos.clone(),
             index,
-            agent: state.agent,
         })
     }
 }
@@ -267,8 +262,8 @@ pub(crate) struct Ok_ {
 
 /// Serves the page and the API for `sessions`, one repository each; the page switches
 /// between them.
-/// How to serve: where to listen, whether to open a browser, the address the page is
-/// reached at from outside, and whether the agent may run.
+/// How to serve: where to listen, whether to open a browser, and the address the page is
+/// reached at from outside.
 pub struct Serve {
     pub host: String,
     pub port: u16,
@@ -276,7 +271,6 @@ pub struct Serve {
     /// What a reverse proxy publishes, `https://review.example.com`: the URL to print, and
     /// an HTTPS one also marks the session cookie `Secure`.
     pub public_url: Option<String>,
-    pub agent: bool,
 }
 
 pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
@@ -321,7 +315,6 @@ pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
             auth: Arc::new(auth),
             sessions: Arc::new(Mutex::new(Sessions::default())),
             secure_cookie: public.as_deref().is_some_and(|u| u.starts_with("https://")),
-            agent: serve.agent,
             in_flight: Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT)),
         };
         let addr: SocketAddr = format!("{}:{}", serve.host, serve.port)
@@ -341,9 +334,6 @@ pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
         }
         if state.auth.is_password() {
             println!("sign in with the password behind CODEREVIEW_PASSWORD_HASH");
-        }
-        if !serve.agent {
-            println!("the agent is off; its routes are not served");
         }
         if serve.open_browser {
             if let Err(e) = open::that(&url) {
@@ -393,7 +383,7 @@ fn cookie_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 fn router(state: AppState) -> Router {
-    let mut api = Router::new()
+    let api = Router::new()
         .route("/repos", get(api::get_repos))
         .route("/state", get(api::get_state))
         .route("/file", get(api::get_file))
@@ -409,6 +399,8 @@ fn router(state: AppState) -> Router {
         .route("/notes", get(api::get_notes).post(api::post_note))
         .route("/notes/edit", post(api::post_note_edit))
         .route("/notes/delete", post(api::post_note_delete))
+        .route("/commit", post(api::post_commit))
+        .route("/version", get(api::get_version))
         .route("/refresh", post(api::post_refresh))
         .route("/reanchor", post(api::post_reanchor))
         .route("/config", post(api::post_config))
@@ -417,18 +409,14 @@ fn router(state: AppState) -> Router {
         .route("/definitions", get(api::get_definitions))
         .route("/references", get(api::get_references))
         .route("/symbol_search", get(api::get_symbol_search))
-        .route("/identifier", get(api::get_identifier));
-    if state.agent {
-        api = api
-            .route("/agent/start", post(agent::post_agent_start))
-            .route("/agent/events", get(agent::get_agent_events))
-            .route("/agent/prompt", post(agent::post_agent_prompt))
-            .route("/agent/permission", post(agent::post_agent_permission))
-            .route("/agent/cancel", post(agent::post_agent_cancel))
-            .route("/agent/stop", post(agent::post_agent_stop))
-            .route("/agent/clear", post(agent::post_agent_clear));
-    }
-    let api = api
+        .route("/identifier", get(api::get_identifier))
+        .route("/agent/start", post(agent::post_agent_start))
+        .route("/agent/events", get(agent::get_agent_events))
+        .route("/agent/prompt", post(agent::post_agent_prompt))
+        .route("/agent/permission", post(agent::post_agent_permission))
+        .route("/agent/cancel", post(agent::post_agent_cancel))
+        .route("/agent/stop", post(agent::post_agent_stop))
+        .route("/agent/clear", post(agent::post_agent_clear))
         .route("/logout", post(post_logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         .route_layer(middleware::from_fn_with_state(
@@ -686,7 +674,7 @@ where
 }
 
 #[cfg(test)]
-pub(crate) fn test_router(roots: &[&Path], agent: bool, auth: Auth) -> Router {
+pub(crate) fn test_router(roots: &[&Path], auth: Auth) -> Router {
     router(AppState {
         repos: Arc::new(
             roots
@@ -697,7 +685,6 @@ pub(crate) fn test_router(roots: &[&Path], agent: bool, auth: Auth) -> Router {
         auth: Arc::new(auth),
         sessions: Arc::new(Mutex::new(Sessions::default())),
         secure_cookie: false,
-        agent,
         in_flight: Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT)),
     })
 }

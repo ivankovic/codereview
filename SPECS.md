@@ -10,7 +10,10 @@ Everything git-related runs the `git` binary from the repository root, found wit
 `ls-files` (tracked plus untracked, ignored excluded), `status --porcelain=v1 -z`, `log` with a
 custom record format (`--follow` when limited to one file), `diff-tree` for a commit's files,
 `diff --name-status` between two revisions, `show <rev>:<path>` for file content at a revision
-(`:<path>` for the index), `blame --porcelain`, and `config user.name` for the author.
+(`:<path>` for the index), `blame --porcelain`, `config user.name` for the author, and, for the
+one thing the tool writes to the repository itself, `add -A` and `commit -m`. git is run with no
+terminal, so anything that would ask a question — a passphrase for a signature, a credential —
+fails rather than waiting for an answer that cannot come.
 
 A repository without commits works: the log is empty, every file counts as added, and diffs
 compare against nothing.
@@ -225,14 +228,21 @@ bearer header, never the cookie, so a page on another site cannot act as the sig
 session lasts a week, at most thirty-two are kept, and signing out ends one. Secrets are compared
 without stopping at the first wrong byte. Every response forbids storing, referrers and framing,
 and restricts the page to its own origin. `--public-url` names what a reverse proxy publishes: it
-is the URL printed at start-up, and an HTTPS one marks the cookie `Secure`. `--no-agent` leaves
-the agent routes unregistered and tells the page, which then offers no way to one. The server
-stops on SIGTERM as well as on Ctrl-C. The API mirrors the session: state, file with highlighting
+is the URL printed at start-up, and an HTTPS one marks the cookie `Secure`. Everything the tool
+can do it can do for anyone who signs in: there is no read-only mode, and no way to serve the
+repository without the agent, the comments or the commit. The server stops on SIGTERM as well as
+on Ctrl-C. The API mirrors the session: state, file with highlighting
 and change markers, blame, log, commit files, changes, diff with highlighting on both sides and
-anchored comments, comments and notes (list, add, toggle, edit, delete), refresh and re-anchor,
-the theme list and config, symbols (file symbols, definitions, occurrences, search, identifier at
-a position), and the agent (start, poll for events since a sequence number, prompt with text or a
-preset, answer a permission, cancel, stop, clear). The server writes the transcript itself, the
+anchored comments, comments and notes (list, add, toggle, edit, delete), commit, refresh and
+re-anchor,
+the theme list and config, a version, symbols (file symbols, definitions, occurrences, search,
+identifier at a position), and the agent (start, poll for events since a sequence number, prompt
+with text or a preset, answer a permission, cancel, stop, clear). The version is a fingerprint of
+everything a front end draws: the status of every path, the branch, and the size and modification
+time of both Markdown files and of one named file, hashed into a number that means nothing on its
+own. It costs one `git status`, and it moves whenever anything on screen would look different,
+whoever made the change; a status alone would not, since a file written twice is modified either
+way. The server writes the transcript itself, the
 same way the terminal does, and answers a poll with the entries that changed since the version
 the page names, each with the position it belongs at: a tool call is one entry, filled in as it
 runs, so entries are not append-only. It also sends what the turn is doing and what it has cost,
@@ -243,7 +253,32 @@ file comes from the Comment button in the file header and is shown above the fir
 directory from the `+` on its row in the tree. A range is chosen with shift-click, or with the
 comment form's Extend range button followed by the line number at the other end, which keeps the
 text typed so far. Editing a comment or a note, and commenting on a file or a directory, opens a
-text sheet of the page's own rather than the browser's prompt.
+text sheet of the page's own rather than the browser's prompt. The file header's Zen button, and
+`z`, leave the file alone on the screen: the header, the tabs, the tree, that header itself and
+the footer go, and what stays is the code, its line numbers, its comment rows and one button at
+the bottom right to come back, which `z` and `Esc` also do. A message still shows the footer for
+as long as it has something to say, and a key that reaches for a field in the header comes out
+of zen first. Zen is a way of reading rather than a view, so it has no address, and leaving the
+file leaves it.
+
+A review that ends in "this is good" ends in a commit, from the changes view: the working tree
+side stages everything it lists and commits that, the staged side commits the index as it
+stands, and the button says how many files either would take. The message is written in the
+text sheet, which first spells out the files that are about to go in and how many comments on
+them are still pending — an unanswered comment on a change is the one thing not to commit by
+accident. The repository's hooks run as they do on the command line; a hook that refuses stops
+the commit, and what it printed comes back into the sheet with the message kept, so it can be
+tried again once the repository is happy. A commit with no message is refused before git is
+asked, as is one with nothing to commit.
+
+The page asks for that version every two seconds while it is on screen, and re-reads the
+repository and redraws the current view when it has moved, so an agent's edits, another window's
+or a git command's appear without anyone pressing Refresh. It does not ask while it is hidden,
+and catches up as soon as it is looked at again; it holds off while a comment is being written,
+while the text sheet is up and while the menu over a name is open, and a refresh nobody asked for
+keeps the scroll where it was, says nothing in the footer, and leaves the agent's own view to the
+agent's own poll. A write of the page's own moves the version too, so the next reading after one
+becomes the baseline instead of redrawing what the page has just drawn.
 
 Every view has an address in the URL fragment, which never reaches the server: the tree, a file
 with an optional line, the working tree or staged changes, the log with an optional path and
@@ -257,14 +292,21 @@ tools (symbol and file search, colour scheme, refresh, sign out, help) behind on
 tabs run along the bottom edge, and views show one pane at a time: the tree or the file, the
 commits or one commit, each with a back button, and the symbol drawer as a sheet over the lower
 half. Lists lay each item out as a card with its buttons underneath. The diff is unified, with
-the hunk buttons floating at the bottom right. A comment row, and the comment form, stay as wide
-as the panel and stick to its left edge while the code scrolls sideways, so a comment's text and
-buttons are in view whatever the line length; this holds on every screen size. On a screen that
-cannot hover, the directory `+` is always visible, tap targets are larger, inputs are 16 pixels
-so iOS does not zoom into them, and the footer's hints say tap rather than click and name no
-keys. The page declares a web app manifest and icons, served without a session, so a phone can
-put it on its home screen as a standalone app whose title bar follows the colour scheme; the
-agent panel stops polling while the page is hidden and catches up when it is shown again.
+the hunk buttons floating at the bottom right. Writing a comment takes over the screen rather
+than opening between two lines of code, which leaves no room for the text and its buttons: the
+form covers the page, sized to what the keyboard leaves of the viewport, and the Extend range
+button puts it away until the second line of the range is tapped, keeping the text typed so far.
+The text sheet does the same with the keyboard. A comment row stays as wide as the panel and
+sticks to its left edge while the code scrolls sideways, so a comment's text and buttons are in
+view whatever the line length; this holds on every screen size, as does the comment form on a
+screen wide enough to keep it between the lines. On a screen that cannot hover, the directory
+`+` is always visible, tap targets are larger, inputs are 16 pixels so iOS does not zoom into
+them, and the footer's hints say tap rather than click and name no keys. The sign-in page, which
+shares none of this stylesheet, carries the same viewport declaration and the same 16-pixel
+fields, and stops centring itself on a screen too short to centre in. The page declares a web
+app manifest and icons, served without a session, so a phone can put it on its home screen as a
+standalone app whose title bar follows the colour scheme; the agent panel stops polling while
+the page is hidden and catches up when it is shown again.
 
 ## Command line
 

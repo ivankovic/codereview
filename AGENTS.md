@@ -11,7 +11,8 @@
 - Both front ends build the agent transcript with `src/transcript.rs`. The page renders what
   the server wrote; do not give it a state machine of its own again.
 - `make integration-test` puts a real nginx in front of the browser UI, in a container. It
-  needs docker; `make check` does not. `tests/nginx/site.conf` mirrors the site in
+  needs podman (rootless is enough; `CODEREVIEW_CONTAINER_RUNTIME` drives another runtime);
+  `make check` does not. `tests/nginx/site.conf` mirrors the site in
   `docs/deploy.md`, and the test fails if the document loses a directive it exercises.
 - Markdown lines wrap at 100 columns.
 

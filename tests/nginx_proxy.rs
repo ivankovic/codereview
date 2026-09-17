@@ -2,8 +2,8 @@
 //! port redirecting to it, and everything else proxied to codereview on loopback.
 //!
 //! This is the only test that needs something other than a Rust toolchain, so it is ignored
-//! by default and run by `make integration-test`, which needs docker, curl and openssl. It
-//! runs nginx in a container sharing the host's network, so that `proxy_pass` to
+//! by default and run by `make integration-test`, which needs a container runtime, curl and
+//! openssl. It runs nginx in a container sharing the host's network, so that `proxy_pass` to
 //! `127.0.0.1` reaches the server this test starts.
 
 use std::io::Write;
@@ -13,12 +13,14 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Fixed, and well above the privileged range: the container shares the host's network, so
-/// these are host ports.
+/// these are host ports, and a rootless runtime may not bind the low ones.
 const HTTP_PORT: u16 = 18080;
 const HTTPS_PORT: u16 = 18443;
 const UPSTREAM_PORT: u16 = 18765;
 const CONTAINER: &str = "codereview-nginx-test";
-const IMAGE: &str = "nginx:1.27-alpine";
+/// Spelled out in full: podman resolves a short name only against the registries a machine
+/// happens to have configured, and refuses rather than guessing when it has none.
+const IMAGE: &str = "docker.io/library/nginx:1.27-alpine";
 const HOST: &str = "review.test";
 const PASSWORD: &str = "correct horse battery staple";
 
@@ -36,8 +38,23 @@ impl Drop for Harness {
     }
 }
 
+/// The container runtime to drive, from `CODEREVIEW_CONTAINER_RUNTIME`.
+///
+/// Podman, and rootless: it runs without a daemon, so this suite costs nobody membership of a
+/// group whose socket hands over every container on the machine, including root-owned ones
+/// that have nothing to do with this project. Anything CLI-compatible does — `docker` is a
+/// drop-in for the four commands used here. Read once: a run must not straddle two runtimes.
+fn runtime() -> &'static str {
+    static RUNTIME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            std::env::var("CODEREVIEW_CONTAINER_RUNTIME").unwrap_or_else(|_| "podman".to_string())
+        })
+        .as_str()
+}
+
 fn remove_container() {
-    let _ = Command::new("docker")
+    let _ = Command::new(runtime())
         .args(["rm", "-f", CONTAINER])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -160,10 +177,10 @@ fn scratch_repo(root: &Path) {
 }
 
 #[test]
-#[ignore = "needs docker, curl and openssl; run with `make integration-test`"]
+#[ignore = "needs podman (or docker), curl and openssl; run with `make integration-test`"]
 fn the_browser_ui_works_behind_nginx() {
     for (program, probe) in [
-        ("docker", "--version"),
+        (runtime(), "--version"),
         ("curl", "--version"),
         ("git", "--version"),
         ("openssl", "version"),
@@ -208,7 +225,7 @@ fn the_browser_ui_works_behind_nginx() {
         ],
     );
 
-    // The server, signed in to with a password, with no agent: what the document recommends
+    // The server, signed in to with a password behind the proxy: what the document describes
     // for anything reachable from another machine.
     let binary = env!("CARGO_BIN_EXE_codereview");
     let mut hashing = Command::new(binary)
@@ -236,7 +253,6 @@ fn the_browser_ui_works_behind_nginx() {
             "--port",
             &UPSTREAM_PORT.to_string(),
             "--no-open",
-            "--no-agent",
             "--public-url",
             &format!("https://{HOST}:{HTTPS_PORT}"),
             repo.to_str().unwrap(),
@@ -256,7 +272,7 @@ fn the_browser_ui_works_behind_nginx() {
     // nginx shares the host's network, so proxy_pass to 127.0.0.1 reaches the server above
     // and the listen ports are the host's.
     run(
-        "docker",
+        runtime(),
         &[
             "run",
             "-d",
@@ -355,7 +371,6 @@ fn signing_in(ca: &Path) -> String {
     let (status, body) = (r.status, &r.body);
     assert_eq!(status, 200, "{body}");
     let state: serde_json::Value = serde_json::from_str(body).unwrap();
-    assert_eq!(state["agent"], false, "started with --no-agent");
     assert!(
         state["files"]
             .as_array()
@@ -364,12 +379,14 @@ fn signing_in(ca: &Path) -> String {
             .any(|f| f == "a.rs")
     );
 
-    // Without the token, nothing; and the agent is not there to be reached.
+    // Without the token, nothing. With it, every route is there, the agent's included: the
+    // proxy forwards `/api` whole, and the server serves all of it to whoever signs in.
     assert_eq!(curl(ca, &[&url("/api/state")]).status, 403);
     assert_eq!(
-        curl(ca, &["-H", &bearer, &url("/api/agent/events")]).status,
-        404
+        curl(ca, &["-H", &bearer, &url("/api/agent/events?since=0")]).status,
+        200
     );
+    assert_eq!(curl(ca, &[&url("/api/agent/events?since=0")]).status, 403);
     // The cookie alone does not drive the API, whatever the proxy forwards.
     assert_eq!(
         curl(
@@ -409,7 +426,7 @@ fn a_comment_reaches_the_file(ca: &Path, token: &str, repo: &Path) {
 fn the_access_log_keeps_no_secrets(token: &str) {
     // The access log keeps neither the password nor the token.
     let log = run(
-        "docker",
+        runtime(),
         &["exec", CONTAINER, "cat", "/var/log/nginx/review.access.log"],
     );
     assert!(log.contains("POST /login"), "the log is empty: {log}");

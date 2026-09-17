@@ -1,15 +1,27 @@
+<!doctype html>
+<html lang="en">
 <!-- The sign-in page. No script: a plain form post, so it works under a policy that allows
      the page nothing but its own styles. __MESSAGE__ is replaced by the server. -->
+<meta charset="utf-8">
+<!-- Without this a phone lays the page out for a desktop and scales it down to nothing.
+     `interactive-widget=resizes-content` shrinks the layout when the keyboard opens, so the
+     field being typed into stays where it was. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#f7f7f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#17181c" media="(prefers-color-scheme: dark)">
 <title>codereview</title>
 <style>
 :root { color-scheme: light dark; }
 * { box-sizing: border-box; }
 body {
   margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: 1rem calc(1rem + env(safe-area-inset-right)) calc(1rem + env(safe-area-inset-bottom)) calc(1rem + env(safe-area-inset-left));
   background: #f7f7f8; color: #1f2024;
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 }
-main { width: 22rem; max-width: calc(100vw - 2rem); }
+/* The dynamic viewport unit follows a phone browser's collapsing toolbars; plain vh does not. */
+@supports (min-height: 100dvh) { body { min-height: 100dvh; } }
+main { width: 22rem; max-width: 100%; }
 h1 { margin: 0 0 1.25rem; font-size: 1.1rem; font-weight: 700; color: #3b5bdb; letter-spacing: .01em; }
 form { display: flex; flex-direction: column; gap: .6rem; }
 label { font-size: 12px; color: #6b6d76; }
@@ -28,6 +40,13 @@ button:hover { background: #364fc7; }
   margin: 0 0 .9rem; padding: .5rem .6rem; border: 1px solid #e03131; border-radius: 6px;
   color: #c92a2a; background: #fff5f5; font-size: 13px;
 }
+/* A finger needs more room than a pointer, and below 16 pixels iOS zooms the page into a
+   focused field and then leaves it there, which is what makes the form jump about. */
+@media (hover: none) {
+  input, button { font-size: 16px; padding: .7rem .75rem; min-height: 44px; }
+}
+/* Too short to centre in: with the keyboard open that would push the form off the top. */
+@media (max-height: 500px) { body { align-items: flex-start; } }
 @media (prefers-color-scheme: dark) {
   body { background: #17181c; color: #e6e6e9; }
   h1 { color: #91a7ff; }
