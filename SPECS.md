@@ -259,7 +259,9 @@ the footer go, and what stays is the code, its line numbers, its comment rows an
 the bottom right to come back, which `z` and `Esc` also do. A message still shows the footer for
 as long as it has something to say, and a key that reaches for a field in the header comes out
 of zen first. Zen is a way of reading rather than a view, so it has no address, and leaving the
-file leaves it.
+file leaves it. `w`, and the same menu's Wrap lines, wraps long lines where the screen ends
+instead of scrolling sideways, with each continuation indented past the start of the code so a
+wrapped line still reads as one; the choice is kept in that browser's own storage.
 
 A review that ends in "this is good" ends in a commit, from the changes view: the working tree
 side stages everything it lists and commits that, the staged side commits the index as it
@@ -287,26 +289,33 @@ repository's number when it is not the first. The browser's back returns to the 
 reload keeps the place, and a diff's back button goes to whatever opened it. Paging through the
 files of one change replaces the address instead of adding to the history.
 
-**On a phone.** Below 700 pixels of width, or 500 of height, the header is one row with the
-tools (symbol and file search, colour scheme, refresh, sign out, help) behind one button, the
-tabs run along the bottom edge, and views show one pane at a time: the tree or the file, the
-commits or one commit, each with a back button, and the symbol drawer as a sheet over the lower
-half. Lists lay each item out as a card with its buttons underneath. The diff is unified, with
-the hunk buttons floating at the bottom right. Writing a comment takes over the screen rather
-than opening between two lines of code, which leaves no room for the text and its buttons: the
-form covers the page, sized to what the keyboard leaves of the viewport, and the Extend range
-button puts it away until the second line of the range is tapped, keeping the text typed so far.
-The text sheet does the same with the keyboard. A comment row stays as wide as the panel and
-sticks to its left edge while the code scrolls sideways, so a comment's text and buttons are in
-view whatever the line length; this holds on every screen size, as does the comment form on a
-screen wide enough to keep it between the lines. On a screen that cannot hover, the directory
-`+` is always visible, tap targets are larger, inputs are 16 pixels so iOS does not zoom into
-them, and the footer's hints say tap rather than click and name no keys. The sign-in page, which
+**On a phone.** Below 700 pixels of width, or 500 of height, the header is one row with the tools
+(symbol and file search, colour scheme, refresh, sign out, help) behind one button, and it gets
+out of the way as the content scrolls down and comes back as it scrolls up, except while its own
+menu is open. The tabs run along the bottom edge, four of them rather than six: the log lives
+under changes and the notes under review, each reachable by a button in the other's header and
+each keeping its own address, and the tab that leads to one is the one lit while it shows. Views
+show one pane at a time: the tree or the file, the commits or one commit, each with a back button,
+and the symbol drawer as a sheet over the lower half. Everything the file's header can do except
+Comment is behind one button, as a menu under it: seven buttons are three rows of a small screen,
+more than the header, the tabs and the footer together. The footer is there while it has something
+to say and gone otherwise, since a permanent row of instructions is a row a phone does not have.
+Lists lay each item out as a card with its buttons underneath. The diff is unified, with the hunk
+buttons floating at the bottom right. Writing a comment takes over the screen rather than opening
+between two lines of code, which leaves no room for the text and its buttons: the form covers the
+page, sized to what the keyboard leaves of the viewport, and the Extend range button puts it away
+until the second line of the range is tapped, keeping the text typed so far. The text sheet does
+the same with the keyboard. A comment row stays as wide as the panel and sticks to its left edge
+while the code scrolls sideways, so a comment's text and buttons are in view whatever the line
+length; this holds on every screen size, as does the comment form on a screen wide enough to keep
+it between the lines. On a screen that cannot hover, the directory `+` is always visible, tap
+targets are larger, inputs are 16 pixels so iOS does not zoom into them, and what the page says
+about acting on something says tap rather than click and names no keys. The sign-in page, which
 shares none of this stylesheet, carries the same viewport declaration and the same 16-pixel
-fields, and stops centring itself on a screen too short to centre in. The page declares a web
-app manifest and icons, served without a session, so a phone can put it on its home screen as a
-standalone app whose title bar follows the colour scheme; the agent panel stops polling while
-the page is hidden and catches up when it is shown again.
+fields, and stops centring itself on a screen too short to centre in. The page declares a web app
+manifest and icons, served without a session, so a phone can put it on its home screen as a
+standalone app whose title bar follows the colour scheme; the agent panel stops polling while the
+page is hidden and catches up when it is shown again.
 
 ## Command line
 

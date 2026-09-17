@@ -69,6 +69,9 @@ aside#tree input { width: calc(100% - 16px); margin: 0 8px 6px; }
 section#content { flex: 1; overflow: auto; min-width: 0; }
 .panelhead { position: sticky; top: 0; z-index: 2; display: flex; gap: 8px; align-items: center; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .panelhead .path { font-weight: 600; font-family: ui-monospace, monospace; }
+/* On a wide screen the file's other buttons sit in the header row as if the wrapper were not
+   there; on a phone they are a menu, because seven buttons are three rows of a small screen. */
+.panelhead .acts { display: contents; }
 .badge { padding: 0 6px; border-radius: 8px; font-size: 11px; border: 1px solid var(--border); }
 .badge.M { color: var(--upd-fg); } .badge.A, .badge.q { color: var(--ins-fg); } .badge.D { color: var(--del-fg); }
 table.code { border-collapse: collapse; width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; background: var(--code-bg); }
@@ -81,6 +84,9 @@ table.code tr.op-insert td.c { background: var(--ins); }
 table.code tr.op-delete td.c { background: var(--del); }
 table.code tr.op-update td.c { background: var(--upd); }
 table.code tr.op-move td.c { background: var(--mov); }
+/* Wrapped: the continuation of a line is indented past the start of the code, so a line that
+   takes three rows still reads as one line rather than three. */
+body.wrap table.code td.c { white-space: pre-wrap; overflow-wrap: anywhere; text-indent: -3ch; padding-left: calc(6px + 3ch); }
 table.code tr.op-insert td.m { color: var(--ins-fg); } table.code tr.op-delete td.m { color: var(--del-fg); }
 table.code tr.op-update td.m { color: var(--upd-fg); } table.code tr.op-move td.m { color: var(--mov-fg); }
 table.code tr.sel td.c { background: var(--visual); }
@@ -204,6 +210,25 @@ body.zen.hasmsg footer { display: flex; }
   header .tabs button { flex: 1; min-width: 0; padding: 6px 2px; font-size: 12px; border-bottom: none; border-top: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   header .tabs button.active { border-top-color: var(--accent); }
   header .tabs .badge { padding: 0 4px; }
+  /* The file's other buttons, as a menu under the one that opens it. */
+  .panelhead { position: relative; }
+  .panelhead .acts { display: none; }
+  .panelhead .acts.open { display: flex; flex-direction: column; gap: 8px; align-items: stretch;
+    position: absolute; top: 100%; right: 0; min-width: 60vw; z-index: 3; padding: 10px 12px 12px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 0 0 8px 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+  .panelhead .acts.open button { width: 100%; }
+  /* The header goes as you read down and comes back as you read up, as a phone browser's own
+     does. `hidehead` is not set while its own menu is open. */
+  header { transition: max-height .15s, padding .15s; overflow: hidden; max-height: 20em; }
+  body.hidehead header { max-height: 0; padding-top: 0; padding-bottom: 0; border-bottom: none; }
+  /* The footer is a row of permanent instructions on a screen that has none to spare: it is
+     there while it has something to say, and gone otherwise. */
+  footer { display: none; }
+  body.hasmsg footer { display: flex; }
+  body.hasmsg footer #hint { display: none; }
+  /* Log lives under Changes and Notes under Review here; both views keep their own address. */
+  header .tabs button[data-view=log], header .tabs button[data-view=notes] { display: none; }
   /* Explore is the tree, or the file, never both. */
   aside#tree { width: auto; min-width: 0; max-width: none; flex: 1; border-right: none; }
   body[data-view=explore]:not(.showfile) #content { display: none; }
@@ -292,7 +317,7 @@ const watch = { version: null, busy: false, every: 2000 };
 
 const state = {
   repo: 0, repos: [],
-  view: 'explore', files: [], zen: false,
+  view: 'explore', files: [], zen: false, wrap: false,
   // path -> the one-letter change mark, which is not the same shape as a ChangedFile's
   // `status`, a word.
   statusLetters: {}, pending: 0, hasCommits: true,
@@ -400,9 +425,26 @@ function askText(title, initial = '', okLabel = 'Save', note = '') {
   });
 }
 
+// The header gets out of the way as you read down and comes back as you read up. Only on a
+// phone — the stylesheet ignores the class elsewhere — and never while its own menu is open,
+// which would take the menu with it.
+function watchHeaderScroll(el) {
+  let last = el.scrollTop;
+  el.addEventListener('scroll', () => {
+    const now = el.scrollTop;
+    const header = document.querySelector('header');
+    // A few pixels of wobble is not a direction, and nothing hides at the very top.
+    if (Math.abs(now - last) < 12 || header.classList.contains('open')) return;
+    document.body.classList.toggle('hidehead', now > last && now > 48);
+    last = now;
+  }, { passive: true });
+}
+watchHeaderScroll($('#content'));
+
 // The header's tools live behind one button on a phone.
 $('#more').onclick = e => { e.stopPropagation(); document.querySelector('header').classList.toggle('open'); };
 document.addEventListener('click', e => { if (!e.target.closest('header') || e.target.closest('header .tools button')) document.querySelector('header').classList.remove('open'); });
+document.addEventListener('click', e => { if (!e.target.closest('.panelhead')) $('#content .acts')?.classList.remove('open'); });
 
 // Comment rows are as wide as the panel that scrolls the code, not as wide as the code; the
 // width is measured, since the tree and the drawer change it.
@@ -709,6 +751,17 @@ function fileHint() {
   hint('Click a line number to comment; shift-click extends the range.', 'Tap a line number to comment, or a name in the code for its definition.');
 }
 
+// Long lines, wrapped where the screen ends instead of running off it, with the continuation
+// indented so a wrapped line still reads as one. Where you are looking from is the browser's
+// business, so the choice is kept in its own storage and never reaches the server.
+function setWrap(on) {
+  state.wrap = on;
+  document.body.classList.toggle('wrap', on);
+  try { localStorage.setItem('wrap', on ? '1' : ''); } catch (e) { /* private window */ }
+  if (state.view === 'explore' && state.file) renderFile();
+  else if (state.view === 'diff' && state.diff && state.diff.data) renderDiff();
+}
+
 // Zen: the file, its line numbers and its comments, with the header, the tabs, the tree, the
 // file's own toolbar and the footer out of the way. It is a way of reading rather than a view,
 // so it has no address of its own, and anything that leaves the file leaves it as well.
@@ -759,13 +812,17 @@ function renderFile() {
     ${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
     <span class="dim">${f.lines.length} lines</span>
     <span class="spacer"></span>
-    <button data-act="symbols" title="definitions in this file (@)">Symbols</button>
     <button data-act="comment" title="comment on the file as a whole">Comment</button>
-    <button data-act="note">Note</button>
-    <button data-act="history" ${state.hasCommits ? '' : 'disabled'}>History</button>
-    <button data-act="diff" ${st && st !== '?' ? '' : 'disabled'}>Diff vs HEAD</button>
-    <button data-act="blame" ${state.hasCommits && st !== '?' ? '' : 'disabled'}>${f.blame ? 'Hide blame' : 'Blame'}</button>
-    <button data-act="zen" title="${TOUCH ? 'the file and nothing else' : 'the file and nothing else (z)'}">Zen</button>`;
+    <button class="phone" data-act="menu" title="everything else this file can do">⋯</button>
+    <span class="acts">
+      <button data-act="symbols" title="definitions in this file (@)">Symbols</button>
+      <button data-act="note">Note</button>
+      <button data-act="history" ${state.hasCommits ? '' : 'disabled'}>History</button>
+      <button data-act="diff" ${st && st !== '?' ? '' : 'disabled'}>Diff vs HEAD</button>
+      <button data-act="blame" ${state.hasCommits && st !== '?' ? '' : 'disabled'}>${f.blame ? 'Hide blame' : 'Blame'}</button>
+      <button data-act="wrap" title="${TOUCH ? 'wrap long lines instead of scrolling sideways' : 'wrap long lines instead of scrolling sideways (w)'}">${state.wrap ? 'No wrap' : 'Wrap lines'}</button>
+      <button data-act="zen" title="${TOUCH ? 'the file and nothing else' : 'the file and nothing else (z)'}">Zen</button>
+    </span>`;
   content.appendChild(head);
   on(head, 'up', showTree);
   on(head, 'note', () => addNote(f.path));
@@ -774,6 +831,10 @@ function renderFile() {
   on(head, 'history', () => showLog(f.path));
   on(head, 'diff', () => showDiff({ kind: 'working', path: f.path, status: st }, [{ path: f.path, status: st, old_path: null }], 0));
   on(head, 'zen', () => setZen(true));
+  on(head, 'wrap', () => setWrap(!state.wrap));
+  // The menu stays open for one choice only; every button in it closes it by acting.
+  on(head, 'menu', e => { e.stopPropagation(); head.querySelector('.acts').classList.toggle('open'); });
+  head.querySelector('.acts').addEventListener('click', () => head.querySelector('.acts').classList.remove('open'));
   on(head, 'blame', async () => {
     if (f.blame) { f.blame = null; renderFile(); return; }
     try { f.blame = await api('/blame?path=' + encodeURIComponent(f.path)); renderFile(); } catch (e) { fail(e); }
@@ -1096,8 +1157,10 @@ async function showChanges(staged = false) {
     const content = $('#content');
     content.innerHTML = `<div class="panelhead"><span class="path">${staged ? 'staged' : 'working tree'}</span><span class="dim">${files.length} files</span>
       <span class="spacer"></span><button data-act="switch">${staged ? 'Show working tree' : 'Show staged'}</button>
+      <button data-act="log" title="the repository's history">Log</button>
       <button class="primary" data-act="commit" ${files.length ? '' : 'disabled'} title="${staged ? 'commit what is staged' : 'stage everything below and commit it'}">Commit ${files.length} ${files.length === 1 ? 'file' : 'files'}</button></div><div class="list"></div>`;
     on(content, 'switch', () => showChanges(!staged));
+    on(content, 'log', () => showLog());
     on(content, 'commit', () => commitChanges(staged, files));
     const list = content.querySelector('.list');
     if (!files.length) list.innerHTML = '<div class="center">nothing here</div>';
@@ -1168,9 +1231,10 @@ async function showLog(path = null, keep = false, commit = null) {
 function renderLog() {
   const log = state.log;
   const content = $('#content');
-  content.innerHTML = `<div class="split"><div id="commits"><div class="panelhead"><span class="path">${log.path ? 'history of ' + esc(log.path) : 'log'}</span><span class="dim">${log.commits.length} commits${log.exhausted ? '' : '+'}</span></div><div class="list"></div></div>
+  content.innerHTML = `<div class="split"><div id="commits"><div class="panelhead"><span class="path">${log.path ? 'history of ' + esc(log.path) : 'log'}</span><span class="dim">${log.commits.length} commits${log.exhausted ? '' : '+'}</span><span class="spacer"></span><button data-act="changes" title="what is changed but not committed">Changes</button></div><div class="list"></div></div>
     <div id="commit"><div class="panelhead phone"><button data-act="up">‹ commits</button></div><div class="details"></div><div class="list files"></div></div></div>`;
   on(content, 'up', () => { content.querySelector('.split').classList.remove('detail'); navigate(routes.log(log.path, null)); });
+  on(content, 'changes', () => showChanges());
   const list = content.querySelector('#commits .list');
   if (!log.commits.length) list.innerHTML = '<div class="center">no commits</div>';
   log.commits.forEach((c, i) => {
@@ -1404,7 +1468,8 @@ async function showReview() {
     const pending = all.filter(c => c.comment.section === 'Pending').length;
     const content = $('#content');
     content.innerHTML = `<div class="panelhead"><span class="path">REVIEW.md</span><span class="dim">${pending} pending, ${all.length - pending} completed</span><span class="spacer"></span>
-      <button data-act="toggle">${show ? 'Hide completed' : 'Show completed'}</button><button data-act="reanchor" title="rewrite line numbers of moved comments">Re-anchor</button><button data-act="askall" title="have the agent work through every pending comment">Address all with agent</button></div><div class="list"></div>`;
+      <button data-act="notes" title="NOTES.md, the things that are not tasks">Notes</button><button data-act="toggle">${show ? 'Hide completed' : 'Show completed'}</button><button data-act="reanchor" title="rewrite line numbers of moved comments">Re-anchor</button><button data-act="askall" title="have the agent work through every pending comment">Address all with agent</button></div><div class="list"></div>`;
+    on(content, 'notes', showNotes);
     on(content, 'toggle', () => { state.review.showCompleted = !show; showReview(); });
     on(content, 'askall', () => askAgent({ preset: 'address_all' }));
     on(content, 'reanchor', () => api('/reanchor', { post: true }).then(r => { msg(r.moved + ' comment(s) re-anchored'); showReview(); }).catch(fail));
@@ -1459,7 +1524,8 @@ async function showNotes() {
   try {
     const notes = await api('/notes');
     const content = $('#content');
-    content.innerHTML = `<div class="panelhead"><span class="path">NOTES.md</span><span class="dim">${notes.length} notes</span><span class="spacer"></span><button data-act="add">Add general note</button></div><div class="list"></div>`;
+    content.innerHTML = `<div class="panelhead"><span class="path">NOTES.md</span><span class="dim">${notes.length} notes</span><span class="spacer"></span><button data-act="review" title="REVIEW.md, the comments to act on">Review</button><button data-act="add">Add general note</button></div><div class="list"></div>`;
+    on(content, 'review', showReview);
     on(content, 'add', () => addNote(null));
     const list = content.querySelector('.list');
     if (!notes.length) list.innerHTML = '<div class="center">no notes</div>';
@@ -1479,9 +1545,14 @@ async function showNotes() {
 
 // ----- chrome ---------------------------------------------------------------------------------
 
+// Where a view sits when its own tab is not shown: the phone puts Log under Changes and
+// Notes under Review, and the tab that leads there is the one to light up.
+const TAB_UNDER = { log: 'changes', notes: 'review' };
+
 function setTabs(view) {
   state.view = view;
-  document.querySelectorAll('header .tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  const lit = (phone() && TAB_UNDER[view]) || view;
+  document.querySelectorAll('header .tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === lit));
   // The stylesheet shows the tree for the explorer only, and on a phone either it or the file.
   document.body.dataset.view = view;
   if (view !== 'explore') setZen(false);
@@ -1594,7 +1665,8 @@ const HELP = `
 <tr><td><kbd>History</kbd></td><td>every commit that touched the file, and the diff of each</td></tr>
 <tr><td><kbd>Diff vs HEAD</kbd></td><td>what changed in the working tree</td></tr>
 <tr><td><kbd>Blame</kbd></td><td>last commit per line</td></tr>
-<tr><td><kbd>Zen</kbd> or <kbd>z</kbd></td><td>the file, its line numbers and its comments, and nothing else; <kbd>z</kbd> or <kbd>Esc</kbd> comes back</td></tr></table>
+<tr><td><kbd>Zen</kbd> or <kbd>z</kbd></td><td>the file, its line numbers and its comments, and nothing else; <kbd>z</kbd> or <kbd>Esc</kbd> comes back</td></tr>
+<tr><td><kbd>Wrap lines</kbd> or <kbd>w</kbd></td><td>wrap long lines instead of scrolling sideways, with the continuation indented; remembered in this browser</td></tr></table>
 <h3>Changes</h3><table>
 <tr><td><kbd>Commit</kbd></td><td>in the working tree view, stages everything listed and commits it; in the staged view, commits what is staged. The sheet names the files and any comment still pending on them, and hooks run as they do on the command line</td></tr></table>
 <h3>Symbols</h3><table>
@@ -1633,6 +1705,7 @@ document.addEventListener('keydown', e => {
   }
   if (e.key === '?') { $('#help').hidden = !$('#help').hidden; return; }
   if (e.key === 'z' && fileOnScreen()) { setZen(!state.zen); return; }
+  if (e.key === 'w' && !e.ctrlKey && !e.metaKey) { setWrap(!state.wrap); return; }
   // Both fields live in the header, which zen hides, so reaching for one comes out of zen.
   if (e.key === '/') { e.preventDefault(); setZen(false); $('#search').focus(); $('#search').select(); return; }
   if (e.key === '#') { e.preventDefault(); setZen(false); $('#symbol').focus(); $('#symbol').select(); return; }
@@ -1714,6 +1787,7 @@ async function route() {
 }
 window.addEventListener('hashchange', () => { if (location.hash !== currentRoute) route().catch(fail); });
 
+try { setWrap(localStorage.getItem('wrap') === '1'); } catch (e) { /* private window */ }
 startAgentPolling();
 startWatching();
 (async () => {
