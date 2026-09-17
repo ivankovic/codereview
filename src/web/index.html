@@ -230,8 +230,9 @@ body.zen.hasmsg footer { display: flex; }
   header .tabs button { flex: 1; min-width: 0; padding: 6px 2px; font-size: 12px; border-bottom: none; border-top: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   header .tabs button.active { border-top-color: var(--accent); }
   header .tabs .badge { padding: 0 4px; }
-  /* The file's other buttons, as a menu under the one that opens it. */
-  .panelhead { position: relative; }
+  /* The file's other buttons, as a menu under the one that opens it. `.panelhead` is sticky,
+     which already positions the menu; saying `relative` here instead would unstick every
+     panel header on the one screen that can least afford to scroll one away. */
   .panelhead .acts { display: none; }
   .panelhead .acts.open { display: flex; flex-direction: column; gap: 8px; align-items: stretch;
     position: absolute; top: 100%; right: 0; min-width: 60vw; z-index: 3; padding: 10px 12px 12px;
@@ -242,6 +243,10 @@ body.zen.hasmsg footer { display: flex; }
      does. `hidehead` is not set while its own menu is open. */
   header { transition: max-height .15s, padding .15s; overflow: hidden; max-height: 20em; }
   body.hidehead header { max-height: 0; padding-top: 0; padding-bottom: 0; border-bottom: none; }
+  /* The tools menu hangs below the header, and `overflow: hidden` — which is the only reason
+     collapsing to `max-height: 0` hides anything — would cut it off there. The header is not
+     collapsed while the menu is open, so nothing is left to clip. */
+  header.open { overflow: visible; }
   /* The footer is a row of permanent instructions on a screen that has none to spare: it is
      there while it has something to say, and gone otherwise. */
   footer { display: none; }
@@ -1754,7 +1759,8 @@ $('#refresh').onclick = () => doRefresh().catch(fail);
 // What must not be redrawn under the reader's hands: a comment being written, the text sheet,
 // and the menu over a name in the code. Each holds something typed or pointed at.
 function pageIsBusy() {
-  return !!$('#content .form') || !$('#editor').hidden || !$('#popover').hidden;
+  return !!$('#content .form') || !$('#editor').hidden || !$('#popover').hidden
+    || !!$('#content .acts.open') || document.querySelector('header').classList.contains('open');
 }
 
 async function watchPoll() {
