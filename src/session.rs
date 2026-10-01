@@ -860,7 +860,7 @@ impl Session {
 
     /// Every comment on `path`, placed in `text`: the working tree, or the after side of a
     /// diff. A comment that names a commit is followed from that commit's version of the file
-    /// with codediff; one that does not, or whose commit is not in the repository any more, is
+    /// with omnidiff; one that does not, or whose commit is not in the repository any more, is
     /// found by the text of its line.
     pub fn anchor_in(&self, path: &str, text: &str) -> Vec<Anchored> {
         self.anchor_comments(path, &self.review.comments_for(path), text)

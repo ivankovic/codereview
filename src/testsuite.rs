@@ -24,7 +24,7 @@
 
 use std::sync::OnceLock;
 
-use codediff::code::Language;
+use omnidiff::code::Language;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tree_sitter::Node;
@@ -497,7 +497,7 @@ impl Inventory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codediff::code::language::to_treesitter;
+    use omnidiff::code::language::to_treesitter;
 
     fn found(path: &str, language: Language, text: &str) -> Found {
         let mut parser = tree_sitter::Parser::new();

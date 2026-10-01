@@ -234,7 +234,7 @@ the whole file or directory, and is shown above the file's first line. The quote
 end is the line the comment was left on, and `(at 3f2a9c1)` after it, when there is one, is the
 commit whose version of the file the line numbers count in: the commit of the diff the comment
 was left in, or HEAD when the file is committed and unchanged. Such a comment is followed: the
-syntax tree of the file at that commit is matched against the file now with codediff's AST
+syntax tree of the file at that commit is matched against the file now with omnidiff's AST
 diff, and the comment goes where the code on its line went, through moves and edits and lines
 added above it. Any other comment is looked
 for by its text: if it is on the recorded line, the comment is exact; if it is elsewhere, the

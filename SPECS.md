@@ -90,12 +90,12 @@ builds the index on the caller's thread, as before.
 
 ## Anchoring
 
-A comment that names a commit is followed. The file at that commit is diffed with codediff
+A comment that names a commit is followed. The file at that commit is diffed with omnidiff
 against the text the comment is placed in — the working tree, or the after side of a diff — and
 the comment goes where its first line went: exact when that is the line number it had, edited
 or not; moved when it is elsewhere, having moved, or had lines added or removed above it; stale
 when the line was deleted, shown just below the nearest line above it that is still there. The
-line is followed through codediff's AST diff, used as a library, which matches every node of the
+line is followed through omnidiff's AST diff, used as a library, which matches every node of the
 old syntax tree, tokens included, to a node of the new one or to nothing: a line goes where the
 outermost node starting on it that survived went, so it follows the function, statement or
 brace it holds through moves and edits as the trees see them. A line on which nothing starts —
@@ -103,7 +103,7 @@ blank, or inside a comment or string spanning lines — keeps its distance from 
 innermost node around it, within where that node went; between top-level items, a blank line
 keeps its distance from the nearest placed line above. Only the AST diff runs, not the text
 rendering a diff view needs. Without trees — no grammar, over 20,000 lines, or a file that does
-not parse — codediff's plain line diff maps the lines it leaves unchanged, one for one in order.
+not parse — omnidiff's plain line diff maps the lines it leaves unchanged, one for one in order.
 The map is kept per path and commit for as long as the text it was made for does not change, at
 most 256 of them. A comment whose commit or path at that commit is not in
 the repository any more is placed by its anchor instead.

@@ -307,7 +307,7 @@ fn plain(before: &str, after: &str, language: Language, large_residual: bool) ->
 /// deleted: what follows a comment from the version of a file it was left on to the version
 /// on screen.
 ///
-/// Read off codediff's AST diff, which matches every node of one tree, every token included, to
+/// Read off omnidiff's AST diff, which matches every node of one tree, every token included, to
 /// a node of the other or to nothing. A line is the nodes that start on it, and it went where
 /// the outermost of them that survived went: the function whose signature it is, the statement
 /// it holds, the brace that closes a block — moved, edited, or pushed down by lines above it,
@@ -316,8 +316,8 @@ fn plain(before: &str, after: &str, language: Language, large_residual: bool) ->
 /// innermost node around it, inside where that node went; between top-level items, from the
 /// nearest placed line above.
 ///
-/// Without trees — a language codediff has no grammar for, a file past the size where the
-/// structural diff is skipped, one that does not parse — codediff's plain line diff decides,
+/// Without trees — a language omnidiff has no grammar for, a file past the size where the
+/// structural diff is skipped, one that does not parse — omnidiff's plain line diff decides,
 /// whose unchanged lines are the same lines in the same order on both sides.
 pub fn follow_lines(path: &Path, before: &str, after: &str) -> Vec<Option<usize>> {
     let path = path.to_path_buf();
@@ -353,7 +353,7 @@ fn follow_inner(path: &Path, before: &str, after: &str) -> Vec<Option<usize>> {
     };
     let cache = NodeCache::build(&before_code, &after_code);
     // Where a node of the before tree went: its match in the after tree, or nothing.
-    let went = |node: &tree_sitter::Node| -> Option<tree_sitter::Node<'static>> {
+    let went = |node: &tree_sitter::Node| {
         let to = *ast.before_node_map.get(&node.id())?;
         (to != 0).then(|| cache.after.get(&to).copied()).flatten()
     };
@@ -556,7 +556,7 @@ mod tests {
         assert_eq!(map[2], Some(3), "blank: {map:?}");
         assert_eq!(map[4], Some(5), "inside the comment: {map:?}");
 
-        // The plain line diff, for a language codediff has no grammar for, maps as well.
+        // The plain line diff, for a language omnidiff has no grammar for, maps as well.
         let map = follow_lines(
             Path::new("a.unknown"),
             "one\ntwo\nthree\n",
