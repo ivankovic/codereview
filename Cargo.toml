@@ -20,9 +20,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.5", features = ["derive"] }
 # Syntax-aware diffing. `default-features = false` drops its own TUI and its clap/ratatui
 # dependencies; this crate only needs the diff engine and the language table.
-codediff = { version = "0.0.12", default-features = false }
+omnidiff = { version = "0.2", default-features = false }
 regex = "1.10"
-# Same major as codediff's, so its grammars (reached through `codediff::code::language`) are
+# Same major as omnidiff's, so its grammars (reached through `omnidiff::code::language`) are
 # usable here for symbol extraction without a second copy of tree-sitter.
 tree-sitter = "0.25"
 serde = { version = "1.0", features = ["derive"] }

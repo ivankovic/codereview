@@ -17,7 +17,7 @@ line they were left on and finding it again after edits.
   one file.
 - **Note** things that are not tasks, per file or in general, in `NOTES.md`.
 - **History** of every file, and the log of the whole repository, with a syntax-aware diff of
-  any file in any commit, from the [codediff](https://github.com/ivankovic/codediff) engine:
+  any file in any commit, from the [omnidiff](https://github.com/ivankovic/omnidiff) engine:
   insertions, deletions, updates and moves, not just lines that happen to align.
 - **Diff** the working tree or the index against HEAD, or any commit against the working tree.
 - **Navigate by symbol**: jump to where the name under the cursor is defined, list every place
@@ -34,8 +34,8 @@ line they were left on and finding it again after edits.
   `REVIEW.md`. Claude Code directly by default, no adapter; any agent that speaks the Agent
   Client Protocol (ACP) as well.
 
-Rust, Python, TypeScript, HTML and Makefiles are the first-class languages. Everything codediff
-and syntect know works as well; a language codediff has no grammar for gets a plain line diff.
+Rust, Python, TypeScript, HTML and Makefiles are the first-class languages. Everything omnidiff
+and syntect know works as well; a language omnidiff has no grammar for gets a plain line diff.
 
 ## Installation
 
@@ -158,7 +158,7 @@ phone is good for; symbol navigation is there but is desk work.
 
 ### Symbols
 
-Definitions and occurrences come from the tree-sitter grammars codediff already ships, for
+Definitions and occurrences come from the tree-sitter grammars omnidiff already ships, for
 every language it parses; Makefiles get their targets and variables by pattern. The index is
 built the first time you ask (a few seconds on a large tree) and refreshed with `r`. It is
 deliberately simple: a definition is any node with a name field whose kind ends in

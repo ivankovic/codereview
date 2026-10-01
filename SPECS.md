@@ -119,8 +119,8 @@ followed from.
 
 ## Diffs
 
-Two versions of a file are diffed with codediff when the language is one it parses and both
-sides are under 20,000 lines; otherwise with codediff's plain-text line diff. The result, per
+Two versions of a file are diffed with omnidiff when the language is one it parses and both
+sides are under 20,000 lines; otherwise with omnidiff's plain-text line diff. The result, per
 side, is one operation per line (none, insert, delete, update, move) and, per line, the byte
 spans that changed. Binary content diffs as empty.
 
@@ -136,7 +136,7 @@ line.
 ## Symbols
 
 The index covers every listed file under 2 MB that is not binary, parsed with the tree-sitter
-grammar codediff maps to its language; files without a grammar get a pattern fallback
+grammar omnidiff maps to its language; files without a grammar get a pattern fallback
 (Makefile targets and variables, plus words). Files are parsed in parallel on first use and
 re-parsed on refresh when their size or modification time changed; files gone from the listing
 or from disk are dropped.

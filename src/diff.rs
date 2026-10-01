@@ -1,22 +1,22 @@
-//! The codediff wrapper, and the paint model both front ends draw from.
+//! The omnidiff wrapper, and the paint model both front ends draw from.
 //!
-//! codediff reports a diff as ranges (row/column spans, columns in bytes) on each side, each
+//! omnidiff reports a diff as ranges (row/column spans, columns in bytes) on each side, each
 //! tagged with an operation. This module turns that into two things a renderer wants: one
 //! operation per line, for gutters and alignment, and per-line byte spans, for painting the
 //! changed characters within a line.
 
 use std::path::Path;
 
-use codediff::code::language::language_for_path_and_content;
-use codediff::code::{Code, Language};
-use codediff::diff::text::{
+use omnidiff::code::language::language_for_path_and_content;
+use omnidiff::code::{Code, Language};
+use omnidiff::diff::text::{
     RangeMatch, TextDiff, TextOperation, line_operations, plain_text_line_diff,
 };
-use codediff::diff::{Diff, NodeCache};
+use omnidiff::diff::{Diff, NodeCache};
 use serde::{Deserialize, Serialize};
 
 /// Stack for the thread the diff runs on. Deep trees (generated files, long chained
-/// expressions) recurse deeper than a default thread stack allows; codediff's own front ends
+/// expressions) recurse deeper than a default thread stack allows; omnidiff's own front ends
 /// use the same figure.
 const DIFF_STACK_SIZE: usize = 256 * 1024 * 1024;
 
@@ -85,7 +85,7 @@ pub struct FileDiff {
     pub before: Side,
     pub after: Side,
     pub language: String,
-    /// True when codediff's tree diff ran; false for the plain-text line diff fallback.
+    /// True when omnidiff's tree diff ran; false for the plain-text line diff fallback.
     pub structural: bool,
     /// Whether the tree diff left an unusually large unmatched residual, which usually means
     /// the file was rewritten rather than edited.
@@ -494,7 +494,7 @@ fn spans_for_line(ranges: &[&RangeMatch], row: usize, len: usize) -> Vec<Span> {
         .filter(|s| s.end > s.start || len == 0)
         .collect();
     spans.sort_by_key(|s| (s.start, s.end));
-    // Later ranges take precedence where they overlap (codediff lists the finer ones last).
+    // Later ranges take precedence where they overlap (omnidiff lists the finer ones last).
     // `spans` is sorted by start, and anything pushed below is pushed in order, so `merged`
     // stays sorted without being sorted again.
     let mut merged: Vec<Span> = Vec::new();
@@ -657,7 +657,7 @@ mod tests {
 
     #[test]
     fn spans_clip_and_merge() {
-        use codediff::diff::text_range::TextRange;
+        use omnidiff::diff::text_range::TextRange;
         let r = |sr, sc, er, ec, op| RangeMatch {
             source: TextRange::new(sr, sc, er, ec),
             destination: TextRange::new(0, 0, 0, 0),
