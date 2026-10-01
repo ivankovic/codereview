@@ -79,6 +79,68 @@ impl App {
         }
     }
 
+    /// Takes over the side panel settings another repository's app saved.
+    pub fn adopt_sidebar(&mut self, sidebar: crate::config::SidebarConfig) {
+        self.session.adopt_sidebar(sidebar);
+    }
+
+    /// What a setting is now, as the options panel shows it.
+    pub fn setting_value(&self, setting: Setting) -> String {
+        let on = |b: bool| if b { "on" } else { "off" }.to_string();
+        let sidebar = self.session.config.sidebar;
+        match setting {
+            Setting::FilesAutoHide => on(sidebar.files_auto_hide),
+            Setting::OutlineAutoHide => on(sidebar.outline_auto_hide),
+            Setting::DiffLayout => self.layout.label().to_string(),
+            Setting::ColourScheme => self.theme.name.clone(),
+        }
+    }
+
+    /// The options panel: `j`/`k` choose a row, Space or Enter changes it, and every change
+    /// is saved to the config file as it is made, the way the diff layout always was.
+    pub(super) fn handle_options_key(&mut self, key: KeyEvent) {
+        let Some(row) = self.options else {
+            return;
+        };
+        let last = Setting::ALL.len() - 1;
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.options = Some((row + 1).min(last)),
+            KeyCode::Char('k') | KeyCode::Up => self.options = Some(row.saturating_sub(1)),
+            KeyCode::Home => self.options = Some(0),
+            KeyCode::Char('G') | KeyCode::End => self.options = Some(last),
+            KeyCode::Enter | KeyCode::Char(' ') => self.change_setting(Setting::ALL[row]),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(',') => self.options = None,
+            _ => {}
+        }
+    }
+
+    fn change_setting(&mut self, setting: Setting) {
+        let mut sidebar = self.session.config.sidebar;
+        match setting {
+            Setting::FilesAutoHide => sidebar.files_auto_hide = !sidebar.files_auto_hide,
+            Setting::OutlineAutoHide => sidebar.outline_auto_hide = !sidebar.outline_auto_hide,
+            Setting::DiffLayout => {
+                self.layout = self.layout.next();
+                let outcome = self.session.set_layout(self.layout.name());
+                self.report(outcome);
+                return;
+            }
+            Setting::ColourScheme => {
+                self.options = None;
+                self.open_theme_picker();
+                return;
+            }
+        }
+        let outcome = self.session.set_sidebar(sidebar);
+        if self.report(outcome).is_some() {
+            let value = self.setting_value(setting);
+            self.info(format!(
+                "{}: {value}, saved to the config file",
+                setting.label()
+            ));
+        }
+    }
+
     pub(super) fn submit_prompt(&mut self) {
         let Some(prompt) = self.prompt.take() else {
             return;
@@ -90,13 +152,16 @@ impl App {
                     self.info("empty comment discarded");
                     return;
                 }
-                let source = match (self.screen(), lines) {
-                    (Screen::Diff(d), Some((line, _))) => d.view.after_lines.get(line - 1).cloned(),
-                    _ => None,
+                let (source, at) = match (self.screen(), lines) {
+                    (Screen::Diff(d), Some((line, _))) => (
+                        d.view.after_lines.get(line - 1).cloned(),
+                        d.view.target.after_revision().map(str::to_string),
+                    ),
+                    _ => (None, None),
                 };
-                let outcome = self
-                    .session
-                    .add_comment(&path, lines, &text, source.as_deref());
+                let outcome =
+                    self.session
+                        .add_comment(&path, lines, &text, source.as_deref(), at.as_deref());
                 if self.report(outcome).is_some() {
                     if let Some(v) = &mut self.viewer {
                         v.visual = None;

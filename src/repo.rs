@@ -108,8 +108,6 @@ pub struct Activity {
     pub commits: usize,
     /// Everyone who made one, first seen first.
     pub authors: Vec<String>,
-    pub added: usize,
-    pub removed: usize,
 }
 
 /// Working tree state of one path, from `git status --porcelain`.
@@ -145,6 +143,12 @@ impl Repo {
 
     fn git(&self, args: &[&str]) -> Result<Vec<u8>> {
         run_git(&self.root, args)
+    }
+
+    /// A git command's output, for the few callers outside this module with a question of
+    /// their own. `args` are fixed strings, never a path or a revision from a request.
+    pub fn git_output(&self, args: &[&str]) -> Result<Vec<u8>> {
+        self.git(args)
     }
 
     /// Refuses a revision that git would read as an option. Revisions come from the UIs and
@@ -192,6 +196,23 @@ impl Repo {
         }
     }
 
+    /// How many commits reachable from HEAD were made after `when`; none in a repository with
+    /// no commits yet. Commit times are whole seconds and `--since` includes the second it is
+    /// given, so a commit in the same second as `when` is taken to have come first — which
+    /// it almost always did, since a run is started after the commit it is about.
+    pub fn commits_since(&self, when: std::time::SystemTime) -> Result<usize> {
+        if !self.has_commits() {
+            return Ok(0);
+        }
+        let secs = when
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let since = format!("--since=@{}", secs + 1);
+        let out = self.git(&["rev-list", "--count", &since, "HEAD"])?;
+        Ok(String::from_utf8_lossy(&out).trim().parse().unwrap_or(0))
+    }
+
     /// Every tracked file plus untracked files that are not ignored, sorted.
     pub fn list_files(&self) -> Result<Vec<String>> {
         let out = self.git(&[
@@ -218,34 +239,17 @@ impl Repo {
     }
 
     /// What has been done to the repository lately: how many commits since `since` (anything
-    /// git's `--since` understands, `7.days` for one week), who made them, and how many lines
-    /// they added and removed. One command, because a page that shows all four should not pay
-    /// for four.
+    /// git's `--since` understands, `7.days` for one week), and who made them. Not how many
+    /// lines they changed: that is `--numstat`, which diffs every one of them, and on a
+    /// repository whose commits carry a corpus it took seconds for two figures nobody read.
     pub fn activity(&self, since: &str) -> Result<Activity> {
-        // \x01 heads each commit's record, so its author cannot be mistaken for a file whose
-        // name contains a tab, and `--no-renames` keeps a rename from counting as both.
-        let out = self.git(&[
-            "log",
-            &format!("--since={since}"),
-            "--numstat",
-            "--no-renames",
-            "--format=%x01%an",
-        ])?;
+        let out = self.git(&["log", &format!("--since={since}"), "--format=%an"])?;
         let mut activity = Activity::default();
-        for line in String::from_utf8_lossy(&out).lines() {
-            if let Some(author) = line.strip_prefix('\u{1}') {
-                activity.commits += 1;
-                let author = author.to_string();
-                if !activity.authors.contains(&author) {
-                    activity.authors.push(author);
-                }
-                continue;
+        for author in String::from_utf8_lossy(&out).lines() {
+            activity.commits += 1;
+            if !activity.authors.contains(&author.to_string()) {
+                activity.authors.push(author.to_string());
             }
-            // `added<TAB>removed<TAB>path`, with `-` for both on a binary file.
-            let mut fields = line.split('\t');
-            let (added, removed) = (fields.next(), fields.next());
-            activity.added += added.and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
-            activity.removed += removed.and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
         }
         Ok(activity)
     }
@@ -256,19 +260,28 @@ impl Repo {
     ///
     /// An unmatched pattern is not an error: git grep says so with an exit code, and "none"
     /// is the answer, not a failure.
-    pub fn grep_count(&self, pattern: &str) -> Result<usize> {
+    /// How many lines match `pattern` (extended regex, whole words) in each tracked file
+    /// that has any, within `pathspecs` — every file when there are none. Files without a
+    /// match are left out, as `git grep -c` leaves them out.
+    pub fn grep_counts(
+        &self,
+        pattern: &str,
+        pathspecs: &[String],
+    ) -> Result<BTreeMap<String, usize>> {
         let output = git_command(&self.root)
             .args(["grep", "-c", "-w", "-E", "--", pattern])
+            .args(pathspecs)
             .output()
             .context("cannot run git grep")?;
+        // Exit status 1 is "nothing matched", which is a count of zero everywhere.
         if !output.status.success() {
-            return Ok(0);
+            return Ok(BTreeMap::new());
         }
         Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
             .filter_map(|l| l.rsplit_once(':'))
-            .filter_map(|(_, n)| n.trim().parse::<usize>().ok())
-            .sum())
+            .filter_map(|(path, n)| Some((path.to_string(), n.trim().parse::<usize>().ok()?)))
+            .collect())
     }
 
     /// Working tree and index status, keyed by path.
@@ -369,6 +382,28 @@ impl Repo {
         Self::check_rev(to)?;
         let out = self.git(&["diff", "--name-status", "-z", "-M", from, to])?;
         Ok(parse_name_status(&out))
+    }
+
+    /// `rev` as a commit, abbreviated the way git abbreviates it: unambiguous here, now.
+    pub fn short_hash(&self, rev: &str) -> Result<String> {
+        Self::check_rev(rev)?;
+        let spec = format!("{rev}^{{commit}}");
+        let out = self.git(&["rev-parse", "--short", "--verify", &spec])?;
+        Ok(String::from_utf8_lossy(&out).trim().to_string())
+    }
+
+    /// Whether `path` is in the commit HEAD names and the working tree holds it unchanged: the
+    /// one case where a line number in the file on disk is also one in a commit.
+    pub fn committed_as_is(&self, path: &str) -> bool {
+        if Self::check_path(path).is_err() || !self.has_commits() {
+            return false;
+        }
+        let spec = format!("HEAD:{path}");
+        let in_head = self.git(&["cat-file", "-e", &spec]).is_ok();
+        let unchanged = self
+            .git(&["status", "--porcelain=v1", "-z", "--", path])
+            .is_ok_and(|out| out.is_empty());
+        in_head && unchanged
     }
 
     /// The content of `path` at `rev`, or `None` when it does not exist there. `rev` may be

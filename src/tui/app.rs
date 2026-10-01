@@ -18,6 +18,7 @@ mod screens;
 
 use crate::tui::agent_panel;
 use crate::tui::diff_view::{DiffLayout, DiffView};
+use crate::tui::outline::Outline;
 use crate::tui::prompt::{Prompt, PromptKind};
 use crate::tui::tree::Tree;
 use crate::tui::viewer::Viewer;
@@ -139,6 +140,72 @@ impl Screen {
     }
 }
 
+/// Whether the viewer holds a picture the terminal might draw. An SVG is text, and is shown as
+/// its source.
+fn is_picture(v: &Viewer) -> bool {
+    v.binary && crate::media::image_type(&v.path).is_some_and(|t| t != "image/svg+xml")
+}
+
+/// The open file as a picture: drawn by the terminal, or, where it cannot draw, why not.
+pub struct Picture {
+    pub path: String,
+    pub shown: std::result::Result<ratatui_image::protocol::StatefulProtocol, String>,
+}
+
+/// What the explorer's left pane shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sidebar {
+    /// The file tree.
+    Files,
+    /// What the open file defines.
+    Outline,
+}
+
+/// A row of the options panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Setting {
+    FilesAutoHide,
+    OutlineAutoHide,
+    DiffLayout,
+    ColourScheme,
+}
+
+impl Setting {
+    pub const ALL: [Setting; 4] = [
+        Setting::FilesAutoHide,
+        Setting::OutlineAutoHide,
+        Setting::DiffLayout,
+        Setting::ColourScheme,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Setting::FilesAutoHide => "Files: auto-hide",
+            Setting::OutlineAutoHide => "Outline: auto-hide",
+            Setting::DiffLayout => "Diff layout",
+            Setting::ColourScheme => "Colour scheme",
+        }
+    }
+
+    pub fn explanation(self) -> &'static str {
+        match self {
+            Setting::FilesAutoHide => {
+                "Hide the file tree while the file has the focus, and give the file its width. \
+                 Tab, or q from the file, brings it back."
+            }
+            Setting::OutlineAutoHide => {
+                "Hide the outline while the file has the focus, the same way. O switches the \
+                 side panel between the file tree and the outline."
+            }
+            Setting::DiffLayout => {
+                "How a diff is laid out: side by side when the terminal is wide enough, \
+                 always side by side, or always one column. v changes it in a diff."
+            }
+            Setting::ColourScheme => "Opens the colour scheme picker, which t opens as well.",
+        }
+    }
+}
+
 /// What the draw pass measured last time, so key handling can page by the right amount.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Measured {
@@ -166,7 +233,29 @@ pub struct App {
     pub session: Session,
     pub tree: Tree,
     pub viewer: Option<Viewer>,
+    /// Whether the explorer's left pane, the tree or the outline, has the focus rather
+    /// than the file.
     pub focus_tree: bool,
+    /// Which of the two the left pane shows.
+    pub sidebar: Sidebar,
+    /// The outline of the open file, made when it is first shown and dropped when another
+    /// file opens.
+    pub outline: Option<Outline>,
+    /// The options panel, open, with the highlighted row.
+    pub options: Option<usize>,
+    /// How this terminal draws pictures, when it can: kitty, sixel or iTerm2. `None` in one
+    /// that cannot, where a picture is described instead, and in tests.
+    pub graphics: Option<ratatui_image::picker::Picker>,
+    /// Whether the terminal has been asked. It is asked when the first picture is opened and
+    /// not before, since asking means writing to it and reading its answer off the input.
+    pub graphics_known: bool,
+    /// The open file as a picture, made when it is first drawn.
+    pub picture: Option<Picture>,
+    /// The symbol index being built on another thread since the repository was opened, so
+    /// that the first symbol jump does not pay for it; `tick` takes it in.
+    warming: Option<std::sync::mpsc::Receiver<crate::symbols::Index>>,
+    /// When `OVERVIEW.md` was last looked after.
+    kept_at: std::time::Instant,
     pub screens: Vec<Screen>,
     pub prompt: Option<Prompt>,
     pub message: Option<(String, bool)>,
@@ -204,6 +293,14 @@ impl App {
             tree,
             viewer: None,
             focus_tree: true,
+            sidebar: Sidebar::Files,
+            outline: None,
+            options: None,
+            graphics: None,
+            graphics_known: false,
+            picture: None,
+            warming: None,
+            kept_at: std::time::Instant::now(),
             screens: vec![Screen::Explorer],
             prompt: None,
             message: None,
@@ -229,7 +326,23 @@ impl App {
             app.open_file(&path);
             app.focus_tree = false;
         }
+        app.warm();
         app
+    }
+
+    /// Starts building the symbol index on a thread of its own. `Index::build` reads the
+    /// files and nothing of the session, so the session is free while it works.
+    fn warm(&mut self) {
+        if self.session.has_index() || self.warming.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let root = self.session.root().to_path_buf();
+        let files = self.session.files.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::symbols::Index::build(&root, &files));
+        });
+        self.warming = Some(rx);
     }
 
     pub fn screen(&self) -> &Screen {
@@ -261,6 +374,8 @@ impl App {
     // ----- explorer --------------------------------------------------------------------------
 
     pub fn open_file(&mut self, path: &str) {
+        self.outline = None;
+        self.picture = None;
         let view = match self.session.file_view(path) {
             Ok(v) => v,
             Err(e) => {
@@ -307,8 +422,9 @@ impl App {
     fn refresh_diff_comments(&mut self) {
         for screen in &mut self.screens {
             if let Screen::Diff(d) = screen {
-                let comments = self.session.review.comments_for(&d.view.file.path);
-                d.view.comments = crate::anchor::anchor_all(&comments, &d.view.diff.after.text);
+                d.view.comments = self
+                    .session
+                    .anchor_in(&d.view.file.path, &d.view.diff.after.text);
             }
         }
     }
@@ -589,8 +705,24 @@ impl App {
     }
 
     /// Collects the agent's events. Returns whether anything changed.
-    pub fn tick(&mut self) -> bool {
-        self.agent.tick()
+    /// Between key presses: the agent's news, the index if it has finished building, and,
+    /// for the repository on screen, `OVERVIEW.md` every few seconds.
+    pub fn tick(&mut self, active: bool) -> bool {
+        let mut changed = self.agent.tick();
+        if let Some(rx) = &self.warming {
+            if let Ok(index) = rx.try_recv() {
+                self.session.install_index(index);
+                self.warming = None;
+                changed = true;
+            }
+        }
+        if active && self.kept_at.elapsed() >= std::time::Duration::from_secs(5) {
+            self.kept_at = std::time::Instant::now();
+            // What went wrong is not worth a message every five seconds; the file is a
+            // convenience, and the next tick tries again.
+            let _ = self.session.keep_facts(None);
+        }
+        changed
     }
 
     /// The configured agent's name, for a title or a hint.
@@ -823,6 +955,10 @@ impl App {
             self.handle_theme_picker_key(key);
             return true;
         }
+        if self.options.is_some() {
+            self.handle_options_key(key);
+            return true;
+        }
         if self.show_help {
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => self.help_scroll += 1,
@@ -900,6 +1036,10 @@ impl App {
             }
             KeyCode::Char('W') => {
                 self.workspace_request = Some(WorkspaceRequest::PickRepo);
+                return true;
+            }
+            KeyCode::Char(',') => {
+                self.options = Some(0);
                 return true;
             }
             // The agent panel from anywhere, for terminals (tmux with a Ctrl-a prefix) where
@@ -1018,7 +1158,7 @@ impl App {
                     }
                 } else if !self.focus_tree {
                     self.focus_tree = true;
-                } else if !self.tree.filter.is_empty() {
+                } else if self.sidebar == Sidebar::Files && !self.tree.filter.is_empty() {
                     self.tree.filter.clear();
                     self.tree.rebuild();
                 } else {
@@ -1037,6 +1177,17 @@ impl App {
                     "filter",
                     &was,
                 ));
+            }
+            // The other side panel, with the focus, so that one set to hide is seen.
+            KeyCode::Char('O') => {
+                self.sidebar = match self.sidebar {
+                    Sidebar::Files => Sidebar::Outline,
+                    Sidebar::Outline => Sidebar::Files,
+                };
+                self.focus_tree = true;
+            }
+            _ if self.focus_tree && self.sidebar == Sidebar::Outline => {
+                self.handle_outline_key(key)
             }
             _ if self.focus_tree => self.handle_tree_key(key),
             _ => self.handle_viewer_key(key, half),
@@ -1108,6 +1259,135 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn handle_outline_key(&mut self, key: KeyEvent) {
+        let height = self.measured.tree_height.max(1) as isize;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(
+            key.code,
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right
+        ) {
+            self.go_to_symbol(true);
+            return;
+        }
+        if key.code == KeyCode::Char(' ') {
+            self.go_to_symbol(false);
+            return;
+        }
+        let Some(outline) = &mut self.outline else {
+            return;
+        };
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => outline.move_by(1),
+            KeyCode::Char('k') | KeyCode::Up => outline.move_by(-1),
+            KeyCode::Char('d') if ctrl => outline.move_by(height / 2),
+            KeyCode::Char('u') if ctrl => outline.move_by(-height / 2),
+            KeyCode::PageDown => outline.move_by(height),
+            KeyCode::PageUp => outline.move_by(-height),
+            KeyCode::Home => outline.go_top(),
+            KeyCode::Char('G') | KeyCode::End => outline.go_bottom(),
+            _ => {}
+        }
+    }
+
+    /// Takes the file to the definition under the outline's cursor: with the focus, as a jump
+    /// `Ctrl-o` comes back from, or, for a look, leaving the focus in the outline.
+    fn go_to_symbol(&mut self, focus_file: bool) {
+        let Some((path, line, column)) = self.outline.as_ref().and_then(|o| {
+            o.current()
+                .map(|i| (o.path.clone(), i.symbol.line, i.symbol.column))
+        }) else {
+            return;
+        };
+        if focus_file {
+            self.push_jump();
+        }
+        self.jump_to_col(&path, line, column);
+        self.focus_tree = !focus_file;
+    }
+
+    /// Whether the side panel on show is one set to hide while the file has the focus.
+    fn sidebar_hides(&self) -> bool {
+        let config = self.session.config.sidebar;
+        match self.sidebar {
+            Sidebar::Files => config.files_auto_hide,
+            Sidebar::Outline => config.outline_auto_hide,
+        }
+    }
+
+    /// Whether the explorer draws its left pane: always, unless it hides and the file has
+    /// the focus. With no file open there is nothing to give the width to.
+    pub fn sidebar_shown(&self) -> bool {
+        !(self.sidebar_hides() && self.viewer.is_some() && !self.focus_tree)
+    }
+
+    /// Whether the open file is a picture this terminal has not yet been asked about drawing:
+    /// the run loop asks, between reading keys, before it draws.
+    pub fn needs_graphics(&self) -> bool {
+        !self.graphics_known && self.viewer.as_ref().is_some_and(is_picture)
+    }
+
+    /// Makes the picture of the open file if it is one and is not made yet: decoded and handed
+    /// to the terminal's protocol where there is one, or described by its size where there is
+    /// not. An SVG is text and is shown as its source.
+    pub fn ensure_picture(&mut self) {
+        let Some(v) = &self.viewer else {
+            self.picture = None;
+            return;
+        };
+        if !is_picture(v) {
+            self.picture = None;
+            return;
+        }
+        if self.picture.as_ref().is_some_and(|p| p.path == v.path) {
+            return;
+        }
+        let path = v.path.clone();
+        let bytes = self
+            .session
+            .repo
+            .read_working(&path)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let shown = match &self.graphics {
+            Some(graphics) => image::load_from_memory(&bytes)
+                .map(|picture| graphics.new_resize_protocol(picture))
+                .map_err(|e| format!("cannot read this picture: {e}")),
+            None => {
+                let size = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                    .with_guessed_format()
+                    .ok()
+                    .and_then(|r| r.into_dimensions().ok());
+                Err(match size {
+                    Some((w, h)) => format!("A picture, {w} × {h}. This terminal draws none."),
+                    None => "A picture. This terminal draws none.".to_string(),
+                })
+            }
+        };
+        self.picture = Some(Picture { path, shown });
+    }
+
+    /// Makes the outline of the open file if it is not made yet, and, unless it has the
+    /// focus, moves its cursor to where the file's is. Called by the draw pass, so the
+    /// outline is only ever made for a file someone is looking at it for.
+    pub fn ensure_outline(&mut self) {
+        let Some(v) = &self.viewer else {
+            self.outline = None;
+            return;
+        };
+        if self.outline.as_ref().is_none_or(|o| o.path != v.path) {
+            let path = v.path.clone();
+            let symbols = self.session.outline(&path).unwrap_or_default();
+            self.outline = Some(Outline::new(&path, symbols));
+        }
+        let following = !(self.focus_tree && self.sidebar == Sidebar::Outline);
+        if let (Some(o), Some(line)) = (&mut self.outline, v.current_line()) {
+            if following {
+                o.follow(line);
+            }
         }
     }
 

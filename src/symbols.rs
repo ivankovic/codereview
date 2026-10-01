@@ -19,6 +19,8 @@ use codediff::code::language::{language_for_path_and_content, to_treesitter};
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser, Point};
 
+use crate::testsuite::{Found, TestCase};
+
 /// The most occurrences one query answers with. A common identifier in a large repository
 /// has tens of thousands, and each one costs a line of text and a file read.
 pub const MAX_REFERENCES: usize = 2000;
@@ -58,7 +60,8 @@ fn contains_fold(name: &str, lower: &str) -> bool {
 }
 
 /// Files above this size are not indexed; nothing a reviewer navigates by symbol is that big.
-const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+/// The overview's TODO count draws the same line, for the same reason.
+pub(crate) const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Symbol {
@@ -104,6 +107,11 @@ struct FileEntry {
     /// Occurrences, with the name interned: a common identifier appears tens of thousands
     /// of times in a large repository and its name is worth storing once.
     idents: Vec<Occurrence>,
+    /// The tests the file defines, which of its rows are test code, and the modules it
+    /// declares for tests only.
+    tests: Vec<TestCase>,
+    test_code: Vec<(u32, u32)>,
+    test_modules: Vec<String>,
 }
 
 /// One occurrence of an identifier, by name number.
@@ -189,10 +197,13 @@ impl Index {
     }
 
     /// Re-indexes files whose size or modification time changed, indexes new ones, and drops
-    /// ones no longer listed.
-    pub fn refresh(&mut self, paths: &[String]) {
+    /// ones no longer listed. Says whether anything did change, so what was worked out from
+    /// the index need not be worked out again when nothing did.
+    pub fn refresh(&mut self, paths: &[String]) -> bool {
         let listed: std::collections::HashSet<&str> = paths.iter().map(String::as_str).collect();
+        let before = self.files.len();
         self.files.retain(|p, _| listed.contains(p.as_str()));
+        let mut changed = self.files.len() != before;
         let mut stale = Vec::new();
         for p in paths {
             let meta = std::fs::metadata(self.root.join(p)).ok();
@@ -206,14 +217,17 @@ impl Index {
                 // Listed but gone from disk: nothing to navigate to any more.
                 (Some(_), None) => {
                     self.files.remove(p.as_str());
+                    changed = true;
                 }
                 (None, None) => {}
             }
         }
+        changed |= !stale.is_empty();
         for (path, entry) in index_files(&self.root, &stale) {
             let entry = self.take_in(entry);
             self.files.insert(path, entry);
         }
+        changed
     }
 
     /// Replaces one file's entry from text held in memory rather than read from disk. The
@@ -221,12 +235,13 @@ impl Index {
     /// the file on disk again: this is for looking something up now, not for overriding what
     /// the repository says.
     pub fn update_text(&mut self, path: &str, text: &str) {
-        let (symbols, idents) = index_text(path, text);
+        let (symbols, idents, found) = index_text(path, text);
         let entry = self.take_in(RawEntry {
             len: text.len() as u64,
             modified: None,
             symbols,
             idents,
+            found,
         });
         self.files.insert(path.to_string(), entry);
     }
@@ -247,6 +262,9 @@ impl Index {
             modified: raw.modified,
             symbols: raw.symbols,
             idents,
+            tests: raw.found.tests,
+            test_code: raw.found.code,
+            test_modules: raw.found.test_modules,
         }
     }
 
@@ -289,22 +307,10 @@ impl Index {
             p
         };
         // Which files define each name, and which mention it.
-        let mut defined: HashMap<u32, Vec<usize>> = HashMap::new();
+        let defined = self.defined(&paths, false);
         let mut mentioned: HashMap<u32, HashSet<usize>> = HashMap::new();
         for (i, path) in paths.iter().enumerate() {
-            let entry = &self.files[*path];
-            for symbol in &entry.symbols {
-                if !worth_counting(&symbol.name) || symbol.kind == "field" {
-                    continue;
-                }
-                if let Some(id) = self.names.id_of(&symbol.name) {
-                    let files = defined.entry(id).or_default();
-                    if !files.contains(&i) {
-                        files.push(i);
-                    }
-                }
-            }
-            for occurrence in &entry.idents {
+            for occurrence in &self.files[*path].idents {
                 mentioned.entry(occurrence.name).or_default().insert(i);
             }
         }
@@ -358,6 +364,125 @@ impl Index {
                 .then(a.path.cmp(&b.path))
         });
         out
+    }
+
+    /// Which of `paths` (by position) define each name worth counting: not a field, and not a
+    /// plain short word. With `outside_tests`, a name defined in test code does not count —
+    /// a test's own helpers are not code under test.
+    fn defined(&self, paths: &[&String], outside_tests: bool) -> HashMap<u32, Vec<usize>> {
+        let test_files = if outside_tests {
+            self.test_files()
+        } else {
+            HashSet::new()
+        };
+        let mut defined: HashMap<u32, Vec<usize>> = HashMap::new();
+        for (i, path) in paths.iter().enumerate() {
+            let entry = &self.files[*path];
+            if test_files.contains(path.as_str()) {
+                continue;
+            }
+            for symbol in &entry.symbols {
+                if !worth_counting(&symbol.name) || symbol.kind == "field" {
+                    continue;
+                }
+                if outside_tests && Found::covers(&entry.test_code, symbol.line as u32 - 1) {
+                    continue;
+                }
+                if let Some(id) = self.names.id_of(&symbol.name) {
+                    let files = defined.entry(id).or_default();
+                    if !files.contains(&i) {
+                        files.push(i);
+                    }
+                }
+            }
+        }
+        defined
+    }
+
+    /// The files that are test code throughout: under a `tests` directory, named the way a
+    /// runner collects them, or declared by a Rust module under `#[cfg(test)]` elsewhere.
+    fn test_files(&self) -> HashSet<&str> {
+        let mut out: HashSet<&str> = self
+            .files
+            .iter()
+            .filter(|(_, f)| Found::whole(&f.test_code))
+            .map(|(p, _)| p.as_str())
+            .collect();
+        for (path, entry) in &self.files {
+            for name in &entry.test_modules {
+                for candidate in crate::testsuite::module_files(path, name) {
+                    if let Some((p, _)) = self.files.get_key_value(&candidate) {
+                        out.insert(p.as_str());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Every test the repository defines, by path then line.
+    pub fn tests(&self) -> Vec<TestCase> {
+        let mut out: Vec<TestCase> = self
+            .files
+            .values()
+            .flat_map(|f| f.tests.iter().cloned())
+            .collect();
+        out.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+        out
+    }
+
+    /// Of the files [`reach`](Self::reach) ranks, the ones no test code mentions, in the same
+    /// order: leaned on the most, and with nothing to say when a change breaks them.
+    ///
+    /// A file counts as reached when it has tests of its own, or when test code anywhere names
+    /// something it defines outside its tests, with the same rules `reach` uses for what a
+    /// name is worth. Only files in a language whose tests are found here are listed: a
+    /// Makefile or a page of HTML leaned on by everything is not untested, it is untestable
+    /// in the sense this means. Only test code counts: a Rust file with a
+    /// test module also imports half the crate in its ordinary code, and none of that is
+    /// tested by being imported. Nothing here resolves a name, so a file can be counted as
+    /// reached by a test that only shares a word with it; it is never counted the other way.
+    pub fn untested(&self) -> Vec<Reach> {
+        let paths: Vec<&String> = {
+            let mut p: Vec<&String> = self.files.keys().collect();
+            p.sort();
+            p
+        };
+        let defined = self.defined(&paths, true);
+        let test_files = self.test_files();
+        let mut reached: HashSet<&str> = HashSet::new();
+        for path in &paths {
+            let entry = &self.files[*path];
+            if !entry.tests.is_empty() {
+                reached.insert(path.as_str());
+            }
+            let whole = test_files.contains(path.as_str());
+            if entry.test_code.is_empty() && !whole {
+                continue;
+            }
+            for occurrence in &entry.idents {
+                if !whole && !Found::covers(&entry.test_code, occurrence.line) {
+                    continue;
+                }
+                let Some(definers) = defined.get(&occurrence.name) else {
+                    continue;
+                };
+                if definers.len() > SHARED_NAME {
+                    continue;
+                }
+                for &d in definers {
+                    reached.insert(paths[d].as_str());
+                }
+            }
+        }
+        self.reach()
+            .into_iter()
+            .filter(|r| {
+                crate::testsuite::testable(&r.path)
+                    && !reached.contains(r.path.as_str())
+                    && !test_files.contains(r.path.as_str())
+            })
+            .collect()
     }
 
     /// Every definition named exactly `name`, by path then line.
@@ -475,6 +600,7 @@ struct RawEntry {
     modified: Option<SystemTime>,
     symbols: Vec<Symbol>,
     idents: Vec<Ident>,
+    found: Found,
 }
 
 /// Parses each file on a pool of threads; unreadable, binary and oversized files are skipped.
@@ -509,7 +635,7 @@ fn index_files(root: &Path, paths: &[String]) -> Vec<(String, RawEntry)> {
                             continue;
                         }
                         let text = String::from_utf8_lossy(&bytes);
-                        let (symbols, idents) = index_text(path, &text);
+                        let (symbols, idents, found) = index_text(path, &text);
                         out.push((
                             path.clone(),
                             RawEntry {
@@ -517,6 +643,7 @@ fn index_files(root: &Path, paths: &[String]) -> Vec<(String, RawEntry)> {
                                 modified: meta.modified().ok(),
                                 symbols,
                                 idents,
+                                found,
                             },
                         ));
                     }
@@ -540,15 +667,25 @@ fn parse(path: &str, text: &str) -> Option<(Language, tree_sitter::Tree)> {
     Some((language, tree))
 }
 
-/// Definitions and identifier occurrences of one file.
-fn index_text(path: &str, text: &str) -> (Vec<Symbol>, Vec<Ident>) {
+/// What one file defines, parsed on its own, in source order.
+pub fn symbols_of(path: &str, text: &str) -> Vec<Symbol> {
+    index_text(path, text).0
+}
+
+/// Definitions, identifier occurrences and tests of one file.
+fn index_text(path: &str, text: &str) -> (Vec<Symbol>, Vec<Ident>, Found) {
     match parse(path, text) {
         Some((language, tree)) => {
             let mut walk = FileWalk::new(path, text, language);
             walk.run(tree.root_node());
-            walk.finish()
+            let (symbols, idents) = walk.finish();
+            let found = crate::testsuite::find(path, language, tree.root_node(), text.as_bytes());
+            (symbols, idents, found)
         }
-        None => regex_index(path, text),
+        None => {
+            let (symbols, idents) = regex_index(path, text);
+            (symbols, idents, Found::default())
+        }
     }
 }
 
@@ -885,10 +1022,79 @@ mod tests {
         assert!(lonely.is_none_or(|l| l.score < reach[0].score), "{reach:?}");
     }
 
+    /// Only what test code names counts as tested. `app.rs` has a test module, which makes it
+    /// tested, and calls `store.rs` from its ordinary code, which must not make `store.rs` look
+    /// tested; its test names `parse_review`, which does make `review.rs` tested.
+    #[test]
+    fn untested_is_what_no_test_code_names() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("review.rs"), "pub fn parse_review() {}\n").unwrap();
+        std::fs::write(dir.path().join("store.rs"), "pub fn save_to_disk() {}\n").unwrap();
+        std::fs::write(
+            dir.path().join("app.rs"),
+            "fn run_app() { save_to_disk(); parse_review(); }\n\
+             #[cfg(test)]\nmod tests {\n    #[test]\n    fn it_parses() { parse_review(); }\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("main.rs"),
+            "fn main() { run_app(); save_to_disk(); }\n",
+        )
+        .unwrap();
+        // Leaned on by everything, and not a language anything here tests.
+        std::fs::write(dir.path().join("Makefile"), "SAVE_TARGET = x\n").unwrap();
+        std::fs::write(dir.path().join("deploy.rs"), "fn go() { SAVE_TARGET; }\n").unwrap();
+        // A module for tests only, in a file of its own: test code throughout, so what it
+        // names is tested and it is not itself a gap.
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            "#[cfg(test)]\nmod fakes;\nfn go() { write_journal(); fake_journal(); }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("fakes.rs"),
+            "pub fn fake_journal() { write_journal(); }\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("journal.rs"), "pub fn write_journal() {}\n").unwrap();
+        let files: Vec<String> = [
+            "lib.rs",
+            "fakes.rs",
+            "journal.rs",
+            "review.rs",
+            "store.rs",
+            "app.rs",
+            "main.rs",
+            "Makefile",
+            "deploy.rs",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let index = Index::build(dir.path(), &files);
+
+        let tests = index.tests();
+        assert_eq!(tests.len(), 1, "{tests:?}");
+        assert_eq!(tests[0].label, "it parses");
+        let untested: Vec<String> = index.untested().into_iter().map(|r| r.path).collect();
+        assert!(untested.contains(&"store.rs".to_string()), "{untested:?}");
+        assert!(
+            !untested.contains(&"app.rs".to_string()),
+            "a file with tests of its own is tested: {untested:?}"
+        );
+        assert!(!untested.contains(&"review.rs".to_string()), "{untested:?}");
+        assert!(!untested.contains(&"Makefile".to_string()), "{untested:?}");
+        assert!(!untested.contains(&"fakes.rs".to_string()), "{untested:?}");
+        assert!(
+            !untested.contains(&"journal.rs".to_string()),
+            "{untested:?}"
+        );
+    }
+
     #[test]
     fn rust_definitions_and_identifiers() {
         let text = "pub struct Foo { x: i32 }\nimpl Foo {\n    pub fn new() -> Self { Foo { x: 1 } }\n}\nfn main() { let f = Foo::new(); }\n";
-        let (symbols, idents) = index_text("a.rs", text);
+        let (symbols, idents, _) = index_text("a.rs", text);
         let names: Vec<(&str, &str)> = symbols
             .iter()
             .map(|s| (s.kind.as_str(), s.name.as_str()))
@@ -912,7 +1118,7 @@ mod tests {
 
     #[test]
     fn python_typescript_html_makefile() {
-        let (py, _) = index_text(
+        let (py, _, _) = index_text(
             "a.py",
             "class A:\n    def m(self):\n        pass\n\ndef f(x):\n    return x\n",
         );
@@ -920,7 +1126,7 @@ mod tests {
         assert_eq!(names, vec!["A", "m", "f"]);
         assert_eq!(py[1].container.as_deref(), Some("A"));
 
-        let (ts, _) = index_text(
+        let (ts, _, _) = index_text(
             "a.ts",
             "export interface I { a: number }\nexport class C implements I {\n  a = 1;\n  go(): void {}\n}\nconst k = () => 1;\nfunction g() {}\n",
         );
@@ -934,11 +1140,11 @@ mod tests {
         assert!(names.contains(&("function", "g")));
         assert!(names.contains(&("variable", "k")));
 
-        let (html, _) = index_text("a.html", "<div id=\"main\"><span id=\"x\"></span></div>\n");
+        let (html, _, _) = index_text("a.html", "<div id=\"main\"><span id=\"x\"></span></div>\n");
         let names: Vec<&str> = html.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["main", "x"]);
 
-        let (mk, idents) = index_text(
+        let (mk, idents, _) = index_text(
             "Makefile",
             "CC = gcc\nall: build\n\techo $(CC)\nbuild:\n\t$(CC) -o x\n",
         );

@@ -23,11 +23,17 @@ compare against nothing.
 Sections are level-one headings. `Pending` and `Completed` are created when missing, `Pending`
 first. A comment is one bullet:
 
-`- [author] (timestamp) In <path> on line <N>: <text> - "<anchor>"` or `on line <A>-<B>` for
-a range. Author, timestamp and anchor are optional, and so is the whole `on line` clause:
-without it the comment is about the path as a whole, which is how a file or a directory is
-commented on. The anchor is the trimmed text of the first commented line, cut to 80
-characters with an ellipsis; a comment on a path has none. The parser accepts what
+`- [author] (timestamp) In <path> on line <N>: <text> - "<anchor>" (at <commit>)` or
+`on line <A>-<B>` for a range. Author, timestamp, anchor and commit are optional, and so is the
+whole `on line` clause: without it the comment is about the path as a whole, which is how a file
+or a directory is commented on. The anchor is the trimmed text of the first commented line, cut
+to 80 characters with an ellipsis; a comment on a path has none. The commit, abbreviated as git
+abbreviates it, names the commit whose version of the file the line numbers count in: the
+commit of a diff whose after side the comment was left on, or HEAD for a comment on the working
+tree when the file is committed and unchanged there; otherwise there is none. Only seven to
+forty hex digits in `(at …)` ending the line are read as one. It goes last because nvim-review
+finds a comment by `on line N:` and reads everything after the first `: ` as text. The parser
+accepts what
 nvim-review writes and vice versa; nvim-review keeps the lines it does not itself write. A
 path is read up to the first `: `, and the `on line` clause may only be left out on a bullet
 at the left margin, so a nested prose bullet stays prose but a top-level one reading
@@ -42,13 +48,74 @@ Level-two headings name a file (repository-relative) or `General`. Bullets under
 notes; a note continues on indented lines. `General` is kept first; new file sections go last.
 Other content is preserved.
 
+## OVERVIEW.md
+
+What the tool last found out about the repository, next to the other two files, readable and
+read back: `As of commit <hash> on <branch>, <YYYY-MM-DD HH:MM>.` under the title, then `Facts`
+(`- N files, N tests in N files, N marked to skip`, and a line per check, `- <name>: passed in
+<N> s, <when>`), `Start here` and `What the rest of it leans on` and `Named by no test` (a
+bullet per path, `- <path> — <why or names>`), and `Tests` (a `###` heading per file with a
+bullet per test as a phrase, `(skipped)` after one marked so). `About` holds whatever a person or
+the agent writes, kept as it is; so is any section under a heading the tool does not know, kept
+whole and last. The tool's sections are rewritten whole. Nothing in it changes with the clock,
+and the tests carry no line numbers, so a rewrite means the repository changed.
+
+It is read when a repository is opened. Until the symbol index is built, what it says stands in
+for what the index would say — the leaned-on files and the tests, as of its commit and however
+many commits behind — and the page says so and asks again every two seconds. It is written once
+the repository has held still for ten seconds since it last changed, the index is built, and
+nothing was written at that fingerprint yet; the browser server does this every five seconds for
+the repositories a request has named in the last two minutes, the terminal UI for the one on
+screen, and `codereview overview` on demand. Writing it does not count as the repository
+changing. The web server, which knows what its checks did, writes them into `Facts`; the terminal
+UI and the command, which do not, keep what the file says. The About section and the kept
+sections are taken from the file as it is on disk at the time, not as it was read at open.
+
+## Caching
+
+The session keeps what it worked out until what it came from changes: the overview's figures
+by the repository's fingerprint (one `git status` to check, which the page already pays every
+two seconds), and what is read off the symbol index — the ranking, the tests, the untested
+files — by an index generation that goes up when the index is built, replaced, or changed by a
+refresh, which says whether any file did. The week's activity is the count of commits and their
+authors, not the lines they changed: that needed a diff of every commit, seconds on a
+repository whose commits carry a corpus.
+
+The symbol index is built on a thread of its own when a repository is opened: the browser
+server builds one repository's after another's from start-up and hands each to its session;
+the terminal UI builds the open repository's and takes it in between key presses. A request or
+a key that needs the index before then does not build a second one, but answers from
+`OVERVIEW.md` (the browser) or waits (the terminal). Only a session nobody is building for
+builds the index on the caller's thread, as before.
+
 ## Anchoring
 
-A comment is placed by its anchor. If the recorded line still holds the anchor text, it is
-exact. Otherwise the nearest line holding that text wins, and the comment is moved. If no line
-holds it, the comment is stale and stays at its recorded line. Ranges keep their length. A
+A comment that names a commit is followed. The file at that commit is diffed with codediff
+against the text the comment is placed in — the working tree, or the after side of a diff — and
+the comment goes where its first line went: exact when that is the line number it had, edited
+or not; moved when it is elsewhere, having moved, or had lines added or removed above it; stale
+when the line was deleted, shown just below the nearest line above it that is still there. The
+line is followed through codediff's AST diff, used as a library, which matches every node of the
+old syntax tree, tokens included, to a node of the new one or to nothing: a line goes where the
+outermost node starting on it that survived went, so it follows the function, statement or
+brace it holds through moves and edits as the trees see them. A line on which nothing starts —
+blank, or inside a comment or string spanning lines — keeps its distance from the start of the
+innermost node around it, within where that node went; between top-level items, a blank line
+keeps its distance from the nearest placed line above. Only the AST diff runs, not the text
+rendering a diff view needs. Without trees — no grammar, over 20,000 lines, or a file that does
+not parse — codediff's plain line diff maps the lines it leaves unchanged, one for one in order.
+The map is kept per path and commit for as long as the text it was made for does not change, at
+most 256 of them. A comment whose commit or path at that commit is not in
+the repository any more is placed by its anchor instead.
+
+Any other comment is placed by its anchor. If the recorded line still holds the anchor text, it
+is exact. Otherwise the nearest line holding that text wins, and the comment is moved. If no
+line holds it, the comment is stale and stays at its recorded line. Ranges keep their length. A
 comment without an anchor, and one without a line range, is always exact. `reanchor` rewrites
-the line numbers of moved comments and nothing else.
+the line numbers of moved comments; one that named a commit then counts in the working tree, so
+it names HEAD if the file is committed as it is and nothing otherwise, and takes its line's
+current text as its anchor. Both front ends say which commit a moved or stale comment was
+followed from.
 
 ## Diffs
 
@@ -180,17 +247,32 @@ the Light or Dark scheme and highlights with Dark's syntax theme.
 The config file is `$CODEREVIEW_CONFIG`, else `$XDG_CONFIG_HOME/codereview/config.toml`, else
 `~/.config/codereview/config.toml`: `theme`, `layout` (`auto`, `side-by-side`, `unified`),
 `timestamps`, `[agent]` with `kind`, `claude_command`, `claude_args`, `command` and
-`args`, and any number of `[[analysis]]` checks. Missing keys take defaults; a malformed file
-is an error. The terminal UI saves
-on Enter in the picker (`t`; `j`/`k` preview live, `Esc` restores) and on every layout change
-(`v`); the browser UI saves from its header dropdown. Both read the file when they start.
+`args`, `[sidebar]` with `files_auto_hide` and `outline_auto_hide`, and any number of
+`[[analysis]]` checks. Missing keys take defaults; a malformed file is an error. The terminal UI
+saves on Enter in the picker (`t`; `j`/`k` preview live, `Esc` restores), on every layout change
+(`v`) and on every change in the options panel (`,`), and hands what it saved to the other
+repositories open beside it; the browser UI saves from its header dropdown. Both read the file
+when they start.
 
 ## Analysis
 
 The checks a project already has, run from the tool. Each `[[analysis]]` entry in the config
 file has a `name`, a `run` command, optionally the artefact it leaves behind (`reads`, relative
-to the repository root) with how to read it (`kind`: `junit` or `lcov`), and `watch`, the
-repository roots where it may also run without being asked.
+to the repository root) with how to read it (`kind`: `junit` or `lcov`), `watch`, the
+repository roots where it may also run without being asked, and `repos`, the repository roots it
+belongs to — empty, the default, for every repository.
+
+A repository with nothing configured still says how to test it, and its checks are offered as
+found rather than configured: its Makefile's `test` and `check` targets, then `cargo nextest
+run` (when `cargo-nextest` is on `PATH`) or `cargo test` for a `Cargo.toml`, with `--workspace`
+for a workspace; `npm`, `pnpm`, `yarn` or `bun` `test` for a `package.json` with a real test
+script, by its lockfile; `pytest` for a pytest configuration, or a `tests` directory beside a
+`pyproject.toml` or `setup.py`, through `uv run` or `poetry run` when their lockfile is there;
+and `go test ./...` for a `go.mod`. The commands come from that table and never from the
+repository. One found is not offered when a configured check for the repository runs the same
+command or has the same name. Running a found check saves it to the config file first, scoped to
+that repository, or adds the repository to an entry already saved for another one; the file is
+read again before any save, so that sessions sharing it do not undo each other's changes.
 
 A run is a process; its result is a file. The command runs through `sh -c` from the repository
 root with its error output folded into its ordinary output and no terminal at all, so anything
@@ -199,10 +281,17 @@ it took, and the last 64 KiB of what it printed, whole lines only; all of it is 
 for as long as the server runs and no longer. What survives is the artefact: `junit.xml` read
 for tests, failures and errors together, and skipped — from the wrapping `<testsuites>` when
 there is one, otherwise the suites added up — and `lcov.info` read for `LF`/`LH` as a
-percentage of lines covered. Figures are read on request and carry the artefact's own
-modification time, so a figure with no run behind it, left by the same command typed in a
-terminal, is shown and dated rather than hidden. An artefact path that is absolute or climbs
-out of the repository is ignored.
+percentage of lines covered. Without an artefact, a finished run's output is read for the
+counts a test runner prints at the end — `cargo test`'s `test result:` lines added up, nextest's
+`Summary`, pytest's closing line, jest's and vitest's `Tests` — as tests run, failed and skipped.
+Figures are read on request and carry the artefact's own modification time, so a figure with
+no run behind it, left by the same command typed in a terminal, is shown and dated rather than
+hidden. An artefact path that is absolute or climbs
+out of the repository is ignored. Each result also says how far the code has moved since it:
+the commits reachable from HEAD made after the run started, or after the artefact was written,
+and the files in the working tree written after it, leaving out `REVIEW.md`, `NOTES.md` and the
+artefact itself. Commit times are whole seconds, and a commit in the same second as the run
+counts as having come before it.
 
 Starting a check that is already running is a conflict; naming one that is not configured is a
 bad request. A repository named in a check's `watch` is also watched: every five seconds its
@@ -216,17 +305,44 @@ and never from anything inside a repository.
 
 ## Highlighting
 
-syntect with two-face's syntax set, chosen by extension, then file name, then first line.
-Files over 20,000 lines are not highlighted. The output is a list of coloured segments per
-line, which both front ends cut at diff-span and search-match boundaries.
+syntect on the oniguruma regex engine with two-face's syntax set, chosen by extension, then
+file name, then first line. Either front end shows the first 20,000 lines of a file and says
+how many there are; past that a file is a fixture or a dump, and drawing it whole is what
+freezes a phone. Files over 20,000 lines are not highlighted either. The page draws a file's
+rows in batches, the first at once and the rest a frame at a time, so a long file shows its
+head while the rest is built. A diff's two sides are kept by content, the last sixteen,
+since the syntax-aware engine costs a couple of hundred milliseconds on a large file and the
+same diff is asked for on every open of a modified file. The output is a list
+of coloured segments per line, which both front ends cut at diff-span and search-match
+boundaries. The last sixteen files highlighted are kept, by path, theme and content, since a
+review opens the same file again and again and a couple of thousand lines of Rust are a
+quarter of a second to highlight. On the wire a file's lines are packed: the distinct styles
+once, in a table, and per line `[style, text]` pairs with runs of one style joined, a sixth
+of the size of one object per segment; the page unpacks them on arrival.
 
 ## Terminal UI
 
-Screens form a stack; `q` or `Esc` pops one, and quits from the explorer. The explorer has the
-file tree (folding, filter, status letters, pending-comment counts for files and directories)
-and the file viewer (syntax highlighting, line numbers, change markers against HEAD or the
-index, comment rows under the lines they refer to, comments on the whole file above its first
-line, optional blame column, search with smart case, visual line selection). `c` on the tree
+Screens form a stack; `q` or `Esc` pops one, and quits from the explorer. The explorer has a side
+panel — the file tree (folding, filter, status letters, pending-comment counts for files and
+directories; past the tenth file of a directory the rest fold behind `… N more`, except the
+changed, the commented on and the one under the cursor, and nothing folds under a filter),
+or, after `O`, the outline of the open file — and the file viewer (syntax
+highlighting, line numbers, change markers against HEAD or the index, comment rows under the
+lines they refer to, comments on the whole file above its first line, optional blame column,
+search with smart case, visual line selection). A picture — PNG, JPEG, GIF, WebP, BMP or ICO —
+is drawn in the viewer, fitted to it, where the terminal speaks a graphics protocol (kitty,
+sixel or iTerm2); where it does not, the viewer says it is a picture and how big. The terminal
+is asked which protocol it speaks when the first picture is opened, not before, with a second to
+answer; one whose `TERM` is unset or `dumb` is not asked. An SVG is text and shows as its
+source. The outline is
+what the open file defines, parsed on its own so it does not wait for the symbol index, fields
+left out, each definition indented under the ones whose lines hold it; its cursor follows the
+file's while the file has the focus, `Enter` jumps to a definition as `Ctrl-o` can come back
+from, and `Space` shows it without leaving the outline. Either panel can be set to hide: it is
+drawn while it has the focus and left out while the file has it, the file taking its width,
+and `Tab`, or `q` from the file, brings it back; with no file open it always shows. `,` opens
+the options panel — each panel's auto-hide, the diff layout, the colour scheme — where `Space`
+changes a setting, saves it at once, and the setting under the cursor is explained. `c` on the tree
 comments on the selected file or directory as a whole; `c` in the viewer comments on the line
 or the selection. Other screens: repository log and per-file history (commit list, details, files
 of the selected commit, paging in 200s), working tree and staged change lists, a diff view
@@ -261,14 +377,15 @@ restricts the page to its own origin. `--public-url` names what a reverse proxy 
 the URL printed at start-up, and an HTTPS one marks the cookie `Secure`. Everything the tool can
 do it can do for anyone who signs in: there is no read-only mode, and no way to serve the
 repository without the agent, the comments or the commit. The server stops on SIGTERM as well as
-on Ctrl-C. The API mirrors the session: state, file with highlighting and change markers, blame,
-log, commit files, changes, a summary of every repository, a repository's overview and what it
-leans on, diff with highlighting on both sides
-and anchored comments, comments and notes (list, add, toggle, edit, delete), commit, the
-configured checks and starting one, refresh and re-anchor, the theme list and config, a version,
-symbols (file symbols, definitions, occurrences, search, identifier at a position), and the agent
-(start, poll for events since a sequence number, prompt with text or a preset, answer a
-permission, cancel, stop, clear). The version is a fingerprint of everything a front end draws:
+on Ctrl-C. The API mirrors the session: state, file with highlighting and change markers, a
+picture's bytes with its media type (nothing that is not a picture), blame,
+log, commit files, changes, a repository's overview, what it leans on and its tests, diff with
+highlighting on both sides and anchored comments, comments and notes (list, add, toggle, edit,
+delete), commit, the checks configured and found and starting one, refresh and re-anchor, the theme
+list and config, a version, symbols (file symbols, definitions, occurrences, search, identifier at a
+position), and the agent (start, poll for events since a sequence number, prompt with text or a
+preset, answer a permission, cancel, stop, clear). The version is a fingerprint of everything a
+front end draws:
 the status of every path, the branch, and the size and modification time of both Markdown files
 and of one named file, hashed into a number that means nothing on its own. It costs one `git
 status`, and it moves whenever anything on screen would look different, whoever made the change; a
@@ -276,10 +393,15 @@ status alone would not, since a file written twice is modified either way. The s
 transcript itself, the same way the terminal does, and answers a poll with the entries that
 changed since the version the page names, each with the position it belongs at: a tool call is one
 entry, filled in as it runs, so entries are not append-only. It also sends what the turn is doing
-and what it has cost, already worded, so the page only draws. The page has a status view the
+and what it has cost, already worded, so the page only draws. The page has an overview the
 terminal UI has not, and otherwise the same: explorer with tree and file, changes, log and
 history, diff, review, notes, and the agent tab; clicking a name in code offers its definition and
-usages in a side drawer. A comment on a whole file comes from the Comment button in the file
+usages in a side drawer. A picture in the working tree is shown in the file view, fitted to it
+on a checkerboard, with its size in pixels and bytes under it; an SVG has its source below it.
+The page fetches the bytes with the API token and shows them from memory, which the content
+security policy allows as `blob:` images; the endpoint serves an SVG under a policy that runs
+nothing. A comment left in a commit's diff sends that commit with it. A comment on a whole file
+comes from the Comment button in the file
 header and is shown above the first line; one on a directory from the `+` on its row in the tree.
 A range is chosen with shift-click, or with the comment form's Extend range button followed by the
 line number at the other end, which keeps the text typed so far. Editing a comment or a note, and
@@ -314,13 +436,22 @@ agent's own poll. A write of the page's own moves the version too, so the next r
 becomes the baseline instead of redrawing what the page has just drawn.
 
 A repository opens on its overview, not on its file tree. It is what the project says it is —
-the opening paragraphs of its README, with the title line dropped, since that is the name the
-page is already showing — then where to start reading, what the rest of the tree leans on, the
+the prose its README opens with, as plain text, up to the first heading after it — then where to
+start reading, what the rest of the tree leans on, the
 other documents beside the code, and the biggest files. Above all of it: the branch, how many
 files and how many are changed, how many comments are pending and how many of those have lost
-the lines they were left on, the commits of the last week with who made them and how many lines
-they added and removed, and the count of `TODO`, `FIXME`, `HACK` and `XXX` in tracked files.
-Every count is a way in, and every path opens. The tree is one button away, at its own address.
+the lines they were left on, the commits of the last week with who made them, and the count of
+`TODO`, `FIXME`, `HACK` and `XXX` in tracked files.
+Every count is a way in, and every path opens. The overview is the first tab, and the tree is
+one button away, at its own address; the Explore tab with no file open is the tree as well.
+
+What a README opens with is often not prose, so none of this is kept: titles, which are the
+project's name and already on the page; lines that are only images, links or markup once those
+are taken out, which is what a row of badges or a table of contents is; images, even ones whose
+description wraps; HTML comments, code blocks, tables, link definitions and reStructuredText
+directives. What is kept loses its links, tags and emphasis and keeps their words. A last
+paragraph ending in a colon introduced something that was left out, and goes too. About two
+hundred characters are taken, cut at six hundred, and a README with no prose has no section.
 
 Where to start reading is convention and nothing cleverer: `src/main.rs`, `src/lib.rs`,
 `__main__.py`, `package.json`, `main.go`, a `Makefile`, an `index.html`, each with a few words
@@ -333,15 +464,29 @@ defining a method called `push` would otherwise collect every `push` in the repo
 left is a project's own vocabulary, and the ranking is shown with the names that earned it, so
 a reader can see why a file is there and disbelieve it.
 
-The status view is every served repository at once, a row each: its name, its branch, how many
-comments are pending, how many paths git calls changed, and the subject and age of its last
-commit. Each count is read afresh rather than taken from that repository's session, since a
-repository nobody is looking at is refreshed by nobody, and each is a way in — the name opens
-its tree, the counts open its review or its changes, switching repository on the way. Under
-them are the configured checks as they stand in the repository the page is on: what the last
-run in this server did, what the artefact says and how old it is, a button to run one, and its
-output when there is any. While one runs the view redraws itself every two seconds. A phone
-opening the page with no address of its own starts here rather than at the tree.
+What needs the symbol index — what the tree leans on, and the tests — is asked for after the
+rest of the overview is drawn, and while the server is still building the index it comes from
+`OVERVIEW.md`, marked "as of" its commit, and is asked for again until it does not. A test from
+the file has no line number and opens its file at the top.
+
+The overview ends with the repository's tests. First its checks, configured and found: what the
+last run in this server did, what the artefact or the output says and how old it is, how many
+commits and changed files have come since, or that the result matches the tree, a button to run
+one — which, for a found one, also saves it — and its output when there is any. They are asked
+for on their own, so the rest of the overview does not wait for them, and while one runs they
+redraw themselves every two seconds until the overview is left. Then what the tests say: every
+test the repository defines, found by reading it rather than running it, counted, and grouped by
+file, each file folded until it is opened and each test a phrase that opens its line — a Rust
+`#[test]` function, a pytest `test*` function or `Test*` class method in a file pytest collects,
+a Go `TestXxx` in a `_test.go` file, a JavaScript or TypeScript `it` or `test` call in a test
+file, named with its `describe` blocks — with the ones marked to skip marked. Last, the files the
+rest of the tree leans on most that no test code names: test code being a test, a `#[cfg(test)]`
+module — a file of its own when declared as `#[cfg(test)] mod name;` — or a whole test file,
+and naming being the rule what it leans on uses, so that a file's imports do not make what they
+import look tested. A file with tests of its own is tested, and
+only files in the languages above are listed. The list says that a test reaching a file through
+a URL or a command line never names it, which is the way it is most often wrong. The overview is
+about one repository; the header's selector switches to another.
 
 Every view has an address in the URL fragment, which never reaches the server: the overview at
 the root, the tree, a file

@@ -1,15 +1,95 @@
-//! The explorer: the file tree on the left, the file with its comments on the right.
+//! The explorer: the file tree or the file's outline on the left, the file with its comments
+//! on the right.
 
 use super::*;
+use crate::tui::app::Sidebar;
+use crate::tui::tree::Entry;
 
-/// The explorer is two panes: the tree of files, and the file the cursor is on with its
-/// comments woven in.
+/// The explorer is two panes: the tree of files or the outline of the open file, and the file
+/// with its comments woven in. A side panel set to hide is left out while the file has the
+/// focus, and the file has the whole width.
 pub(super) fn draw_explorer(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.sidebar == Sidebar::Outline {
+        app.ensure_outline();
+    }
+    if !app.sidebar_shown() {
+        draw_file(frame, app, area);
+        return;
+    }
     let tree_width = (area.width / 4).clamp(24, 50);
     let [left, right] =
         Layout::horizontal([Constraint::Length(tree_width), Constraint::Fill(1)]).areas(area);
-    draw_tree(frame, app, left);
+    match app.sidebar {
+        Sidebar::Files => draw_tree(frame, app, left),
+        Sidebar::Outline => draw_outline(frame, app, left),
+    }
     draw_file(frame, app, right);
+}
+
+/// What the open file defines, nested, with the cursor on where the file's cursor is. While
+/// the file has the focus that row is marked rather than highlighted, the way the tree marks
+/// nothing: the highlight says where the keys go.
+fn draw_outline(frame: &mut Frame, app: &mut App, left: Rect) {
+    let count = app.outline.as_ref().map_or(0, |o| o.items.len());
+    let title: Line = vec![" outline ".into(), format!("{count} ").dim()].into();
+    let block = title_block(&app.theme, title, app.focus_tree);
+    let inner = block.inner(left);
+    frame.render_widget(block, left);
+    app.measured.tree_height = inner.height as usize;
+    let theme = &app.theme;
+    let focused = app.focus_tree;
+    let hint =
+        |text: &'static str| Paragraph::new(Line::from(text.dim())).wrap(Wrap { trim: true });
+    let Some(outline) = &mut app.outline else {
+        frame.render_widget(hint("Open a file to see what it defines."), inner);
+        return;
+    };
+    if outline.items.is_empty() {
+        frame.render_widget(hint("Nothing here the outline can name."), inner);
+        return;
+    }
+    outline.ensure_visible(inner.height as usize);
+    let lines: Vec<Line> = outline
+        .items
+        .iter()
+        .enumerate()
+        .skip(outline.scroll)
+        .take(inner.height as usize)
+        .map(|(i, item)| {
+            let spans: Vec<Span> = vec![
+                " ".into(),
+                "  ".repeat(item.depth).into(),
+                Span::styled(
+                    format!("{} ", crate::tui::outline::kind_label(&item.symbol.kind)),
+                    style::dim(theme),
+                ),
+                item.symbol.name.clone().into(),
+            ];
+            let line = Line::from(spans);
+            match (i == outline.cursor, focused) {
+                (true, true) => line.style(style::cursor(theme)),
+                (true, false) => line.style(style::accent(theme)),
+                _ => line,
+            }
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The row a long directory's file list ends on: "… N more", or "… fewer" once shown whole.
+/// Indented like the files it stands for.
+fn fold_line(theme: &Theme, depth: usize, text: String, on_cursor: bool) -> Line<'static> {
+    let line = Line::from(vec![
+        " ".into(),
+        "  ".repeat(depth).into(),
+        "  ".into(),
+        Span::styled(text, style::dim(theme)),
+    ]);
+    if on_cursor {
+        line.style(style::cursor(theme))
+    } else {
+        line
+    }
 }
 
 /// The file tree, or what a filter leaves of it, with a dot on every path holding a pending
@@ -33,8 +113,6 @@ fn draw_tree(frame: &mut Frame, app: &mut App, left: Rect) {
     let inner = block.inner(left);
     frame.render_widget(block, left);
     app.measured.tree_height = inner.height as usize;
-    app.tree.ensure_visible(inner.height as usize);
-    let mut lines = Vec::with_capacity(inner.height as usize);
     let comment_paths: std::collections::HashMap<&str, usize> = {
         let mut m = std::collections::HashMap::new();
         for c in app.session.review.comments() {
@@ -44,9 +122,37 @@ fn draw_tree(frame: &mut Frame, app: &mut App, left: Rect) {
         }
         m
     };
+    // The changed and the commented on stay in view past a long directory's fold.
+    app.tree.set_keep(
+        app.session
+            .status
+            .keys()
+            .cloned()
+            .chain(comment_paths.keys().map(|p| p.to_string()))
+            .collect(),
+    );
+    app.tree.ensure_visible(inner.height as usize);
+    let mut lines = Vec::with_capacity(inner.height as usize);
     for i in app.tree.scroll..(app.tree.scroll + inner.height as usize) {
-        let Some(node) = app.tree.row(i) else {
+        let Some(entry) = app.tree.entry(i) else {
             break;
+        };
+        let on_cursor = i == app.tree.cursor && app.focus_tree;
+        let node = match entry {
+            Entry::Node(node) => node,
+            Entry::More { depth, hidden } => {
+                lines.push(fold_line(
+                    &app.theme,
+                    depth,
+                    format!("… {hidden} more"),
+                    on_cursor,
+                ));
+                continue;
+            }
+            Entry::Fewer { depth } => {
+                lines.push(fold_line(&app.theme, depth, "… fewer".into(), on_cursor));
+                continue;
+            }
         };
         let indent = "  ".repeat(node.depth);
         let mut spans: Vec<Span> = Vec::new();
@@ -96,8 +202,10 @@ fn draw_tree(frame: &mut Frame, app: &mut App, left: Rect) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// The file under the cursor: its lines, its comments, and the blame column when it is on.
+/// The file under the cursor: its lines, its comments, and the blame column when it is on; or,
+/// for a picture, the picture, where the terminal can draw one.
 fn draw_file(frame: &mut Frame, app: &mut App, right: Rect) {
+    app.ensure_picture();
     let (title, body): (Line, Vec<Line>) = match &mut app.viewer {
         Some(v) => {
             let inner_height = right.height.saturating_sub(2) as usize;
@@ -111,7 +219,11 @@ fn draw_file(frame: &mut Frame, app: &mut App, right: Rect) {
                 " ".into(),
                 v.path.clone().bold(),
                 " ".into(),
-                format!("{line}/{} ", v.line_count()).dim(),
+                if v.total_lines > v.line_count() {
+                    format!("{line}/{} of {} ", v.line_count(), v.total_lines).dim()
+                } else {
+                    format!("{line}/{} ", v.line_count()).dim()
+                },
             ];
             if pending > 0 {
                 title.push(Span::styled(
@@ -168,5 +280,14 @@ fn draw_file(frame: &mut Frame, app: &mut App, right: Rect) {
     let block = title_block(&app.theme, title, !app.focus_tree && app.viewer.is_some());
     let inner = block.inner(right);
     frame.render_widget(block, right);
-    frame.render_widget(Paragraph::new(body), inner);
+    match app.picture.as_mut().map(|p| &mut p.shown) {
+        Some(Ok(protocol)) => {
+            frame.render_stateful_widget(ratatui_image::StatefulImage::default(), inner, protocol)
+        }
+        Some(Err(why)) => {
+            let line = Line::from(format!(" {why}").dim());
+            frame.render_widget(Paragraph::new(line), inner);
+        }
+        None => frame.render_widget(Paragraph::new(body), inner),
+    }
 }

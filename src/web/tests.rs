@@ -7,11 +7,26 @@ use std::net::TcpStream;
 
 /// A server on a token, already signed in: the string is the API token of a session,
 /// which is what every request below sends.
-fn serve(roots: &[&Path]) -> (SocketAddr, String, tokio::runtime::Runtime) {
+pub(super) fn serve(roots: &[&Path]) -> (SocketAddr, String, tokio::runtime::Runtime) {
     let token = auth::random_secret();
     let (addr, rt) = listen(test_router(roots, Auth::Token(token.clone())));
     let api_token = sign_in_with_token(addr, &token);
     (addr, api_token, rt)
+}
+
+/// Writes a config file naming the agent `kind` where the server below reads it: inside
+/// `.git`, where `ls-files` cannot see it.
+fn configure_agent(root: &Path, kind: &str) {
+    let config = crate::config::Config {
+        agent: crate::config::AgentConfig {
+            kind: kind.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    config
+        .save_to(&root.join(".git").join("codereview-config.toml"))
+        .unwrap();
 }
 
 /// A server on a password, nobody signed in.
@@ -79,7 +94,7 @@ fn sign_in_with_token(addr: SocketAddr, token: &str) -> String {
     api_token_of(&page)
 }
 
-fn request(
+pub(super) fn request(
     addr: SocketAddr,
     method: &str,
     path: &str,
@@ -300,14 +315,7 @@ fn a_password_opens_a_session_and_guessing_is_slowed() {
 #[test]
 fn a_claude_turn_through_the_api() {
     let dir = scratch_repo();
-    {
-        let mut s = crate::session::tests::scratch_session(dir.path());
-        s.config.agent = crate::config::AgentConfig {
-            kind: "fake-claude".into(),
-            ..Default::default()
-        };
-        s.set_layout("auto").unwrap();
-    }
+    configure_agent(dir.path(), "fake-claude");
     let (addr, token, _rt) = serve(&[dir.path()]);
     let t = Some(token.as_str());
     assert_eq!(request(addr, "POST", "/api/agent/start", t, None).0, 200);
@@ -439,7 +447,23 @@ fn api_round_trip() {
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["lines"].as_array().unwrap().len(), 3);
+    assert_eq!(v["total_lines"], 3);
     assert_eq!(v["line_ops"][2], "insert");
+    // Lines come packed: `[style, text]` pairs into a table of styles, and a line's pairs
+    // joined back read as the line.
+    let styles = v["styles"].as_array().unwrap();
+    assert!(!styles.is_empty());
+    let first: String = v["lines"][0]
+        .as_array()
+        .unwrap()
+        .iter()
+        .inspect(|pair| {
+            let style = pair[0].as_u64().unwrap() as usize;
+            assert!(style < styles.len(), "{pair}");
+        })
+        .map(|pair| pair[1].as_str().unwrap())
+        .collect();
+    assert_eq!(first, "fn a() {}");
 
     // What the page polls to notice a change nobody told it about.
     let version = |path: &str| {
@@ -664,10 +688,45 @@ fn opening_a_repository_through_the_api() {
     assert_eq!(status, 200, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(
-        v[0]["path"], "src/core.rs",
+        v["leaning"][0]["path"], "src/core.rs",
         "main.rs uses what core.rs defines: {body}"
     );
-    assert!(v.as_array().unwrap().len() <= 3, "{body}");
+    assert!(v["leaning"].as_array().unwrap().len() <= 3, "{body}");
+    assert!(
+        v["as_of"].is_null(),
+        "worked out now, not read from a file: {body}"
+    );
+}
+
+/// A repository with an OVERVIEW.md opens on it: while the index is not built, the slow parts
+/// answer from the file, as of its commit, and the page is told so.
+#[test]
+fn a_fresh_open_answers_from_the_overview_file() {
+    let dir = scratch_repo();
+    std::fs::write(
+        dir.path().join("OVERVIEW.md"),
+        "# Overview\n\nAs of commit 0000000 on main, 2026-09-25 10:12.\n\n## Facts\n- 3 files, 1 test in 1 file\n\n\
+         ## Start here\n\n## What the rest of it leans on\n- a.rs — fn_a\n\n## Tests\n### a.rs\n- it works\n\n\
+         ## Named by no test\n- Makefile — all\n",
+    )
+    .unwrap();
+    let (addr, token, _rt) = serve(&[dir.path()]);
+    let t = Some(token.as_str());
+    // The test server warms nothing, so the index is not built until something builds it.
+    let (status, body) = request(addr, "GET", "/api/leans_on", t, None);
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["leaning"][0]["path"], "a.rs", "{body}");
+    assert_eq!(v["as_of"]["commit"], "0000000", "{body}");
+    let (_, body) = request(addr, "GET", "/api/tests", t, None);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["files"][0]["tests"][0]["label"], "it works", "{body}");
+    assert_eq!(
+        v["files"][0]["tests"][0]["line"], 0,
+        "the file keeps no lines: {body}"
+    );
+    assert_eq!(v["untested"][0]["path"], "Makefile", "{body}");
+    assert!(!v["as_of"].is_null(), "{body}");
 }
 
 /// A check through the API: started, polled while it runs, and its figures read from the
@@ -742,6 +801,187 @@ kind = "junit"
     );
     assert_eq!(status, 400, "{body}");
     assert!(body.contains("no check called"), "{body}");
+}
+
+/// A repository nobody configured anything for still says how to test it. Running what it
+/// suggests saves it, for this repository only; the counts come from what it printed, and
+/// the result says how far the code has moved on since.
+#[test]
+fn a_suggested_check_is_saved_by_running_it() {
+    let dir = scratch_repo();
+    std::fs::write(
+        dir.path().join("Makefile"),
+        "test:\n\t@echo 'test result: ok. 3 passed; 1 failed; 1 ignored; 0 measured'\n",
+    )
+    .unwrap();
+    let (addr, token, _rt) = serve(&[dir.path()]);
+    let t = Some(token.as_str());
+
+    let (status, body) = request(addr, "GET", "/api/analysis", t, None);
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v[0]["name"], "make test", "{body}");
+    assert_eq!(v[0]["suggested"], true);
+    assert!(
+        v[0]["stale"].is_null(),
+        "no result, nothing to be stale: {body}"
+    );
+
+    let (status, body) = request(
+        addr,
+        "POST",
+        "/api/analysis/run",
+        t,
+        Some(r#"{"name":"make test"}"#),
+    );
+    assert_eq!(status, 200, "{body}");
+    let config =
+        std::fs::read_to_string(dir.path().join(".git").join("codereview-config.toml")).unwrap();
+    assert!(config.contains("run = \"make test\""), "{config}");
+    let root = dir.path().canonicalize().unwrap().display().to_string();
+    assert!(
+        config.contains(&root),
+        "saved for this repository: {config}"
+    );
+
+    let mut v = serde_json::Value::Null;
+    for _ in 0..200 {
+        let (_, body) = request(addr, "GET", "/api/analysis", t, None);
+        v = serde_json::from_str(&body).unwrap();
+        if v[0]["last"]["running"] == false {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(v[0]["suggested"], false, "configured now: {v}");
+    assert_eq!(
+        v.as_array().unwrap().len(),
+        1,
+        "and not suggested twice: {v}"
+    );
+    assert_eq!(v[0]["figures"]["tests"], 4, "from the output: {v}");
+    assert_eq!(v[0]["figures"]["failed"], 1);
+    assert_eq!(v[0]["stale"]["commits"], 0, "{v}");
+    assert_eq!(v[0]["stale"]["files"], 0, "{v}");
+
+    // A file written and then committed after the run moves it out of date: first as a
+    // changed file, then as a commit. Commit times are whole seconds, hence the wait.
+    std::thread::sleep(Duration::from_millis(1100));
+    std::fs::write(dir.path().join("a.rs"), "fn changed() {}\n").unwrap();
+    let (_, body) = request(addr, "GET", "/api/analysis", t, None);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v[0]["stale"]["files"], 1, "{body}");
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+    };
+    git(&["commit", "-q", "-am", "after the run"]);
+    let (_, body) = request(addr, "GET", "/api/analysis", t, None);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v[0]["stale"]["commits"], 1, "{body}");
+}
+
+/// Pictures in the working tree are served as themselves; nothing else is.
+#[test]
+fn a_picture_is_served_and_nothing_else() {
+    let dir = scratch_repo();
+    std::fs::write(dir.path().join("logo.png"), include_bytes!("icon.png")).unwrap();
+    let (addr, token, _rt) = serve(&[dir.path()]);
+    // Read as bytes: a picture is not text.
+    let mut stream = TcpStream::connect(addr).unwrap();
+    let req = format!(
+        "GET /api/image?path=logo.png HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(req.as_bytes()).unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).unwrap();
+    let head = String::from_utf8_lossy(&raw[..raw.len().min(600)]).to_lowercase();
+    assert!(head.starts_with("http/1.1 200"), "{head}");
+    assert!(head.contains("content-type: image/png"), "{head}");
+    assert!(raw.ends_with(b"IEND\xaeB`\x82"), "the whole picture");
+    // Not a picture, not in the repository, not signed in.
+    let t = Some(token.as_str());
+    assert_eq!(request(addr, "GET", "/api/image?path=a.rs", t, None).0, 415);
+    assert_eq!(
+        request(addr, "GET", "/api/image?path=../x.png", t, None).0,
+        400
+    );
+    assert_eq!(
+        request(addr, "GET", "/api/image?path=missing.png", t, None).0,
+        404
+    );
+    assert_eq!(
+        request(addr, "GET", "/api/image?path=logo.png", None, None).0,
+        403
+    );
+}
+
+/// A comment left in a commit's diff names that commit, so its line can be followed from
+/// there; one on the working tree of a file with changes names none.
+#[test]
+fn a_comment_from_a_commit_names_it() {
+    let dir = scratch_repo();
+    let (addr, token, _rt) = serve(&[dir.path()]);
+    let t = Some(token.as_str());
+    let (_, body) = request(addr, "GET", "/api/log?limit=2", t, None);
+    let log: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let first = log[1]["hash"].as_str().unwrap().to_string();
+
+    let body =
+        serde_json::json!({ "path": "a.rs", "line": 1, "text": "then", "at": first }).to_string();
+    let (status, body) = request(addr, "POST", "/api/comments", t, Some(&body));
+    assert_eq!(status, 200, "{body}");
+    let c: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(first.starts_with(c["commit"].as_str().unwrap()), "{body}");
+    assert_eq!(c["anchor"], "fn a() {}");
+
+    let body = serde_json::json!({ "path": "a.rs", "line": 1, "text": "now" }).to_string();
+    let (_, body) = request(addr, "POST", "/api/comments", t, Some(&body));
+    let c: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(c.get("commit").is_none(), "a.rs has changes: {body}");
+}
+
+/// The tests a repository defines, grouped by file, with what the tree leans on that none of
+/// them names.
+#[test]
+fn the_tests_of_a_repository() {
+    let dir = scratch_repo();
+    std::fs::write(
+        dir.path().join("lib.rs"),
+        "pub fn parse_review() {}\npub fn save_review_file() {}\n\
+         #[cfg(test)]\nmod tests {\n    #[test]\n    fn a_review_parses() { parse_review(); }\n\
+         #[test]\n    #[ignore]\n    fn slow_one() {}\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("main.rs"),
+        "fn main() { parse_review(); save_review_file(); helper_in_store(); }\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("store.rs"), "pub fn helper_in_store() {}\n").unwrap();
+    let (addr, token, _rt) = serve(&[dir.path()]);
+    let t = Some(token.as_str());
+
+    let (status, body) = request(addr, "GET", "/api/tests", t, None);
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["total"], 2, "{body}");
+    assert_eq!(v["ignored"], 1);
+    assert_eq!(v["files"][0]["path"], "lib.rs");
+    assert_eq!(v["files"][0]["tests"][0]["label"], "a review parses");
+    let untested: Vec<&str> = v["untested"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["path"].as_str().unwrap())
+        .collect();
+    assert!(untested.contains(&"store.rs"), "{body}");
+    assert!(!untested.contains(&"lib.rs"), "{body}");
 }
 
 /// When a watched check is due. The middle condition is the one that matters: without it the
@@ -838,22 +1078,6 @@ fn several_repositories() {
     assert_eq!(v[1]["pending"], 1);
     let b_root = b.path().canonicalize().unwrap().display().to_string();
     assert_eq!(v[1]["root"], b_root);
-    // The status view asks about every repository at once, not just the one on screen. Its
-    // counts are read fresh, so the repository nobody has opened is as current as the other.
-    let (status, body) = request(addr, "GET", "/api/status", t, None);
-    assert_eq!(status, 200, "{body}");
-    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v.as_array().unwrap().len(), 2);
-    assert_eq!(v[0]["pending"], 0);
-    assert_eq!(
-        v[1]["pending"], 1,
-        "read from REVIEW.md, not from a stale session"
-    );
-    // scratch_repo leaves a.rs edited and new.py untracked; b has REVIEW.md on top of those.
-    assert_eq!(v[0]["changed"], 2, "{body}");
-    assert_eq!(v[1]["changed"], 3, "{body}");
-    assert_eq!(v[0]["last"]["subject"], "second");
-    assert_eq!(v[0]["branch"], "main");
 
     // The selector reaches the second repository; the default is the first.
     let (_, body) = request(addr, "GET", "/api/state?repo=1", t, None);
@@ -873,14 +1097,7 @@ fn several_repositories() {
 #[test]
 fn agent_endpoints() {
     let dir = scratch_repo();
-    {
-        let mut s = crate::session::tests::scratch_session(dir.path());
-        s.config.agent = crate::config::AgentConfig {
-            kind: "fake-acp".into(),
-            ..Default::default()
-        };
-        s.set_layout("auto").unwrap(); // saves the agent config with it
-    }
+    configure_agent(dir.path(), "fake-acp");
     let (addr, token, _rt) = serve(&[dir.path()]);
     let t = Some(token.as_str());
     let (status, body) = request(addr, "GET", "/api/agent/events", t, None);

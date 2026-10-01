@@ -185,6 +185,66 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.theme_picker.is_some() {
         draw_theme_picker(frame, app, area);
     }
+    if app.options.is_some() {
+        draw_options(frame, app, area);
+    }
+}
+
+/// The options panel: each setting with what it is now, and under them what the one the
+/// cursor is on does, since a name like "auto-hide" does not say when.
+fn draw_options(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(row) = app.options else {
+        return;
+    };
+    let settings = crate::tui::app::Setting::ALL;
+    let width = area.width.min(64);
+    let height = area.height.min(settings.len() as u16 + 8);
+    let popup = Rect {
+        x: (area.width - width) / 2,
+        y: (area.height - height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" options (j/k choose, Space change, Esc close) ")
+        .border_style(style::accent(&app.theme));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    let [list, about] = Layout::vertical([
+        Constraint::Length(settings.len() as u16 + 1),
+        Constraint::Fill(1),
+    ])
+    .areas(inner);
+    let lines: Vec<Line> = settings
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let line: Line = vec![
+                format!(" {:<22}", s.label()).into(),
+                app.setting_value(*s).bold(),
+            ]
+            .into();
+            if i == row {
+                line.style(style::cursor(&app.theme))
+            } else {
+                line
+            }
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), list);
+    let text = settings[row].explanation();
+    let about = Rect {
+        x: about.x + 1,
+        width: about.width.saturating_sub(2),
+        ..about
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(text, style::dim(&app.theme))))
+            .wrap(Wrap { trim: true }),
+        about,
+    );
 }
 
 pub(crate) fn title_block(theme: &Theme, title: Line<'static>, focused: bool) -> Block<'static> {
@@ -332,7 +392,7 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
 fn hint_for(screen: &Screen) -> &'static str {
     match screen {
         Screen::Explorer => {
-            "c comment  gd def  gr uses  @ symbols  a/i ask agent  A agent panel  H history  D diff  / search"
+            "c comment  gd def  gr uses  @ symbols  O outline  a/i ask agent  A agent panel  H history  D diff  / search  , options"
         }
         Screen::Log(_) => "Enter files/diff  Tab switch  w vs working tree  H file history  q back",
         Screen::Changes(_) => "Enter diff  s staged/working  H history  o open  q back",
@@ -359,6 +419,10 @@ const HELP: &[(&str, &str)] = &[
     ("N", "add a general note"),
     ("r", "re-read the repository and both Markdown files"),
     ("t", "colour scheme picker; the choice is saved"),
+    (
+        ",",
+        "options: side panels that hide, diff layout, colour scheme",
+    ),
     ("Ctrl-h", "toggle syntax highlighting"),
     ("A  Ctrl-a", "the agent panel"),
     ("i", "ask the agent something, from anywhere"),
@@ -369,7 +433,12 @@ const HELP: &[(&str, &str)] = &[
     ("W", "repository picker"),
     ("", ""),
     ("Explorer", ""),
-    ("Tab", "switch between the tree and the file"),
+    ("Tab", "switch between the side panel and the file"),
+    ("O", "side panel: the file tree, or the outline of the file"),
+    (
+        "Enter  Space",
+        "in the outline: go to the definition; Space stays in the outline",
+    ),
     ("j/k h/l", "move; in the tree h/l fold and unfold"),
     ("Enter", "open the file; on a comment row, edit it"),
     ("/", "filter the tree; search the file"),

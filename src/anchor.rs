@@ -1,6 +1,12 @@
 //! Re-anchoring comments after the file they refer to has changed.
 //!
-//! A comment carries a line number and the text that line had when the comment was written. If
+//! A comment left on a file as it was committed names that commit, and is followed rather than
+//! searched for: the file at the commit is diffed against the file now, and the comment goes
+//! wherever its line went — moved, edited, or with lines added above it. Its line gone, it is
+//! stale, shown just below the nearest line above it that is still there. See
+//! [`anchor_through`].
+//!
+//! Every other comment carries a line number and the text that line had when it was written. If
 //! the file still has that text on that line, nothing to do. If not, and the text occurs exactly
 //! once elsewhere, the comment has moved there. If it occurs several times, the closest
 //! occurrence wins. If it occurs nowhere, the comment is stale: shown at its recorded line,
@@ -97,6 +103,35 @@ pub fn anchor(comment: &Comment, lines: &[&str]) -> Anchored {
     match candidates.iter().min_by_key(|&&l| l.abs_diff(first)) {
         Some(&line) => placed(line, AnchorState::Moved),
         None => placed(first, AnchorState::Stale),
+    }
+}
+
+/// Places `comment`, whose line numbers count in an earlier version of the file, by where its
+/// first line went: `map` takes each 0-based line of that version to its line in `lines`, as
+/// [`crate::diff::FileDiff::line_map`] does. Exact when the line is still at the number it
+/// had, edited or not; moved when it is somewhere else; stale when it was deleted.
+pub fn anchor_through(comment: &Comment, lines: &[&str], map: &[Option<usize>]) -> Anchored {
+    let Some(first) = comment.line else {
+        return anchor(comment, lines);
+    };
+    let span = comment.end_line.unwrap_or(first).saturating_sub(first);
+    let placed = |line: usize, state| Anchored {
+        comment: comment.clone(),
+        line: Some(line),
+        end_line: Some(line + span),
+        state,
+    };
+    let row = first.max(1) - 1;
+    match map.get(row).copied().flatten() {
+        Some(now) if now + 1 == first => placed(first, AnchorState::Exact),
+        Some(now) => placed(now + 1, AnchorState::Moved),
+        None => {
+            let below = (0..row)
+                .rev()
+                .find_map(|b| map.get(b).copied().flatten())
+                .map_or(first, |above| above + 2);
+            placed(below.min(lines.len().max(1)), AnchorState::Stale)
+        }
     }
 }
 

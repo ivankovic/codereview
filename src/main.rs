@@ -116,6 +116,8 @@ enum Command {
     Toggle { number: usize },
     /// Rewrite REVIEW.md line numbers for comments whose lines have moved.
     Reanchor,
+    /// Write OVERVIEW.md: what the repository is, where to start, what its tests check.
+    Overview,
     /// Where a symbol is defined.
     Def { name: String },
     /// Every place an identifier occurs.
@@ -180,6 +182,7 @@ fn main() -> Result<()> {
         Some(Command::Note { path, text }) => note(&from, path.as_deref(), &text),
         Some(Command::Toggle { number }) => toggle(&from, number),
         Some(Command::Reanchor) => reanchor(&from),
+        Some(Command::Overview) => overview_file(&from),
         Some(Command::Def { name }) => definitions(&from, &name),
         Some(Command::Refs { name }) => references(&from, &name),
         Some(Command::Symbols { query }) => symbols(&from, &query),
@@ -206,7 +209,7 @@ fn add(
         Some(text) => (Some(parse_lines(&lines)?), text),
         None => (None, lines),
     };
-    let c = session.add_comment(path, lines, &text, None)?;
+    let c = session.add_comment(path, lines, &text, None, None)?;
     println!("added: {} {}", c.location(), c.text);
     Ok(())
 }
@@ -242,6 +245,18 @@ fn reanchor(from: &std::path::Path) -> Result<()> {
     let mut session = Session::open(from)?;
     let moved = session.reanchor()?;
     println!("{moved} comment(s) re-anchored");
+    Ok(())
+}
+
+/// `overview`: writes `OVERVIEW.md` now.
+fn overview_file(from: &std::path::Path) -> Result<()> {
+    let mut session = Session::open(from)?;
+    let wrote = session.write_facts(None)?;
+    println!(
+        "{} {}",
+        codereview::facts::FILE_NAME,
+        if wrote { "written" } else { "unchanged" }
+    );
     Ok(())
 }
 
@@ -548,13 +563,13 @@ mod tests {
         let config = dir.path().join(".git/codereview.toml");
         let mut session = Session::open_with_config(dir.path(), Some(config.clone())).unwrap();
         session
-            .add_comment("a.rs", Some((1, 1)), "first", None)
+            .add_comment("a.rs", Some((1, 1)), "first", None, None)
             .unwrap();
         session
-            .add_comment("a.rs", Some((2, 2)), "second", None)
+            .add_comment("a.rs", Some((2, 2)), "second", None, None)
             .unwrap();
         session
-            .add_comment("Makefile", None, "third", None)
+            .add_comment("Makefile", None, "third", None, None)
             .unwrap();
 
         let numbered = |s: &Session| -> Vec<(usize, String)> {

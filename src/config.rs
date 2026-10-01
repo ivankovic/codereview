@@ -19,6 +19,17 @@ pub struct Config {
     /// The checks this machine may run in a repository: tests, coverage, a linter. Named
     /// `analysis` because that is what the page calls them; `[[analysis]]` in the file.
     pub analysis: Vec<Check>,
+    /// The terminal UI's side panel: the file tree, or the outline of the open file.
+    pub sidebar: SidebarConfig,
+}
+
+/// Whether each of the explorer's side panels gets out of the way. A panel that hides is
+/// there while it has the focus and gone while the file has it, and the file takes its width.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SidebarConfig {
+    pub files_auto_hide: bool,
+    pub outline_auto_hide: bool,
 }
 
 /// One check: what to call it, what to run, and what to read afterwards.
@@ -41,6 +52,11 @@ pub struct Check {
     /// itself in a repository that was cloned rather than written is code execution from a
     /// clone, and that has to be chosen one repository at a time.
     pub watch: Vec<String>,
+    /// Repository roots this check belongs to. Empty, the default, means every repository,
+    /// which is what an entry written by hand has always meant; a check the page found and
+    /// someone ran is saved with the one repository it was found in, since `cargo test`
+    /// means nothing in a Python project served beside it.
+    pub repos: Vec<String>,
 }
 
 impl Default for Check {
@@ -51,6 +67,7 @@ impl Default for Check {
             reads: None,
             kind: String::new(),
             watch: Vec::new(),
+            repos: Vec::new(),
         }
     }
 }
@@ -125,6 +142,7 @@ impl Default for Config {
             timestamps: true,
             agent: AgentConfig::default(),
             analysis: Vec::new(),
+            sidebar: SidebarConfig::default(),
         }
     }
 }
@@ -210,7 +228,12 @@ mod tests {
                 reads: Some("target/nextest/default/junit.xml".into()),
                 kind: "junit".into(),
                 watch: vec!["/srv/review/repos/one".into()],
+                repos: vec!["/srv/review/repos/one".into()],
             }],
+            sidebar: SidebarConfig {
+                files_auto_hide: true,
+                outline_auto_hide: false,
+            },
         };
         config.save_to(&path).unwrap();
         assert!(path.exists(), "the directory was made as well");

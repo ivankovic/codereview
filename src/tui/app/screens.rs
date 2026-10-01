@@ -158,8 +158,7 @@ impl App {
         let Some(diff) = self.report(self.session.diff(&target, &file)) else {
             return;
         };
-        let comments = self.session.review.comments_for(&file.path);
-        let comments = crate::anchor::anchor_all(&comments, &diff.after.text);
+        let comments = self.session.anchor_in(&file.path, &diff.after.text);
         let view = DiffView::new(target, file, diff, comments, &self.theme.syntax);
         self.screens.push(Screen::Diff(Box::new(DiffState {
             view,

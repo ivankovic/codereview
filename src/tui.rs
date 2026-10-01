@@ -3,6 +3,7 @@
 pub mod agent_panel;
 pub mod app;
 pub mod diff_view;
+pub mod outline;
 pub mod prompt;
 pub mod style;
 pub mod tree;
@@ -42,8 +43,41 @@ pub fn run(targets: Vec<(Session, Option<String>)>) -> Result<()> {
     result
 }
 
+/// How this terminal draws pictures, asked of it once, when the first picture is opened: with
+/// the screen raw, since the answer comes back as input, and between reads of the keys, so
+/// the answer is not taken for one. A terminal answers in milliseconds; one that does not
+/// answer at all is given a second, not the library's two. Half blocks are left out — a
+/// picture in coloured characters is not a picture the terminal can show.
+///
+/// Where nothing answers, the library's reader stays blocked on the input after giving up and
+/// takes the next key pressed; it offers no way to stop it. Every terminal answers, tmux
+/// included, so that is a pipe or a detached session — and a terminal that says it is `dumb`,
+/// or says nothing, is not asked at all.
+fn graphics() -> Option<ratatui_image::picker::Picker> {
+    use ratatui_image::picker::cap_parser::QueryStdioOptions;
+    use ratatui_image::picker::{Picker, ProtocolType};
+    let term = std::env::var("TERM").unwrap_or_default();
+    if term.is_empty() || term == "dumb" {
+        return None;
+    }
+    // Not `{ timeout, ..Default::default() }`: the options have a private field, which
+    // struct update syntax cannot fill from outside the crate.
+    #[allow(clippy::field_reassign_with_default)]
+    let options = {
+        let mut options = QueryStdioOptions::default();
+        options.timeout = Duration::from_secs(1);
+        options
+    };
+    Picker::from_query_stdio_with_options(options)
+        .ok()
+        .filter(|p| p.protocol_type() != ProtocolType::Halfblocks)
+}
+
 fn event_loop(terminal: &mut ratatui::DefaultTerminal, ws: &mut Workspace) -> Result<()> {
     loop {
+        if ws.app().needs_graphics() {
+            ws.set_graphics(graphics());
+        }
         terminal.draw(|frame| ui::draw_workspace(frame, ws))?;
         if ws.quit() {
             return Ok(());
@@ -194,6 +228,130 @@ mod tests {
         let comment = app.session.review.comments()[0].clone();
         assert_eq!(comment.path, "a.rs");
         assert!(comment.line.is_some(), "{comment:?}");
+    }
+
+    /// A side panel set to hide is there while it has the focus and gone while the file has
+    /// it. The setting is made in the options panel and saved to the config file at once.
+    #[test]
+    fn a_side_panel_set_to_hide_gives_the_file_its_width() {
+        let dir = scratch_repo();
+        let mut app = App::new(scratch_session(dir.path()), None);
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        assert!(draw(&mut term, &mut app).contains(" files "));
+
+        // The first row of the options panel is the file tree's.
+        app.handle_key(key(','));
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("Files: auto-hide"), "{screen}");
+        press(&mut app, &[KeyCode::Char(' '), KeyCode::Esc]);
+        assert!(app.options.is_none());
+        assert!(app.session.config.sidebar.files_auto_hide);
+        let saved = crate::config::Config::load_from(
+            &dir.path().join(".git").join("codereview-config.toml"),
+        )
+        .unwrap();
+        assert!(saved.sidebar.files_auto_hide, "saved as it was changed");
+
+        // With nothing open the tree has the focus and stays; opening a file hides it, and
+        // Tab, or q from the file, brings it back.
+        assert!(draw(&mut term, &mut app).contains(" files "));
+        press(&mut app, &[KeyCode::Char('j'), KeyCode::Enter]);
+        let screen = draw(&mut term, &mut app);
+        assert!(
+            !screen.contains(" files ") && screen.contains("fn a() {}"),
+            "{screen}"
+        );
+        press(&mut app, &[KeyCode::Tab]);
+        assert!(draw(&mut term, &mut app).contains(" files "));
+        press(&mut app, &[KeyCode::Tab]);
+        assert!(!draw(&mut term, &mut app).contains(" files "));
+        press(&mut app, &[KeyCode::Char('q')]);
+        assert!(draw(&mut term, &mut app).contains(" files "));
+        assert!(!app.quit, "q from the file only brings the tree back");
+    }
+
+    /// The outline sits where the tree does, follows the file's cursor, and goes where it
+    /// points; it hides the same way when told to.
+    #[test]
+    fn the_outline_follows_the_file_and_goes_where_it_points() {
+        let dir = scratch_repo();
+        let mut app = App::new(scratch_session(dir.path()), None);
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        draw(&mut term, &mut app);
+        app.handle_key(key('O'));
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("Open a file to see what"), "{screen}");
+
+        // `a.rs` defines a, b and c in the working tree.
+        press(
+            &mut app,
+            &[KeyCode::Char('O'), KeyCode::Char('j'), KeyCode::Enter],
+        );
+        app.handle_key(key('O'));
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains(" outline 3 "), "{screen}");
+        assert!(
+            screen.contains("fn a") && screen.contains("fn c"),
+            "{screen}"
+        );
+
+        // Enter goes to the definition and gives the file the focus.
+        press(
+            &mut app,
+            &[KeyCode::Char('j'), KeyCode::Char('j'), KeyCode::Enter],
+        );
+        assert!(!app.focus_tree);
+        assert_eq!(app.viewer.as_ref().unwrap().current_line(), Some(2));
+        // Moving in the file moves the outline with it.
+        press(&mut app, &[KeyCode::Char('k')]);
+        draw(&mut term, &mut app);
+        assert_eq!(app.outline.as_ref().unwrap().cursor, 1);
+        assert!(draw(&mut term, &mut app).contains("┌ outline"));
+
+        // Set to hide, it goes while the file has the focus.
+        app.handle_key(key(','));
+        press(
+            &mut app,
+            &[KeyCode::Char('j'), KeyCode::Char(' '), KeyCode::Esc],
+        );
+        assert!(app.session.config.sidebar.outline_auto_hide);
+        assert!(!draw(&mut term, &mut app).contains("┌ outline"));
+        press(&mut app, &[KeyCode::Tab]);
+        assert!(draw(&mut term, &mut app).contains("┌ outline"));
+    }
+
+    /// A picture is drawn where the terminal has a way to draw one, and described where it
+    /// has not, rather than called a binary file either way.
+    #[test]
+    fn a_picture_is_drawn_or_described() {
+        let dir = scratch_repo();
+        std::fs::write(dir.path().join("logo.png"), include_bytes!("web/icon.png")).unwrap();
+        let mut app = App::new(scratch_session(dir.path()), Some("logo.png".into()));
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let screen = draw(&mut term, &mut app);
+        assert!(
+            screen.contains("A picture,") && screen.contains("This terminal draws none"),
+            "{screen}"
+        );
+        assert!(!screen.contains("binary file"), "{screen}");
+
+        // Any protocol will do for the drawing path; a test terminal answers no query, so
+        // half blocks stand in for kitty or sixel here.
+        app.graphics = Some(ratatui_image::picker::Picker::halfblocks());
+        app.picture = None;
+        let screen = draw(&mut term, &mut app);
+        assert!(
+            !screen.contains("draws none") && !screen.contains("binary file"),
+            "{screen}"
+        );
+        assert!(matches!(
+            app.picture.as_ref().map(|p| p.shown.is_ok()),
+            Some(true)
+        ));
+        // Another file drops it.
+        app.open_file("a.rs");
+        draw(&mut term, &mut app);
+        assert!(app.picture.is_none());
     }
 
     #[test]
@@ -404,7 +562,7 @@ mod tests {
         assert!(matches!(app.screen(), Screen::Agent));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         while app.agent.permission().is_none() && std::time::Instant::now() < deadline {
-            app.tick();
+            app.tick(true);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(
@@ -417,7 +575,7 @@ mod tests {
         assert!(screen.contains("what is this?"));
         press(&mut app, &[KeyCode::Char('1')]);
         while app.agent.status() != "idle" && std::time::Instant::now() < deadline {
-            app.tick();
+            app.tick(true);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let screen = draw(&mut term, &mut app);
@@ -478,7 +636,7 @@ mod tests {
                 .any(|e| e.text == "restarting")
         );
         while !app.agent.running() && std::time::Instant::now() < deadline {
-            app.tick();
+            app.tick(true);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(app.agent.running(), "restart: {}", app.agent.status());

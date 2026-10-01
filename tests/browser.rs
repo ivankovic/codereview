@@ -76,11 +76,19 @@ fn the_phone_layout_works_in_a_real_browser() {
          lean on.\n",
     )
     .unwrap();
-    std::fs::write(repo.join("Makefile"), "all:\n\techo hi\n").unwrap();
+    // A test target for the page to find and run, and a test for it to list.
+    std::fs::write(
+        repo.join("Makefile"),
+        "all:\n\techo hi\ntest:\n\t@echo 'test result: ok. 1 passed; 0 failed; 0 ignored'\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(repo.join("src")).unwrap();
+    // A picture, for the file view to show rather than call binary.
+    std::fs::write(repo.join("logo.png"), include_bytes!("../src/web/icon.png")).unwrap();
     std::fs::write(
         repo.join("src/core.rs"),
-        "pub fn parse_review() {}\npub fn write_review() {}\npub struct ReviewFile;\n",
+        "pub fn parse_review() {}\npub fn write_review() {}\npub struct ReviewFile;\n\n\
+         #[cfg(test)]\nmod tests {\n    #[test]\n    fn a_review_round_trips() {}\n}\n",
     )
     .unwrap();
     std::fs::write(

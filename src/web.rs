@@ -22,20 +22,23 @@ use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{Agent, Event as AgentEvent, PermissionOption, prompts};
-use crate::analysis::{Figures, Run as CheckRun};
+use crate::analysis::{Figures, Run as CheckRun, Staleness};
 use crate::anchor::Anchored;
+use crate::config::Check;
 use crate::diff::{FileDiff, Op};
 use crate::highlight::Segment;
 use crate::notes::Note;
 use crate::repo::{BlameLine, ChangedFile, Commit, FileStatus};
 use crate::review::Comment;
-use crate::session::{DiffTarget, FileView, Session, Summary};
+use crate::session::{DiffTarget, FileView, Session};
 use crate::symbols::{Location, Symbol};
 use crate::transcript::{Entry, Transcript};
 
 mod agent;
 mod api;
 mod auth;
+#[cfg(test)]
+mod perf;
 #[cfg(test)]
 mod tests;
 
@@ -46,9 +49,10 @@ const INDEX_HTML: &str = include_str!("web/index.html");
 const LOGIN_HTML: &str = include_str!("web/login.html");
 
 /// The page carries its own script and styles and fetches nothing else, so everything but
-/// same-origin requests can be refused. `form-action` is for the sign-in form.
+/// same-origin requests can be refused. `form-action` is for the sign-in form, and `blob:`
+/// images are the repository's own pictures, fetched with the API token and shown from memory.
 const CSP: &str = "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; \
-                   style-src 'unsafe-inline'; img-src 'self' data:; manifest-src 'self'; \
+                   style-src 'unsafe-inline'; img-src 'self' data: blob:; manifest-src 'self'; \
                    frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 /// What a phone needs to put the page on its home screen: the app's name and icons, and
@@ -80,6 +84,9 @@ struct AppState {
     secure_cookie: bool,
     /// One permit per request the API is working on.
     in_flight: Arc<tokio::sync::Semaphore>,
+    /// Whether the thread that builds every repository's symbol index at start is still at
+    /// it; see [`warm_and_keep`].
+    warming: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppState {
@@ -100,6 +107,9 @@ struct RepoState {
     /// What the configured agent is called, found out once: the `auto` kind probes PATH, and
     /// the page asks for the status twice a second.
     agent_label: String,
+    /// When a request last named this repository: `OVERVIEW.md` is kept for the ones someone
+    /// is looking at, not for everything served.
+    touched: Mutex<Instant>,
 }
 
 impl RepoState {
@@ -109,7 +119,29 @@ impl RepoState {
             session: Arc::new(Mutex::new(session)),
             hub: Arc::new(Mutex::new(AgentHub::default())),
             checks: Arc::new(Mutex::new(HashMap::new())),
+            // Not looked at yet: the keep loop works only on repositories someone opens,
+            // rather than on all of them at once after every restart, holding each one's lock
+            // while a page that just opened waits behind it.
+            touched: Mutex::new(
+                Instant::now()
+                    .checked_sub(LOOKED_AT)
+                    .unwrap_or_else(Instant::now),
+            ),
         }
+    }
+
+    /// What the checks last did here, for `OVERVIEW.md`.
+    fn check_facts(&self) -> Vec<crate::facts::CheckFact> {
+        let runs = self.checks.lock().unwrap_or_else(|e| e.into_inner());
+        let mut facts: Vec<_> = runs
+            .values()
+            .filter_map(|r| {
+                let run = r.lock().unwrap_or_else(|e| e.into_inner());
+                crate::facts::CheckFact::from_run(&run)
+            })
+            .collect();
+        facts.sort_by(|a, b| a.name.cmp(&b.name));
+        facts
     }
 }
 
@@ -118,6 +150,9 @@ impl RepoState {
 struct Ctx {
     repos: Arc<Vec<RepoState>>,
     index: usize,
+    /// Whether the server's own thread is still building indexes: a request that finds none
+    /// then waits for that rather than building a second one under the lock.
+    warming: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Deref for Ctx {
@@ -153,9 +188,14 @@ impl FromRequestParts<AppState> for Ctx {
                 format!("no repository {index}; {} open", state.repos.len()),
             ));
         }
+        *state.repos[index]
+            .touched
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Instant::now();
         Ok(Ctx {
             repos: state.repos.clone(),
             index,
+            warming: state.warming.clone(),
         })
     }
 }
@@ -323,6 +363,7 @@ pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
             sessions: Arc::new(Mutex::new(Sessions::default())),
             secure_cookie: public.as_deref().is_some_and(|u| u.starts_with("https://")),
             in_flight: Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT)),
+            warming: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let addr: SocketAddr = format!("{}:{}", serve.host, serve.port)
             .parse()
@@ -348,11 +389,63 @@ pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
             }
         }
         watch_repositories(state.clone());
+        warm_and_keep(state.clone());
         axum::serve(listener, router(state))
             .with_graceful_shutdown(shutdown_signal())
             .await
             .context("server")
     })
+}
+
+/// How long after its last request a repository is still someone's, for keeping its
+/// `OVERVIEW.md`: a page polls every two seconds while it is open.
+const LOOKED_AT: Duration = Duration::from_secs(120);
+
+/// Two things no request should wait for, on one thread of their own. First, every served
+/// repository's symbol index is built, one repository at a time, and handed to its session,
+/// so that the first look at an overview finds it ready rather than paying seconds for it;
+/// the page shows `OVERVIEW.md` meanwhile. Then, every few seconds, `OVERVIEW.md` is kept
+/// for the repositories someone has looked at lately: written once one has held still for
+/// ten seconds and says something new.
+fn warm_and_keep(state: AppState) {
+    use std::sync::atomic::Ordering;
+    state.warming.store(true, Ordering::Relaxed);
+    tokio::task::spawn_blocking(move || {
+        for repo in state.repos.iter() {
+            let (root, files) = {
+                let s = repo.session.lock().unwrap_or_else(|e| e.into_inner());
+                if s.has_index() {
+                    continue;
+                }
+                (s.root().to_path_buf(), s.files.clone())
+            };
+            let index = crate::symbols::Index::build(&root, &files);
+            repo.session
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .install_index(index);
+        }
+        state.warming.store(false, Ordering::Relaxed);
+        loop {
+            std::thread::sleep(TICK);
+            for repo in state.repos.iter() {
+                let looked_at = repo
+                    .touched
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .elapsed()
+                    < LOOKED_AT;
+                if !looked_at {
+                    continue;
+                }
+                let checks = repo.check_facts();
+                let mut s = repo.session.lock().unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = s.keep_facts(Some(checks)) {
+                    eprintln!("cannot keep {}: {e:#}", crate::facts::FILE_NAME);
+                }
+            }
+        }
+    });
 }
 
 /// How often each repository is looked at, and how long it must then hold still before a
@@ -526,11 +619,12 @@ fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/repos", get(api::get_repos))
         .route("/state", get(api::get_state))
-        .route("/status", get(api::get_status))
         .route("/overview", get(api::get_overview))
         .route("/leans_on", get(api::get_leans_on))
+        .route("/tests", get(api::get_tests))
         .route("/file", get(api::get_file))
         .route("/blame", get(api::get_blame))
+        .route("/image", get(api::get_image))
         .route("/log", get(api::get_log))
         .route("/commit_files", get(api::get_commit_files))
         .route("/changes", get(api::get_changes))
@@ -831,6 +925,8 @@ pub(crate) fn test_router(roots: &[&Path], auth: Auth) -> Router {
         sessions: Arc::new(Mutex::new(Sessions::default())),
         secure_cookie: false,
         in_flight: Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT)),
+        // No thread builds indexes for a test server; a request that needs one builds it.
+        warming: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     })
 }
 

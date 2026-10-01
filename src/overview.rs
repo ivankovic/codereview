@@ -9,6 +9,7 @@
 //! symbol index, which is built on first use and costs seconds on a cold repository, so it is
 //! [`crate::symbols::Index::reach`] and is asked for separately.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::Result;
@@ -57,8 +58,6 @@ pub struct State {
     pub last: Option<Commit>,
     pub commits: usize,
     pub authors: Vec<String>,
-    pub added: usize,
-    pub removed: usize,
     pub files: usize,
     /// Comments under `Pending`, and how many of them have lost the line they were left on.
     /// Nothing else can tell you the second number, and on a tree that changes this fast it
@@ -90,36 +89,169 @@ pub fn of(session: &Session) -> Result<Overview> {
     })
 }
 
-/// The project's own words: the first README-ish file, its opening paragraphs, and its title
-/// line dropped — the title is the project's name, which the page is already showing.
+/// The project's own words: the first README-ish file, and the prose it opens with. `None`
+/// when there is no README, or when it has no prose to open with — a README that is a title
+/// and a row of badges says nothing worth a section.
 fn readme(session: &Session) -> Option<Readme> {
     let path = session.files.iter().find(|f| {
         let name = f.rsplit('/').next().unwrap_or(f).to_lowercase();
         !f.contains('/') && (name == "readme.md" || name == "readme" || name == "readme.rst")
     })?;
     let text = std::fs::read_to_string(session.root().join(path)).ok()?;
-    let mut opening = String::new();
-    for line in text.lines() {
-        let line = line.trim_end();
-        if opening.is_empty()
-            && (line.is_empty() || line.starts_with('#') || line.starts_with("=="))
-        {
+    let opening = opening(&text);
+    (!opening.is_empty()).then(|| Readme {
+        path: path.clone(),
+        opening,
+    })
+}
+
+/// The first paragraphs of prose in a README, as plain text: about two hundred characters'
+/// worth, cut at six hundred.
+///
+/// What a README opens with is often everything but prose, and all of it is for a renderer:
+/// a logo in HTML, a row of badges, a table of contents that is nothing but links, a code
+/// block showing how to install. None of that is left: titles, which are the project's name
+/// and already on the page; lines that are only images, links or markup once those are taken
+/// out; HTML comments, code blocks, tables, link definitions, and reStructuredText directives
+/// with their options. What is left keeps its words and loses its markup — a link becomes its
+/// text. The opening ends at the first heading after some prose, which is where the project
+/// stops saying what it is and starts on something else.
+fn opening(text: &str) -> String {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static IMAGE: OnceLock<Regex> = OnceLock::new();
+    static LINK: OnceLock<Regex> = OnceLock::new();
+    static TAG: OnceLock<Regex> = OnceLock::new();
+    static DEFINITION: OnceLock<Regex> = OnceLock::new();
+    static EMPHASIS: OnceLock<Regex> = OnceLock::new();
+    let image =
+        IMAGE.get_or_init(|| Regex::new(r"!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])").expect("regex"));
+    let link = LINK.get_or_init(|| {
+        Regex::new(r"\[([^\]]*)\](?:\([^)]*\)|\[[^\]]*\])|<(https?://[^>]+)>").expect("regex")
+    });
+    let tag = TAG.get_or_init(|| Regex::new(r"</?[A-Za-z][^>]*>").expect("regex"));
+    // `**strong**`, `__strong__` and `*emphasis*`; not `_x_`, which is half of every
+    // snake_case name, and not a `* ` that starts a list item.
+    let emphasis = EMPHASIS.get_or_init(|| {
+        Regex::new(r"\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\s][^*\n]*)\*").expect("regex")
+    });
+    let definition = DEFINITION.get_or_init(|| Regex::new(r"^\s*\[[^\]]+\]:\s").expect("regex"));
+
+    let mut paragraphs: Vec<String> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    let mut fence: Option<&str> = None;
+    let mut comment = false;
+    let mut directive = false;
+    // A paragraph as plain text, or nothing when it had nothing to say. Images go first and
+    // across line breaks, since alt text is prose about a picture and wraps like prose. Then
+    // what is left of a line once its links and markup are gone says whether it had anything
+    // to say: a line of links is a menu, not a sentence.
+    let clean = |lines: &[String]| -> Option<String> {
+        let joined = lines.join("\n");
+        let bare = image.replace_all(&joined, "");
+        let kept: Vec<String> = bare
+            .lines()
+            .filter_map(|line| {
+                let said = tag.replace_all(&link.replace_all(line, ""), "").to_string();
+                if !said.chars().any(char::is_alphanumeric) {
+                    return None;
+                }
+                let linked = link.replace_all(line, "${1}${2}");
+                let untagged = tag.replace_all(&linked, "");
+                let plain = emphasis.replace_all(&untagged, "${1}${2}${3}");
+                let words = plain.split_whitespace().collect::<Vec<_>>().join(" ");
+                let indent = &line[..line.len() - line.trim_start().len()];
+                Some(format!("{indent}{words}"))
+            })
+            .collect();
+        (!kept.is_empty()).then(|| kept.join("\n"))
+    };
+    let flush = |current: &mut Vec<String>, paragraphs: &mut Vec<String>| {
+        if let Some(paragraph) = clean(current) {
+            paragraphs.push(paragraph);
+        }
+        current.clear();
+    };
+    for raw in text.lines() {
+        let line = raw.trim_end();
+        let trimmed = line.trim_start();
+        if let Some(marker) = fence {
+            if trimmed.starts_with(marker) {
+                fence = None;
+            }
             continue;
         }
-        if line.is_empty() && opening.len() > 200 {
-            break;
+        if comment {
+            comment = !line.contains("-->");
+            continue;
         }
-        opening.push_str(line);
-        opening.push('\n');
-        if opening.len() > 600 {
-            opening.push('…');
-            break;
+        if directive {
+            if line.is_empty() || line.starts_with([' ', '\t']) {
+                continue;
+            }
+            directive = false;
         }
+        if trimmed.is_empty() {
+            flush(&mut current, &mut paragraphs);
+            if paragraphs.iter().map(String::len).sum::<usize>() > 200 {
+                break;
+            }
+            continue;
+        }
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fence = Some(&trimmed[..3]);
+            flush(&mut current, &mut paragraphs);
+            continue;
+        }
+        if trimmed.starts_with("<!--") {
+            comment = !line.contains("-->");
+            continue;
+        }
+        if trimmed.starts_with(".. ") {
+            directive = true;
+            continue;
+        }
+        let underline = trimmed.len() >= 3
+            && (trimmed.chars().all(|c| c == '=') || trimmed.chars().all(|c| c == '-'));
+        if trimmed.starts_with('#') || underline {
+            // A title underlined on the next line was taken for prose a line too early.
+            if underline {
+                current.pop();
+            }
+            flush(&mut current, &mut paragraphs);
+            if !paragraphs.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if trimmed.starts_with('|') || definition.is_match(line) {
+            continue;
+        }
+        current.push(line.to_string());
     }
-    Some(Readme {
-        path: path.clone(),
-        opening: opening.trim_end().to_string(),
-    })
+    flush(&mut current, &mut paragraphs);
+
+    let mut chosen: Vec<String> = Vec::new();
+    for paragraph in paragraphs {
+        if chosen.iter().map(String::len).sum::<usize>() > 200 {
+            break;
+        }
+        chosen.push(paragraph);
+    }
+    // "A light theme is available:" introduced a screenshot, which is gone; it goes with it.
+    while chosen.len() > 1 && chosen.last().is_some_and(|p| p.ends_with(':')) {
+        chosen.pop();
+    }
+    let mut out = chosen.join("\n\n");
+    if out.len() > 600 {
+        let mut cut = 600;
+        while !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+        out.push('…');
+    }
+    out
 }
 
 /// The documents beside the code: Markdown at the root and under `docs/`. The two the tool
@@ -225,6 +357,14 @@ fn state(session: &Session, root: &Path) -> Result<State> {
             })
         })
         .collect();
+    // What the symbol index would not read is not where a TODO lives, and it is where the
+    // seconds of a grep go: a fixture of millions of lines is skipped like the index skips it.
+    let oversized: BTreeSet<String> = biggest
+        .iter()
+        .filter(|b| b.bytes > crate::symbols::MAX_FILE_BYTES)
+        .map(|b| b.path.clone())
+        .collect();
+    let todos = session.todos(&oversized);
     biggest.sort_by_key(|b| std::cmp::Reverse(b.bytes));
     biggest.truncate(FEW);
 
@@ -234,8 +374,6 @@ fn state(session: &Session, root: &Path) -> Result<State> {
         last: session.repo.commit("HEAD").ok(),
         commits: activity.commits,
         authors: activity.authors,
-        added: activity.added,
-        removed: activity.removed,
         files: session.files.len(),
         pending: pending.len(),
         moved: pending
@@ -246,15 +384,199 @@ fn state(session: &Session, root: &Path) -> Result<State> {
             .iter()
             .filter(|a| a.state == AnchorState::Stale)
             .count(),
-        todos: session.repo.grep_count("TODO|FIXME|HACK|XXX").unwrap_or(0),
+        todos,
         biggest,
     })
+}
+
+/// What a TODO looks like, for `git grep -w -E`.
+const TODO_PATTERN: &str = "TODO|FIXME|HACK|XXX";
+
+/// The overview's TODO count, per file, kept between overviews so that the next one greps
+/// only what moved. A working tree moves in two ways: a file is edited, which `git status`
+/// names, or HEAD changes under it, which nothing names file by file. The first is counted
+/// again file by file; the second starts over.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct TodoCounts {
+    /// Whether any count has been taken.
+    taken: bool,
+    /// The commit the counts stand on. Another commit is another working tree.
+    head: Option<String>,
+    /// The paths `git status` named at the last count, to count again at the next: a revert
+    /// takes a file out of the status without a trace of its content having moved.
+    status: BTreeSet<String>,
+    /// Matches per tracked file, for the files with any.
+    counts: BTreeMap<String, usize>,
+}
+
+impl TodoCounts {
+    /// Brings the counts up to date with the working tree, leaving `skip` uncounted.
+    pub(crate) fn update(&mut self, session: &Session, skip: &BTreeSet<String>) {
+        let head = session.repo.short_hash("HEAD").ok();
+        let status: BTreeSet<String> = session.status.keys().cloned().collect();
+        let tracked: BTreeSet<&str> = session.files.iter().map(String::as_str).collect();
+        let counted = |p: &String| tracked.contains(p.as_str()) && !skip.contains(p);
+        if self.taken && head == self.head {
+            let again: Vec<String> = self
+                .status
+                .union(&status)
+                .filter(|p| counted(p))
+                .cloned()
+                .collect();
+            if !again.is_empty() {
+                let found = session
+                    .repo
+                    .grep_counts(TODO_PATTERN, &again)
+                    .unwrap_or_default();
+                for path in &again {
+                    self.counts.remove(path);
+                }
+                self.counts.extend(found);
+            }
+        } else {
+            let mut pathspecs = vec![".".to_string()];
+            pathspecs.extend(skip.iter().map(|p| format!(":(exclude){p}")));
+            self.counts = session
+                .repo
+                .grep_counts(TODO_PATTERN, &pathspecs)
+                .unwrap_or_default();
+        }
+        // A file that left the tree, or grew past the line, takes its count with it.
+        self.counts.retain(|p, _| counted(p));
+        self.taken = true;
+        self.head = head;
+        self.status = status;
+    }
+
+    pub(crate) fn total(&self) -> usize {
+        self.counts.values().sum()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::session::tests::{scratch_repo, scratch_session};
+
+    /// What a README opens with, as the projects that write badges and logos write it.
+    #[test]
+    fn a_readme_opens_with_its_prose_not_its_badges() {
+        let text = "\
+<p align=\"center\"><img src=\"logo.png\" width=\"200\"></p>
+
+![A logo, described at length, so long that its alt text
+wraps onto a second line](logo.svg)
+
+# project
+
+[![CI](https://ci.example/badge.svg)](https://ci.example) [![crates.io](https://img.shields.io/c)](https://crates.io/c)
+![License](https://img.shields.io/l)
+
+<!-- toc -->
+- [Install](#install)
+- [Usage](#usage)
+<!-- tocstop -->
+
+A tool that does [the thing](https://example.com/thing) <b>well</b>,
+and says so in **two** *lines*.
+
+```sh
+cargo install project
+```
+
+## Install
+
+Not part of the opening.
+";
+        assert_eq!(
+            opening(text),
+            "A tool that does the thing well,\nand says so in two lines."
+        );
+
+        // Underlined titles, reStructuredText badges with their options, a table.
+        let text = "\
+project
+=======
+
+.. image:: https://ci.example/badge.svg
+   :target: https://ci.example
+
+| a | b |
+|---|---|
+
+Short.
+
+Another paragraph, since the first was short.
+
+A light theme is available:
+
+![Light](light.png)
+";
+        assert_eq!(
+            opening(text),
+            "Short.\n\nAnother paragraph, since the first was short."
+        );
+
+        // Nothing but badges and a title: nothing to say.
+        assert_eq!(opening("# x\n\n[![CI](https://b)](https://c)\n"), "");
+        // A long opening is cut, on a character.
+        let long = "é".repeat(500);
+        let cut = opening(&long);
+        assert!(cut.ends_with('…') && cut.len() <= 603, "{}", cut.len());
+    }
+
+    /// The TODO count follows edits, reverts and commits, greps again only the files that
+    /// moved, and leaves a file the index would not read uncounted.
+    #[test]
+    fn todos_follow_the_tree_without_a_full_grep() {
+        let dir = scratch_repo();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        std::fs::write(dir.path().join("a.rs"), "// TODO one\n// FIXME two\n").unwrap();
+        // A tracked file past the index's size, with a marker in it that is not counted.
+        let mut big = "// HACK not counted\n".to_string();
+        big.push_str(&"x".repeat(crate::symbols::MAX_FILE_BYTES as usize + 1));
+        std::fs::write(dir.path().join("big.txt"), big).unwrap();
+        git(&["add", "big.txt"]);
+        let mut session = scratch_session(dir.path());
+        assert_eq!(of(&session).unwrap().state.todos, 2);
+
+        // An edit is counted again in that file alone: a count planted on a file the status
+        // does not name survives, where a grep of the whole tree would have replaced it.
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "// TODO one\n// FIXME two\n// XXX three\n",
+        )
+        .unwrap();
+        session.refresh().unwrap();
+        let skip: BTreeSet<String> = ["big.txt".to_string()].into();
+        let mut counts = TodoCounts::default();
+        counts.update(&session, &skip);
+        counts.counts.insert("Makefile".into(), 5);
+        counts.update(&session, &skip);
+        assert_eq!(counts.total(), 8, "{:?}", counts.counts);
+        assert_eq!(of(&session).unwrap().state.todos, 3);
+
+        // A revert leaves the status, and the count follows it out.
+        git(&["checkout", "--", "a.rs"]);
+        session.refresh().unwrap();
+        assert_eq!(of(&session).unwrap().state.todos, 0);
+
+        // A commit moves HEAD: everything is counted afresh, and the planted count is gone.
+        std::fs::write(dir.path().join("a.rs"), "// TODO one\n").unwrap();
+        git(&["commit", "-q", "-a", "-m", "todo"]);
+        session.refresh().unwrap();
+        counts.update(&session, &skip);
+        assert_eq!(counts.total(), 1, "{:?}", counts.counts);
+        assert_eq!(of(&session).unwrap().state.todos, 1);
+    }
 
     /// What opening a repository says about it. `scratch_repo` leaves two commits, an
     /// unstaged edit and an untracked file.
@@ -291,6 +613,14 @@ mod tests {
             readme.opening
         );
 
+        // A README with nothing but a title and badges has no section at all.
+        std::fs::write(
+            dir.path().join("README.md"),
+            "# scratch\n\n[![CI](https://ci/badge.svg)](https://ci)\n",
+        )
+        .unwrap();
+        assert!(of(&session).unwrap().readme.is_none());
+
         let entries: Vec<&str> = overview.entries.iter().map(|e| e.path.as_str()).collect();
         assert!(entries.contains(&"src/main.rs"), "{entries:?}");
         assert!(entries.contains(&"Makefile"), "{entries:?}");
@@ -300,7 +630,6 @@ mod tests {
         assert!(state.changed > 0, "the scratch tree has an unstaged edit");
         assert_eq!(state.commits, 2, "both commits are from just now");
         assert_eq!(state.authors, vec!["Tester".to_string()]);
-        assert!(state.added > 0, "the commits added lines");
         assert_eq!(state.todos, 2, "one TODO and one FIXME");
         assert_eq!(state.pending, 2);
         assert_eq!(state.stale, 1, "the second comment's line is nowhere");

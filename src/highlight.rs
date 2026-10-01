@@ -2,7 +2,8 @@
 //! contiguous segments with a foreground colour and font style. The TUI turns these into
 //! Ratatui spans, the web page into `<span>`s.
 
-use std::sync::OnceLock;
+use std::collections::VecDeque;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use syntect::easy::HighlightLines;
@@ -84,7 +85,49 @@ fn syntax_for(path: &str, first_line: &str) -> Option<&'static SyntaxReference> 
 
 /// Highlights `text` as the file at `path`. Always returns one entry per line of `text`, each
 /// covering the line's bytes in order, so a caller can split segments at diff span boundaries.
-pub fn highlight(path: &str, text: &str, theme_name: &str) -> Vec<Vec<Segment>> {
+pub fn highlight(path: &str, text: &str, theme_name: &str) -> Lines {
+    let key = (path.to_string(), theme_name.to_string(), hash_of(text));
+    if let Some((_, lines)) = recent()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(k, _)| *k == key)
+    {
+        return lines.clone();
+    }
+    let lines = highlight_uncached(path, text, theme_name);
+    let mut recent = recent().lock().unwrap_or_else(|e| e.into_inner());
+    if recent.len() >= REMEMBERED {
+        recent.pop_front();
+    }
+    recent.push_back((key, lines.clone()));
+    lines
+}
+
+/// How many highlighted files are kept. Highlighting is the slowest thing a file costs —
+/// half a second for a couple of thousand lines of Rust — and a file is opened again and
+/// again in a review: after a refresh, from a comment, from a definition, beside its diff.
+/// A file is a megabyte or so of segments, so the number is small.
+const REMEMBERED: usize = 16;
+
+/// Path, theme and a hash of the content.
+type Key = (String, String, u64);
+type Lines = Vec<Vec<Segment>>;
+
+/// The last few files highlighted, by path, theme and content, for either front end.
+fn recent() -> &'static Mutex<VecDeque<(Key, Lines)>> {
+    static RECENT: OnceLock<Mutex<VecDeque<(Key, Lines)>>> = OnceLock::new();
+    RECENT.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn hash_of(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
+}
+
+fn highlight_uncached(path: &str, text: &str, theme_name: &str) -> Lines {
     let lines: Vec<&str> = text.lines().collect();
     let plain = || {
         lines

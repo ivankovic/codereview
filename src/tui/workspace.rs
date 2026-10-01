@@ -30,6 +30,16 @@ impl Workspace {
         }
     }
 
+    /// Tells every app how this terminal draws pictures, once it has been asked, and drops
+    /// any picture described before the answer came.
+    pub fn set_graphics(&mut self, graphics: Option<ratatui_image::picker::Picker>) {
+        for app in &mut self.apps {
+            app.graphics = graphics.clone();
+            app.graphics_known = true;
+            app.picture = None;
+        }
+    }
+
     pub fn app(&self) -> &App {
         &self.apps[self.active]
     }
@@ -50,8 +60,8 @@ impl Workspace {
     /// Ticks every app, so agents in the other repositories keep going.
     pub fn tick(&mut self) -> bool {
         let mut changed = false;
-        for app in &mut self.apps {
-            changed |= app.tick();
+        for (i, app) in self.apps.iter_mut().enumerate() {
+            changed |= app.tick(i == self.active);
         }
         changed
     }
@@ -113,8 +123,8 @@ impl Workspace {
         self.app_mut().info(format!("repository {i}: {name}"));
     }
 
-    /// Hands the active app's saved theme and layout to the others. Skipped while the theme
-    /// picker previews, since a preview is not a decision yet.
+    /// Hands the active app's saved theme, layout and side panel settings to the others.
+    /// Skipped while the theme picker previews, since a preview is not a decision yet.
     fn propagate_settings(&mut self) {
         let active = &self.apps[self.active];
         if active.theme_picker.is_some() {
@@ -122,6 +132,7 @@ impl Workspace {
         }
         let theme = active.theme.clone();
         let layout = active.layout;
+        let sidebar = active.session.config.sidebar;
         for (i, app) in self.apps.iter_mut().enumerate() {
             if i == self.active {
                 continue;
@@ -131,6 +142,9 @@ impl Workspace {
             }
             if app.layout != layout {
                 app.adopt_layout(layout);
+            }
+            if app.session.config.sidebar != sidebar {
+                app.adopt_sidebar(sidebar);
             }
         }
     }

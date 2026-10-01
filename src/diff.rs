@@ -303,6 +303,138 @@ fn plain(before: &str, after: &str, language: Language, large_residual: bool) ->
     }
 }
 
+/// For each line of `before`, 0-based, the line of `after` it became, or `None` when it was
+/// deleted: what follows a comment from the version of a file it was left on to the version
+/// on screen.
+///
+/// Read off codediff's AST diff, which matches every node of one tree, every token included, to
+/// a node of the other or to nothing. A line is the nodes that start on it, and it went where
+/// the outermost of them that survived went: the function whose signature it is, the statement
+/// it holds, the brace that closes a block — moved, edited, or pushed down by lines above it,
+/// as the trees say rather than as the text looks. A line on which nothing starts (blank, or
+/// inside a comment or string that spans lines) keeps its distance from the start of the
+/// innermost node around it, inside where that node went; between top-level items, from the
+/// nearest placed line above.
+///
+/// Without trees — a language codediff has no grammar for, a file past the size where the
+/// structural diff is skipped, one that does not parse — codediff's plain line diff decides,
+/// whose unchanged lines are the same lines in the same order on both sides.
+pub fn follow_lines(path: &Path, before: &str, after: &str) -> Vec<Option<usize>> {
+    let path = path.to_path_buf();
+    let before = before.to_string();
+    let after = after.to_string();
+    std::thread::Builder::new()
+        .stack_size(DIFF_STACK_SIZE)
+        .spawn(move || follow_inner(&path, &before, &after))
+        .expect("spawn diff thread")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn follow_inner(path: &Path, before: &str, after: &str) -> Vec<Option<usize>> {
+    let before_len = before.lines().count();
+    let after_len = after.lines().count();
+    let language =
+        language_for_path_and_content(path, if after.is_empty() { before } else { after })
+            .unwrap_or(Language::Unknown);
+    if language == Language::Unknown
+        || before_len > STRUCTURAL_MAX_LINES
+        || after_len > STRUCTURAL_MAX_LINES
+    {
+        return follow_plain(before, after);
+    }
+    let before_code = Code::from_string(before, &language);
+    let after_code = Code::from_string(after, &language);
+    let (Some(before_tree), Some(_)) = (before_code.ast.as_ref(), after_code.ast.as_ref()) else {
+        return follow_plain(before, after);
+    };
+    let Some(ast) = Diff::pending(&before_code, &after_code).finish().ast else {
+        return follow_plain(before, after);
+    };
+    let cache = NodeCache::build(&before_code, &after_code);
+    // Where a node of the before tree went: its match in the after tree, or nothing.
+    let went = |node: &tree_sitter::Node| -> Option<tree_sitter::Node<'static>> {
+        let to = *ast.before_node_map.get(&node.id())?;
+        (to != 0).then(|| cache.after.get(&to).copied()).flatten()
+    };
+
+    // The nodes that start on each line, outermost first: a walk in pre-order visits a node
+    // before anything inside it. The root is left out; it starts on the first line whatever
+    // the first line holds.
+    let root = before_tree.root_node();
+    let mut starting: Vec<Vec<tree_sitter::Node>> = vec![Vec::new(); before_len];
+    let mut cursor = root.walk();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.id() != root.id() {
+            if let Some(row) = starting.get_mut(node.start_position().row) {
+                row.push(node);
+            }
+        }
+        let children: Vec<_> = node.children(&mut cursor).collect();
+        stack.extend(children.into_iter().rev());
+    }
+
+    let mut map: Vec<Option<usize>> = vec![None; before_len];
+    let mut empty = Vec::new();
+    for (row, nodes) in starting.iter().enumerate() {
+        if nodes.is_empty() {
+            empty.push(row);
+            continue;
+        }
+        map[row] = nodes
+            .iter()
+            .find_map(&went)
+            .map(|n| n.start_position().row)
+            .filter(|&r| r < after_len);
+    }
+    for row in empty {
+        let point = tree_sitter::Point::new(row, 0);
+        let mut around = root.descendant_for_point_range(point, point);
+        // The innermost node around the line that went somewhere, below the root.
+        while let Some(node) = around.filter(|n| n.id() != root.id()) {
+            if node.start_position().row < row && node.end_position().row >= row {
+                if let Some(to) = went(&node) {
+                    let r = to.start_position().row + (row - node.start_position().row);
+                    map[row] = Some(r.min(to.end_position().row)).filter(|&r| r < after_len);
+                    break;
+                }
+            }
+            around = node.parent();
+        }
+        if around.is_none_or(|n| n.id() == root.id()) {
+            let above = (0..row).rev().find_map(|b| map[b].map(|a| (b, a)));
+            map[row] = above.map(|(b, a)| a + (row - b)).filter(|&r| {
+                r < after_len && after.lines().nth(r).is_some_and(|l| l.trim().is_empty())
+            });
+        }
+    }
+    map
+}
+
+/// The plain line diff's answer: the lines it leaves unchanged are the same lines, in the same
+/// order, on both sides, so the n-th unchanged line of one is the n-th of the other.
+fn follow_plain(before: &str, after: &str) -> Vec<Option<usize>> {
+    let (b, a) = plain_text_line_diff(before, after);
+    let unchanged = |ranges: &[RangeMatch], len: usize| -> Vec<usize> {
+        line_operations(ranges, len)
+            .iter()
+            .enumerate()
+            .filter(|(_, op)| !Op::from(*op).is_change())
+            .map(|(i, _)| i)
+            .collect()
+    };
+    let before_len = before.lines().count();
+    let mut map = vec![None; before_len];
+    for (bi, ai) in unchanged(&b, before_len)
+        .into_iter()
+        .zip(unchanged(&a, after.lines().count()))
+    {
+        map[bi] = Some(ai);
+    }
+    map
+}
+
 fn side(text: &str, ranges: &[RangeMatch]) -> Side {
     let lines: Vec<&str> = text.lines().collect();
     let line_ops: Vec<Op> = line_operations(ranges, lines.len())
@@ -395,6 +527,43 @@ fn spans_for_line(ranges: &[&RangeMatch], row: usize, len: usize) -> Vec<Span> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where each line of the version a comment was left on ended up: through a move, an
+    /// edit, and lines inserted above it; nowhere once deleted.
+    #[test]
+    fn every_line_of_before_has_a_place_in_after() {
+        let before = "fn a() {\n    let x = 1;\n}\n\nfn b() {\n    let y = 2;\n}\n\nfn gone() {\n    drop(3);\n}\n";
+        let after = "// header\nfn b() {\n    let y = 2;\n}\n\nfn a() {\n    let x = 10;\n}\n";
+        let map = follow_lines(Path::new("a.rs"), before, after);
+        let after_lines: Vec<&str> = after.lines().collect();
+        let went = |b: usize| map[b].map(|a| after_lines[a]);
+        assert_eq!(went(5), Some("    let y = 2;"), "{map:?}");
+        assert_eq!(went(4), Some("fn b() {"), "{map:?}");
+        assert_eq!(went(0), Some("fn a() {"), "{map:?}");
+        assert_eq!(
+            went(1),
+            Some("    let x = 10;"),
+            "edited, and followed: {map:?}"
+        );
+        assert_eq!(went(2), Some("}"), "{map:?}");
+        assert_eq!(went(9), None, "deleted: {map:?}");
+
+        // A blank line and the inside of a comment spanning lines keep their place in what
+        // is around them.
+        let before = "fn a() {\n    one();\n\n    /* a\n       b */\n    two();\n}\n";
+        let after = "// moved down\nfn a() {\n    one();\n\n    /* a\n       b */\n    two();\n}\n";
+        let map = follow_lines(Path::new("a.rs"), before, after);
+        assert_eq!(map[2], Some(3), "blank: {map:?}");
+        assert_eq!(map[4], Some(5), "inside the comment: {map:?}");
+
+        // The plain line diff, for a language codediff has no grammar for, maps as well.
+        let map = follow_lines(
+            Path::new("a.unknown"),
+            "one\ntwo\nthree\n",
+            "zero\none\nthree\n",
+        );
+        assert_eq!(map, vec![Some(1), None, Some(2)]);
+    }
 
     #[test]
     fn rust_insertion_is_structural() {

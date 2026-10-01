@@ -79,7 +79,7 @@ phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
    configuration names one — a label, a command, and optionally the artefact it leaves behind
    and how to read it. Three steps, in this order, because the first two need no new state and
    the third is where the question gets hard:
-   - **On demand.** A button per entry, in the status view and beside a diff. The command runs
+   - **On demand.** A button per entry, in the overview and beside a diff. The command runs
      from the repository root, its output streams to the page the way an agent turn does, and
      what comes back is an exit code, a duration and the tail of what it printed. That much is
      useful for anything: `make check`, a linter, a type checker, a build.
@@ -102,6 +102,14 @@ phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
    or not a browser is connected, since a check that waits for someone to look is not proactive
    at all; what keeps a laptop quiet is that nothing is watched until a check names it.
 
+   A repository someone had an agent build has no `[[analysis]]` entry, and whoever opens it
+   is the person least likely to write one. So a check can also be **found**: the Makefile's
+   `test` and `check` targets, then the language's runner, from a fixed table and never from
+   the repository, offered on the page and saved to the configuration — for that repository
+   only — the first time someone runs it. Beside the checks, the overview lists the tests the
+   repository defines, read rather than run, as the nearest thing it has to a specification,
+   and the files it leans on that no test names.
+
 ## Layout
 
 ```
@@ -114,16 +122,22 @@ src/review.rs      REVIEW.md: Comment model, parse, write
 src/notes.rs       NOTES.md: Note model, parse, write
 src/overview.rs    what a repository looks like when you open it: its own words, where to
                    start, and how it is doing
+src/facts.rs       OVERVIEW.md: what the tool last found out, written when the repository
+                   settles and read back on a fresh open
 src/anchor.rs      re-anchoring comments after edits
 src/diff.rs        codediff wrapper, per-line paint model shared by both UIs
 src/highlight.rs   syntect highlighting into UI-independent segments
 src/theme.rs       colour schemes shared by both front ends
 src/config.rs      the config file
-src/symbols.rs     tree-sitter symbol index: definitions, occurrences, search
+src/media.rs       which files are pictures, by name
+src/symbols.rs     tree-sitter symbol index: definitions, occurrences, search, what the tree
+                   leans on and what no test names
+src/testsuite.rs   the tests a repository defines, found in the same parse, per language
 src/acp.rs         Agent Client Protocol client
 src/claude.rs      Claude Code driven through its own streaming protocol
 src/agent.rs       the agent as the front ends see it, either backend
 src/fakes.rs       in-process stand-ins for both backends, tests only
-src/tui.rs, src/tui/  Ratatui front end (feature `tui`); workspace.rs holds one app per repository
+src/tui.rs, src/tui/  Ratatui front end (feature `tui`); workspace.rs holds one app per repository,
+                   outline.rs the side panel listing what the open file defines
 src/web.rs, src/web/  axum server and the embedded page (feature `web`)
 ```

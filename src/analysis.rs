@@ -14,9 +14,10 @@
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Check;
@@ -111,16 +112,197 @@ fn append(output: &mut String, line: &str) {
     }
 }
 
+/// Whether `left` and `right` name the same directory, symlinks and trailing slashes aside.
+fn same_dir(left: &Path, right: &Path) -> bool {
+    let l = left.canonicalize();
+    let r = right.canonicalize();
+    l.as_deref().unwrap_or(left) == r.as_deref().unwrap_or(right)
+}
+
+/// Whether `check` belongs to the repository at `root`: it names no repositories, or names
+/// this one.
+pub fn applies(check: &Check, root: &Path) -> bool {
+    check.repos.is_empty() || check.repos.iter().any(|r| same_dir(Path::new(r), root))
+}
+
 /// Whether `check` may run in `root` without being asked. The roots in the configuration are
 /// compared as git reports them, resolved, so that a path written with a symlink or a trailing
 /// slash still matches the repository it names.
 pub fn watches(check: &Check, root: &Path) -> bool {
-    let resolved = root.canonicalize();
-    let root = resolved.as_deref().unwrap_or(root);
-    check.watch.iter().any(|w| {
-        let w = Path::new(w);
-        w.canonicalize().as_deref().unwrap_or(w) == root
+    applies(check, root) && check.watch.iter().any(|w| same_dir(Path::new(w), root))
+}
+
+/// The checks a repository already has, found from the files at its root, for a repository
+/// nobody has configured anything for: its Makefile's `test` and `check` targets first, since
+/// those are the project's own word for it, then its language's test runner.
+///
+/// Every command here is from this table, never from the repository — a `package.json` says
+/// whether there is a test script, not what to type — and none of them runs until someone
+/// presses its button, which is also when it is saved to the configuration. What a test
+/// command runs is the repository's own code, and that is what running its tests means.
+pub fn detect(root: &Path) -> Vec<Check> {
+    let has = |name: &str| root.join(name).is_file();
+    let read = |name: &str| std::fs::read_to_string(root.join(name)).unwrap_or_default();
+    let mut found: Vec<Check> = Vec::new();
+    let mut add = |run: &str| {
+        found.push(Check {
+            name: run.to_string(),
+            run: run.to_string(),
+            ..Check::default()
+        })
+    };
+
+    let makefile = ["GNUmakefile", "makefile", "Makefile"]
+        .into_iter()
+        .find(|m| has(m))
+        .map(read)
+        .unwrap_or_default();
+    for target in ["test", "check"] {
+        let defines = makefile.lines().any(|line| {
+            line.strip_prefix(target).is_some_and(|rest| {
+                let rest = rest.trim_start();
+                rest.starts_with(':') && !rest.starts_with(":=")
+            })
+        });
+        if defines {
+            add(&format!("make {target}"));
+        }
+    }
+
+    if has("Cargo.toml") {
+        let workspace = if read("Cargo.toml").contains("[workspace]") {
+            " --workspace"
+        } else {
+            ""
+        };
+        if on_path("cargo-nextest") {
+            add(&format!("cargo nextest run{workspace}"));
+        } else {
+            add(&format!("cargo test{workspace}"));
+        }
+    }
+    if has("package.json") {
+        let script = serde_json::from_str::<serde_json::Value>(&read("package.json"))
+            .ok()
+            .and_then(|p| p["scripts"]["test"].as_str().map(str::to_string));
+        // `npm init` writes a test script whose whole job is to fail.
+        if script.is_some_and(|s| !s.contains("no test specified")) {
+            let runner = if has("pnpm-lock.yaml") {
+                "pnpm test"
+            } else if has("yarn.lock") {
+                "yarn test"
+            } else if has("bun.lock") || has("bun.lockb") {
+                "bun run test"
+            } else {
+                "npm test"
+            };
+            add(runner);
+        }
+    }
+    let pytest = has("pytest.ini")
+        || has("conftest.py")
+        || read("pyproject.toml").contains("pytest")
+        || read("setup.cfg").contains("[tool:pytest]")
+        || read("tox.ini").contains("[pytest]")
+        || ((has("pyproject.toml") || has("setup.py")) && root.join("tests").is_dir());
+    if pytest {
+        add(if has("uv.lock") {
+            "uv run pytest"
+        } else if has("poetry.lock") {
+            "poetry run pytest"
+        } else {
+            "python3 -m pytest"
+        });
+    }
+    if has("go.mod") {
+        add("go test ./...");
+    }
+    found
+}
+
+/// Whether `program` is an executable file in a directory on `PATH`.
+fn on_path(program: &str) -> bool {
+    let runnable = |m: std::fs::Metadata| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            m.is_file() && m.permissions().mode() & 0o111 != 0
+        }
+        #[cfg(not(unix))]
+        {
+            m.is_file()
+        }
+    };
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path)
+            .any(|dir| std::fs::metadata(dir.join(program)).is_ok_and(runnable))
     })
+}
+
+/// How far the code has moved on since a result: commits made after it, and files in the
+/// working tree changed after it. A result with both at zero is about what is on disk now.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Staleness {
+    pub commits: usize,
+    pub files: usize,
+}
+
+/// The counts a test runner prints at the end, for a check that leaves no artefact behind:
+/// `cargo test`'s `test result:` lines, added up across its binaries; nextest's `Summary`;
+/// pytest's closing line; jest's and vitest's `Tests` line. The output is only the tail of what
+/// was printed, so a `cargo test` with more binaries than fit is counted short — nextest and
+/// the others print one total at the very end and are not.
+pub fn figures_from_output(output: &str) -> Option<Figures> {
+    static COUNT: OnceLock<Regex> = OnceLock::new();
+    let count = COUNT.get_or_init(|| {
+        Regex::new(r"(\d+) (passed|failed|skipped|ignored|errors?|xfailed|xpassed|todo)\b")
+            .expect("regex")
+    });
+    let tally = |line: &str| {
+        let (mut passed, mut failed, mut skipped) = (0u64, 0u64, 0u64);
+        for c in count.captures_iter(line) {
+            let n: u64 = c[1].parse().unwrap_or(0);
+            match &c[2] {
+                "passed" | "xpassed" => passed += n,
+                "failed" | "error" | "errors" => failed += n,
+                _ => skipped += n,
+            }
+        }
+        (passed, failed, skipped)
+    };
+    let figures = |(passed, failed, skipped): (u64, u64, u64)| Figures {
+        tests: Some(passed + failed),
+        failed: Some(failed),
+        skipped: Some(skipped),
+        ..Figures::default()
+    };
+
+    let cargo: Vec<&str> = output
+        .lines()
+        .filter(|l| l.trim_start().starts_with("test result:"))
+        .collect();
+    let summary = output.lines().rev().find(|l| {
+        let l = l.trim();
+        (l.starts_with("Summary [") && l.contains(" run:"))
+            || (l.starts_with('=') && l.ends_with('=') && l.contains(" in "))
+            || l.starts_with("Tests:")
+            || (l.starts_with("Tests ") && l.contains('('))
+    });
+    if let Some(line) = summary {
+        // nextest and pytest spell `1 failed` inside a longer line; vitest writes `1 failed |`.
+        let t = tally(line);
+        if t != (0, 0, 0) {
+            return Some(figures(t));
+        }
+    }
+    if !cargo.is_empty() {
+        let t = cargo
+            .iter()
+            .map(|l| tally(l))
+            .fold((0, 0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2));
+        return Some(figures(t));
+    }
+    None
 }
 
 /// What a check's artefact says, in the terms a dashboard shows.
@@ -242,6 +424,7 @@ mod tests {
             reads: Some(reads.into()),
             kind: kind.into(),
             watch: Vec::new(),
+            repos: Vec::new(),
         }
     }
 
@@ -326,5 +509,114 @@ mod tests {
         assert!(figures(&check("", "missing.xml", "junit"), dir.path()).is_none());
         assert!(figures(&check("", "", "junit"), dir.path()).is_none());
         assert!(figures(&check("", "../../etc/passwd", "lcov"), dir.path()).is_none());
+    }
+
+    /// Each runner's own closing words, as it prints them.
+    #[test]
+    fn a_runner_says_how_many_tests_it_ran() {
+        let counts = |out: &str| {
+            figures_from_output(out)
+                .map(|f| (f.tests.unwrap(), f.failed.unwrap(), f.skipped.unwrap()))
+        };
+        // cargo test, one line per binary, added up.
+        assert_eq!(
+            counts(
+                "running 3 tests\ntest result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out\n\
+                 test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out\n"
+            ),
+            Some((10, 2, 1))
+        );
+        // nextest's summary, including when `make check` is what ran it.
+        assert_eq!(
+            counts(
+                "cargo fmt --check\n     Summary [   6.237s] 109 tests run: 107 passed, 2 failed, 2 skipped\n"
+            ),
+            Some((109, 2, 2))
+        );
+        // pytest.
+        assert_eq!(
+            counts(
+                "tests/test_a.py ..F\n==== 1 failed, 10 passed, 1 skipped, 2 warnings in 0.12s ====\n"
+            ),
+            Some((11, 1, 1))
+        );
+        // jest, and vitest.
+        assert_eq!(
+            counts("Tests:       1 failed, 1 skipped, 10 passed, 12 total\n"),
+            Some((11, 1, 1))
+        );
+        assert_eq!(
+            counts("      Tests  1 failed | 9 passed (10)\n"),
+            Some((10, 1, 0))
+        );
+        // A command that is not a test runner says nothing about tests.
+        assert_eq!(counts("Finished `release` profile\n"), None);
+    }
+
+    #[test]
+    fn a_repository_says_how_to_test_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let names = |d: &Path| detect(d).into_iter().map(|c| c.run).collect::<Vec<_>>();
+        assert!(
+            names(dir.path()).is_empty(),
+            "nothing there, nothing offered"
+        );
+
+        // The Makefile's own targets come first; `check:=` is a variable, not a target.
+        std::fs::write(
+            dir.path().join("Makefile"),
+            "check := yes\ntest: build\n\tcargo test\nlint:\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module x\n").unwrap();
+        let found = names(dir.path());
+        assert_eq!(found[0], "make test", "{found:?}");
+        assert!(!found.contains(&"make check".to_string()), "{found:?}");
+        assert!(found[1].starts_with("cargo "), "{found:?}");
+        assert_eq!(found[2], "go test ./...");
+
+        // npm's placeholder test script is not a test suite.
+        let js = tempfile::tempdir().unwrap();
+        std::fs::write(
+            js.path().join("package.json"),
+            r#"{"scripts": {"test": "echo \"Error: no test specified\" && exit 1"}}"#,
+        )
+        .unwrap();
+        assert!(names(js.path()).is_empty());
+        std::fs::write(
+            js.path().join("package.json"),
+            r#"{"scripts": {"test": "vitest run"}}"#,
+        )
+        .unwrap();
+        std::fs::write(js.path().join("pnpm-lock.yaml"), "").unwrap();
+        assert_eq!(names(js.path()), vec!["pnpm test"]);
+
+        let py = tempfile::tempdir().unwrap();
+        std::fs::write(
+            py.path().join("pyproject.toml"),
+            "[tool.pytest.ini_options]\n",
+        )
+        .unwrap();
+        std::fs::write(py.path().join("uv.lock"), "").unwrap();
+        assert_eq!(names(py.path()), vec!["uv run pytest"]);
+    }
+
+    #[test]
+    fn a_check_found_in_one_repository_stays_there() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let everywhere = check("true", "", "");
+        assert!(applies(&everywhere, a.path()) && applies(&everywhere, b.path()));
+        let mut scoped = check("true", "", "");
+        scoped.repos = vec![format!("{}/", a.path().display())];
+        assert!(
+            applies(&scoped, a.path()),
+            "a trailing slash is the same directory"
+        );
+        assert!(!applies(&scoped, b.path()));
+        // Watching a repository the check does not belong to does not make it run there.
+        scoped.watch = vec![b.path().display().to_string()];
+        assert!(!watches(&scoped, b.path()));
     }
 }

@@ -100,6 +100,8 @@ impl Search {
 pub struct Viewer {
     pub path: String,
     pub lines: Vec<String>,
+    /// How many lines the file has; more than `lines` holds when the view was cut.
+    pub total_lines: usize,
     pub highlighted: Vec<Vec<Segment>>,
     pub comments: Vec<Anchored>,
     pub blame: Option<Vec<BlameLine>>,
@@ -126,6 +128,7 @@ impl Viewer {
         let mut viewer = Self {
             path: view.path,
             lines,
+            total_lines: view.total_lines,
             highlighted,
             comments: view.comments,
             blame: None,
@@ -598,16 +601,23 @@ fn comment_row(
         head.push_str(a);
         head.push(' ');
     }
+    // A comment that names a commit counts its line there, and was followed from it.
+    let at = c
+        .comment
+        .commit
+        .as_deref()
+        .map(|commit| format!(" in {commit}"))
+        .unwrap_or_default();
     match c.state {
         AnchorState::Exact => {}
         AnchorState::Moved => {
             if let Some(label) = c.comment.line_label() {
-                head.push_str(&format!("(moved from {label}) "));
+                head.push_str(&format!("(moved from {label}{at}) "));
             }
         }
         AnchorState::Stale => {
             if let Some(label) = c.comment.line_label() {
-                head.push_str(&format!("(stale, was line {label}) "));
+                head.push_str(&format!("(stale, was line {label}{at}) "));
             }
         }
     }
@@ -876,6 +886,7 @@ mod tests {
     fn column_motions() {
         let view = FileView {
             path: "f.rs".into(),
+            total_lines: 0,
             text: "let total_x = compute(items);\n\tshort\n".into(),
             binary: false,
             comments: vec![],
@@ -915,6 +926,7 @@ mod tests {
         c.anchor = Some("b".into());
         let view = FileView {
             path: "f".into(),
+            total_lines: 0,
             text: "a\nb\nc\n".into(),
             binary: false,
             comments: crate::anchor::anchor_all(&[&c], "a\nb\nc\n"),
@@ -939,6 +951,7 @@ mod tests {
         let c = crate::review::Comment::on_path("f", "needs tests");
         let view = FileView {
             path: "f".into(),
+            total_lines: 0,
             text: "a\nb\n".into(),
             binary: false,
             comments: crate::anchor::anchor_all(&[&c], "a\nb\n"),

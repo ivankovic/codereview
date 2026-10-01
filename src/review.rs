@@ -5,7 +5,7 @@
 //! ```text
 //! # Pending
 //! - [Author] (2026-09-10 14:03:11) In src/main.rs on line 12: Wrong error type - "let x = ..."
-//! - In src/lib.rs on line 3-7: Duplicated below
+//! - In src/lib.rs on line 3-7: Duplicated below - "fn parse(" (at 3f2a9c1)
 //! - In src/tui: Too many screens
 //!
 //! # Completed
@@ -16,7 +16,11 @@
 //! optional too: without it the comment is about the path as a whole, which is how a file or a
 //! directory is commented on. The trailing quoted text is the line the comment was left on,
 //! kept so the comment can be found again after the file changes (see [`crate::anchor`]); a
-//! comment on a path has none. Anything the parser does not recognise (blank lines, prose,
+//! comment on a path has none. `(at 3f2a9c1)` at the very end names the commit whose version
+//! of the file the line numbers count in, when there was one: with it the line is followed
+//! through every change since with a diff rather than looked for by its text. It goes last
+//! because nvim-review finds a comment by `on line N:` and reads everything after the first
+//! `: ` as its text, so a suffix is the one place it cannot disturb. Anything the parser does not recognise (blank lines, prose,
 //! custom headings) is preserved verbatim, so the file round-trips through this module
 //! unchanged apart from the comment lines it edits. A path is read up to the first `: `, and
 //! the `on line` clause may only be left out on a bullet at the left margin, so a nested prose
@@ -55,6 +59,11 @@ pub struct Comment {
     /// The (trimmed, possibly truncated) text of the first line the comment was left on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<String>,
+    /// The commit, abbreviated, whose version of the file `line` counts in: set when the
+    /// comment was left on a file as it was committed, which is what lets its line be
+    /// followed through later changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
 }
 
 /// A comment is one line of Markdown. Text that carries line breaks of its own would be
@@ -97,6 +106,7 @@ impl Comment {
             author: None,
             timestamp: None,
             anchor: None,
+            commit: None,
         }
     }
 
@@ -148,6 +158,9 @@ impl Comment {
             out.push_str(" - \"");
             out.push_str(&anchor.replace('\\', "\\\\").replace('"', "\\\""));
             out.push('"');
+        }
+        if let Some(commit) = &self.commit {
+            out.push_str(&format!(" (at {commit})"));
         }
         out
     }
@@ -409,6 +422,7 @@ pub fn parse_comment_line(line: &str, section: &str) -> Option<Comment> {
         return None;
     }
     let rest = caps.get(6)?.as_str();
+    let (rest, commit) = split_commit(rest);
     let (text, anchor) = split_anchor(rest);
     Some(Comment {
         section: section.to_string(),
@@ -419,7 +433,26 @@ pub fn parse_comment_line(line: &str, section: &str) -> Option<Comment> {
         author: author.filter(|a| !a.is_empty()),
         timestamp: timestamp.filter(|t| !t.is_empty()),
         anchor,
+        commit,
     })
+}
+
+/// Splits a trailing ` (at <commit>)` off. Only an abbreviated hash counts — seven to forty
+/// hex digits — so a comment that happens to end in "(at noon)" keeps its words.
+fn split_commit(rest: &str) -> (&str, Option<String>) {
+    let rest = rest.trim_end();
+    let Some(body) = rest.strip_suffix(')') else {
+        return (rest, None);
+    };
+    let Some(idx) = body.rfind(" (at ") else {
+        return (rest, None);
+    };
+    let hash = &body[idx + 5..];
+    if (7..=40).contains(&hash.len()) && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        (&rest[..idx], Some(hash.to_ascii_lowercase()))
+    } else {
+        (rest, None)
+    }
 }
 
 /// Splits `text - "anchor"` into its two parts. The anchor is the last ` - "..."` group ending
@@ -515,6 +548,33 @@ mod tests {
         let back = parse_comment_line(&line, PENDING).unwrap();
         assert_eq!(back.anchor.as_deref(), Some("say \"hi\""));
         assert_eq!(back.text, "t");
+    }
+
+    /// The commit a comment's line counts in rides at the end of the line, after the anchor,
+    /// where nvim-review reads it as text and leaves `on line N:` alone.
+    #[test]
+    fn the_commit_rides_at_the_end() {
+        let mut c =
+            Comment::new("src/a.rs", 3, 7, "Duplicated below").with_anchor_from("fn parse(");
+        c.commit = Some("3f2a9c1".into());
+        let line = c.render();
+        assert_eq!(
+            line,
+            "- In src/a.rs on line 3-7: Duplicated below - \"fn parse(\" (at 3f2a9c1)"
+        );
+        assert_eq!(parse_comment_line(&line, PENDING).unwrap(), c);
+
+        // Without an anchor, and read as nvim-review would write it: no commit at all.
+        let back = parse_comment_line("- In a.rs on line 2: why (at 0123abcdef)", PENDING).unwrap();
+        assert_eq!(
+            (back.text.as_str(), back.commit.as_deref()),
+            ("why", Some("0123abcdef"))
+        );
+        let back = parse_comment_line("- In a.rs on line 2: why - \"b\"", PENDING).unwrap();
+        assert_eq!(back.commit, None);
+        // Words in parentheses are words.
+        let back = parse_comment_line("- In a.rs on line 2: meet (at noon)", PENDING).unwrap();
+        assert_eq!((back.text.as_str(), back.commit), ("meet (at noon)", None));
     }
 
     #[test]

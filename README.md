@@ -7,9 +7,11 @@ line they were left on and finding it again after edits.
 
 - **Open a repository** on what it is rather than on a file tree: what its README says, where
   to start reading, which files the rest of the tree leans on — computed from the symbols, not
-  declared anywhere — and how it is doing, down to how many review comments have lost the lines
-  they were left on.
-- **Explore** the working tree with syntax highlighting, change markers against HEAD, and blame.
+  declared anywhere — how it is doing, down to how many review comments have lost the lines
+  they were left on, and its tests: what they say the system does, file by file, whether the
+  last run is about the code on disk, and which of the files everything leans on no test names.
+- **Explore** the working tree with syntax highlighting, change markers against HEAD, and blame;
+  pictures are shown as pictures, in the browser and in a terminal that can draw them.
 - **Comment** on a line or a range. Comments go to `REVIEW.md`, pending or completed, in the
   format [nvim-review](https://codeberg.org/ivankovic/nvim-review) uses, so both tools can share
   one file.
@@ -22,9 +24,11 @@ line they were left on and finding it again after edits.
   it occurs, list a file's definitions, search definitions by name. Tree-sitter, no language
   server, every file in the repository, as fast as the tree changes.
 - **Run the checks** the project already has — tests, coverage, a linter, `make check` — from
-  the page, and see what they said: the exit code and the tail of the output from the run, the
-  test count and coverage from the `junit.xml` or `lcov.info` they leave behind. A repository
-  can opt in to having them run on their own, a few seconds after it stops changing.
+  the page, found in the repository when nothing is configured, and see what they said: the
+  exit code and the tail of the output from the run, the test count from it or from the
+  `junit.xml` they leave behind, coverage from `lcov.info`, and how many commits and changed
+  files have come since. A repository can opt in to having them run on their own, a few
+  seconds after it stops changing.
 - **Talk to a coding agent**: ask about the code under the cursor, have one review comment
   addressed, have every pending comment worked through, or have a diff reviewed into
   `REVIEW.md`. Claude Code directly by default, no adapter; any agent that speaks the Agent
@@ -65,6 +69,7 @@ codereview add src "too many modules"                       # a directory
 codereview note --path src/lib.rs "entry point for the parser"
 codereview toggle 3           # complete (or reopen) comment number 3 from `list --all`
 codereview reanchor           # rewrite line numbers of comments whose lines moved
+codereview overview           # write OVERVIEW.md: what it is, where to start, what its tests check
 codereview def total          # where `total` is defined
 codereview refs total         # every place `total` occurs
 codereview symbols pars       # definitions whose name contains "pars"
@@ -80,8 +85,10 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 
 | Key | What |
 | --- | --- |
-| `Tab` | switch between the file tree and the file |
-| `Enter` | open the file; on a comment row, edit it |
+| `Tab` | switch between the side panel and the file |
+| `O` | side panel: the file tree, or the outline of the file (`Enter` goes to a definition) |
+| `,` | options: side panels that hide while the file has the focus, diff layout, colour scheme |
+| `Enter` | open the file; on a comment row, edit it; on `… N more`, the rest of the directory |
 | `c` | comment on the line, or on the `V` selection; in the tree, on the whole file or directory |
 | `x` `e` `d` `u` | complete, edit, delete a comment, undo the delete |
 | `n` `N` | note on the file, general note |
@@ -215,7 +222,7 @@ The config file also remembers the diff layout (`v`) and whether comments get ti
 ```markdown
 # Pending
 - [Marko] (2026-09-10 14:03:11) In src/main.rs on line 12: wrong error type - "let x = parse()?;"
-- In src/lib.rs on line 3-7: duplicated below
+- In src/lib.rs on line 3-7: duplicated below - "fn parse(" (at 3f2a9c1)
 - In src/tui: too many screens
 
 # Completed
@@ -224,11 +231,16 @@ The config file also remembers the diff layout (`v`) and whether comments get ti
 
 Author and timestamp are optional, and so is the `on line` part: a comment without it is about
 the whole file or directory, and is shown above the file's first line. The quoted text at the
-end is the line the comment was left on. When the file changes, the tool looks for that text:
-if it is on the recorded line, the comment is exact; if it is elsewhere, the comment follows
-it and is shown as moved; if it is gone, the comment is shown as stale. `codereview reanchor`
-writes the new line numbers back. Anything else in the file, prose or custom headings, is
-preserved.
+end is the line the comment was left on, and `(at 3f2a9c1)` after it, when there is one, is the
+commit whose version of the file the line numbers count in: the commit of the diff the comment
+was left in, or HEAD when the file is committed and unchanged. Such a comment is followed: the
+syntax tree of the file at that commit is matched against the file now with codediff's AST
+diff, and the comment goes where the code on its line went, through moves and edits and lines
+added above it. Any other comment is looked
+for by its text: if it is on the recorded line, the comment is exact; if it is elsewhere, the
+comment follows it and is shown as moved; if it is gone, the comment is shown as stale.
+`codereview reanchor` writes the new line numbers back. Anything else in the file, prose or
+custom headings, is preserved.
 
 `NOTES.md`:
 
@@ -242,10 +254,23 @@ preserved.
 - Talks to the git binary on purpose, see PLAN.md.
 ```
 
+`OVERVIEW.md` is the third file, and the tool writes it: what the repository is, as of which
+commit, where to start reading, what the rest of the tree leans on, every test as a sentence
+under the file it is in, and the leaned-on files no test names. It is rewritten when the
+repository has held still for ten seconds and something changed, and read back when the
+repository is opened, so the overview page is there at once while the symbol index is built.
+An `## About` section is yours, or the agent's — "Explain this repository" writes there — and
+so is any heading of your own; the tool keeps them as they are.
+
 ## Development
 
 `make check` runs rustfmt, clippy with `-D warnings` on every feature set, and the tests
 through [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`).
+
+`make perf` times every request the page makes against a clone of this repository, cold and
+then warm, and fails on any that takes over 400 ms: the pause between a tap and the screen
+changing. It builds in release, since a debug build would time the compiler, and prints its
+table either way.
 
 `make integration-test` runs the browser UI behind a real nginx, in a container, over TLS on a
 name: the site from [docs/deploy.md](docs/deploy.md), signing in with a password, reading and

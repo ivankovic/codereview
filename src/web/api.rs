@@ -59,36 +59,91 @@ fn default_leaning() -> usize {
     8
 }
 
-/// Which files the rest of the tree leans on. Separate from the overview because the first
-/// one of these on a repository builds its symbol index, which is seconds of parsing, and the
-/// rest of the view should not wait for it.
-pub(super) async fn get_leans_on(
-    state: Ctx,
-    Query(q): Query<LeansQuery>,
-) -> ApiResult<Vec<crate::symbols::Reach>> {
+#[derive(Deserialize)]
+pub(super) struct TestsQuery {
+    #[serde(default = "default_leaning")]
+    most: usize,
+}
+
+#[derive(Serialize)]
+pub(super) struct TestsResponse {
+    #[serde(flatten)]
+    inventory: crate::testsuite::Inventory,
+    as_of: Option<crate::session::AsOf>,
+}
+
+/// The tests the repository defines, grouped by file, and the files it leans on that no test
+/// names. Needs the symbol index, like what it leans on, and answers from `OVERVIEW.md` the
+/// same way while that is built: the tests then carry no line numbers.
+pub(super) async fn get_tests(state: Ctx, Query(q): Query<TestsQuery>) -> ApiResult<TestsResponse> {
     let most = q.most.clamp(1, 50);
+    let warming = state.warming.load(std::sync::atomic::Ordering::Relaxed);
     Ok(Json(
-        with_session(&state, move |s| Ok(s.leans_on(most))).await?,
+        with_session(&state, move |s| {
+            if let Some(as_of) = s.as_of().filter(|_| warming || s.facts_file.is_some()) {
+                let inventory = match &s.facts_file {
+                    Some(facts) => crate::testsuite::Inventory::from_facts(facts, most),
+                    None => crate::testsuite::Inventory::of(Vec::new(), Vec::new()),
+                };
+                return Ok(TestsResponse {
+                    inventory,
+                    as_of: Some(as_of),
+                });
+            }
+            Ok(TestsResponse {
+                inventory: s.tests(most),
+                as_of: None,
+            })
+        })
+        .await?,
     ))
 }
 
-/// Every served repository from a distance, for the status view: the one page that answers
-/// "what needs me" without opening anything. Each repository costs two git commands and a
-/// file read, so this is asked for when that view is drawn and not on every refresh.
-pub(super) async fn get_status(State(state): State<AppState>) -> ApiResult<Vec<Summary>> {
-    let repos = state.repos.clone();
-    let list = tokio::task::spawn_blocking(move || {
-        repos
-            .iter()
-            .map(|r| {
-                let s = r.session.lock().unwrap_or_else(|e| e.into_inner());
-                s.summary()
+#[derive(Serialize)]
+pub(super) struct LeansResponse {
+    leaning: Vec<crate::symbols::Reach>,
+    /// Set when this came from `OVERVIEW.md` because the index is still being built: the
+    /// page says so and asks again.
+    as_of: Option<crate::session::AsOf>,
+}
+
+/// Which files the rest of the tree leans on. Separate from the overview because it needs the
+/// symbol index, which is seconds of parsing on a large repository. While the server's own
+/// thread is still building that index, or `OVERVIEW.md` has an answer, the file's answer is
+/// given, marked as of its commit — empty, and marked, when there is no file yet — and the
+/// page asks again. Only with neither is the index built here and now, under the lock.
+pub(super) async fn get_leans_on(
+    state: Ctx,
+    Query(q): Query<LeansQuery>,
+) -> ApiResult<LeansResponse> {
+    let most = q.most.clamp(1, 50);
+    let warming = state.warming.load(std::sync::atomic::Ordering::Relaxed);
+    Ok(Json(
+        with_session(&state, move |s| {
+            if let Some(as_of) = s.as_of().filter(|_| warming || s.facts_file.is_some()) {
+                let leaning = s
+                    .facts_file
+                    .iter()
+                    .flat_map(|f| f.leans_on.iter())
+                    .take(most)
+                    .map(|(path, names)| crate::symbols::Reach {
+                        path: path.clone(),
+                        score: 0.0,
+                        names: names.clone(),
+                    })
+                    .collect();
+                return Ok(LeansResponse {
+                    leaning,
+                    as_of: Some(as_of),
+                });
+            }
+            Ok(LeansResponse {
+                leaning: s.leans_on(most),
+                as_of: None,
             })
-            .collect::<Result<Vec<_>>>()
-    })
-    .await
-    .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))??;
-    Ok(Json(list))
+        })
+        .await?,
+    ))
 }
 
 #[derive(Serialize)]
@@ -147,11 +202,73 @@ pub(super) struct FileQuery {
     rev: Option<String>,
 }
 
+/// Highlighted lines for the wire: the distinct styles once, in a table, and per line a
+/// list of `[style, text]` pairs with adjacent runs of one style joined. One object per
+/// segment made a file of 1600 lines a megabyte of JSON, six times what this takes, and the
+/// page spent its time parsing it; the page turns these back into segments on arrival.
+#[derive(Serialize, Default)]
+pub(super) struct Packed {
+    styles: Vec<PackedStyle>,
+    lines: Vec<Vec<(usize, String)>>,
+}
+
+#[derive(Serialize, Clone, PartialEq, Eq, Hash)]
+struct PackedStyle {
+    fg: Option<(u8, u8, u8)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ansi: Option<u8>,
+    bold: bool,
+    italic: bool,
+}
+
+impl Packed {
+    /// Packs `lines` into this, sharing the style table with whatever is already packed.
+    fn add(&mut self, lines: &[Vec<Segment>]) -> Vec<Vec<(usize, String)>> {
+        let mut index: std::collections::HashMap<PackedStyle, usize> = self
+            .styles
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, s)| (s, i))
+            .collect();
+        lines
+            .iter()
+            .map(|line| {
+                let mut out: Vec<(usize, String)> = Vec::with_capacity(line.len());
+                for seg in line {
+                    let style = PackedStyle {
+                        fg: seg.fg,
+                        ansi: seg.ansi,
+                        bold: seg.bold,
+                        italic: seg.italic,
+                    };
+                    let i = *index.entry(style.clone()).or_insert_with(|| {
+                        self.styles.push(style);
+                        self.styles.len() - 1
+                    });
+                    match out.last_mut() {
+                        Some((last, text)) if *last == i => text.push_str(&seg.text),
+                        _ => out.push((i, seg.text.clone())),
+                    }
+                }
+                out
+            })
+            .collect()
+    }
+
+    fn of(lines: &[Vec<Segment>]) -> Packed {
+        let mut packed = Packed::default();
+        packed.lines = packed.add(lines);
+        packed
+    }
+}
+
 #[derive(Serialize)]
 pub(super) struct FileResponse {
     #[serde(flatten)]
     view: FileView,
-    lines: Vec<Vec<Segment>>,
+    #[serde(flatten)]
+    lines: Packed,
     /// Per-line change against HEAD or the index, when the file is modified.
     line_ops: Option<Vec<Op>>,
 }
@@ -162,7 +279,11 @@ pub(super) async fn get_file(state: Ctx, Query(q): Query<FileQuery>) -> ApiResul
             Some(rev) => s.file_view_at(rev, &q.path)?,
             None => s.file_view(&q.path)?,
         };
-        let lines = crate::highlight::highlight(&view.path, &view.text, &web_syntax(s));
+        let lines = Packed::of(&crate::highlight::highlight(
+            &view.path,
+            &view.text,
+            &web_syntax(s),
+        ));
         let mut line_ops = None;
         if q.rev.as_deref().unwrap_or("").is_empty() {
             if let Some(entry) = s.status.get(&q.path) {
@@ -178,7 +299,7 @@ pub(super) async fn get_file(state: Ctx, Query(q): Query<FileQuery>) -> ApiResul
                         DiffTarget::Staged
                     };
                     if let Ok(d) = s.diff(&target, &file) {
-                        if d.after.line_count() == lines.len() {
+                        if d.after.line_count() == lines.lines.len() {
                             line_ops = Some(d.after.line_ops);
                         }
                     }
@@ -198,6 +319,40 @@ pub(super) async fn get_file(state: Ctx, Query(q): Query<FileQuery>) -> ApiResul
 #[derive(Deserialize)]
 pub(super) struct PathQuery {
     path: String,
+}
+
+/// A picture in the working tree, as its bytes with its media type, for the page to show. Only
+/// what `media::image_type` names a picture is served; anything else is not this endpoint's
+/// to hand out. The page fetches it with the API token like any other request, so the bytes
+/// come back to a script, which shows them from memory: an `<img>` pointing here could not
+/// send the token. An SVG is served with a policy that lets it run nothing, should it ever be
+/// opened on its own.
+pub(super) async fn get_image(
+    state: Ctx,
+    Query(q): Query<PathQuery>,
+) -> Result<Response, ApiError> {
+    let Some(kind) = crate::media::image_type(&q.path) else {
+        return Err(ApiError(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            format!("{} is not a picture", q.path),
+        ));
+    };
+    let path = q.path.clone();
+    let bytes = with_session(&state, move |s| s.repo.read_working(&path)).await?;
+    let Some(bytes) = bytes else {
+        return Err(ApiError(StatusCode::NOT_FOUND, format!("no {}", q.path)));
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, kind),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; style-src 'unsafe-inline'",
+            ),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 pub(super) async fn get_blame(state: Ctx, Query(q): Query<PathQuery>) -> ApiResult<Vec<BlameLine>> {
@@ -287,8 +442,10 @@ pub(super) struct DiffQuery {
 pub(super) struct DiffResponse {
     #[serde(flatten)]
     diff: FileDiff,
-    before_lines: Vec<Vec<Segment>>,
-    after_lines: Vec<Vec<Segment>>,
+    /// The styles of both sides' lines, packed as a file's are.
+    styles: Vec<PackedStyle>,
+    before_lines: Vec<Vec<(usize, String)>>,
+    after_lines: Vec<Vec<(usize, String)>>,
     comments: Vec<Anchored>,
     target: String,
     rows: Vec<crate::diff::AlignedRow>,
@@ -327,14 +484,23 @@ pub(super) async fn get_diff(state: Ctx, Query(q): Query<DiffQuery>) -> ApiResul
         let diff = s.diff(&target, &file)?;
         let old_path = file.old_path.clone().unwrap_or_else(|| file.path.clone());
         let theme = web_syntax(s);
-        let before_lines = crate::highlight::highlight(&old_path, &diff.before.text, &theme);
-        let after_lines = crate::highlight::highlight(&file.path, &diff.after.text, &theme);
-        let comments =
-            crate::anchor::anchor_all(&s.review.comments_for(&file.path), &diff.after.text);
+        let mut packed = Packed::default();
+        let before_lines = packed.add(&crate::highlight::highlight(
+            &old_path,
+            &diff.before.text,
+            &theme,
+        ));
+        let after_lines = packed.add(&crate::highlight::highlight(
+            &file.path,
+            &diff.after.text,
+            &theme,
+        ));
+        let comments = s.anchor_in(&file.path, &diff.after.text);
         Ok(DiffResponse {
             target: target.label(),
             rows: diff.aligned_rows(),
             diff,
+            styles: packed.styles,
             before_lines,
             after_lines,
             comments,
@@ -358,6 +524,8 @@ pub(super) struct NewComment {
     end_line: Option<usize>,
     text: String,
     source_line: Option<String>,
+    /// The commit the line numbers count in, when they were read off a commit's diff.
+    at: Option<String>,
 }
 
 pub(super) async fn post_comment(state: Ctx, Json(body): Json<NewComment>) -> ApiResult<Comment> {
@@ -371,7 +539,13 @@ pub(super) async fn post_comment(state: Ctx, Json(body): Json<NewComment>) -> Ap
         .line
         .map(|line| (line, body.end_line.unwrap_or(line).max(line)));
     let r = with_session(&state, move |s| {
-        s.add_comment(&body.path, lines, &body.text, body.source_line.as_deref())
+        s.add_comment(
+            &body.path,
+            lines,
+            &body.text,
+            body.source_line.as_deref(),
+            body.at.as_deref(),
+        )
     })
     .await?;
     Ok(Json(r))
@@ -586,32 +760,81 @@ pub(super) struct CheckStatus {
     run: String,
     /// Whether this repository is one where it may also run unasked.
     watched: bool,
+    /// Found in the repository rather than configured: running it saves it first.
+    suggested: bool,
     /// The last run in this server's lifetime, in flight or finished; `None` if it has not
     /// been run since the server started, which is not the same as never having run.
     last: Option<CheckRun>,
-    /// What its artefact says, read now. This survives a restart because the file does.
+    /// What its artefact says, read now, which survives a restart because the file does; or,
+    /// with no artefact, what the last run printed at the end.
     figures: Option<Figures>,
+    /// How far the code has moved since the result shown: the last finished run, or else the
+    /// artefact. `None` when there is no result yet.
+    stale: Option<Staleness>,
 }
 
-/// Every configured check, with whatever is known about it: what the last run did, and what
-/// the artefact on disk says. The two are independent — a figure can be there with no run
-/// behind it, left by a `make check` in a terminal.
+/// The checks of the repository at `root`: the configured ones that belong to it, then the
+/// ones found in it that nothing configured already runs or is called. The second flag says
+/// which is which.
+fn checks_of(s: &Session, root: &std::path::Path) -> Vec<(Check, bool)> {
+    let configured: Vec<Check> = s
+        .config
+        .analysis
+        .iter()
+        .filter(|c| crate::analysis::applies(c, root))
+        .cloned()
+        .collect();
+    let found: Vec<Check> = crate::analysis::detect(root)
+        .into_iter()
+        .filter(|d| {
+            !configured
+                .iter()
+                .any(|c| c.run == d.run || c.name == d.name)
+        })
+        .collect();
+    configured
+        .into_iter()
+        .map(|c| (c, false))
+        .chain(found.into_iter().map(|c| (c, true)))
+        .collect()
+}
+
+/// Every check of this repository, with whatever is known about it: what the last run did,
+/// what the artefact on disk says, and how much the code has changed since. The first two are
+/// independent — a figure can be there with no run behind it, left by a `make check` in a
+/// terminal.
 pub(super) async fn get_analysis(state: Ctx) -> ApiResult<Vec<CheckStatus>> {
     let checks = state.checks.clone();
-    let root = with_session(&state, |s| Ok(s.root().to_path_buf())).await?;
     let list = with_session(&state, move |s| {
+        let root = s.root().to_path_buf();
         let runs = checks.lock().unwrap_or_else(|e| e.into_inner());
-        Ok(s.config
-            .analysis
-            .iter()
-            .map(|c| CheckStatus {
-                name: c.name.clone(),
-                run: c.run.clone(),
-                watched: crate::analysis::watches(c, &root),
-                last: runs
+        Ok(checks_of(s, &root)
+            .into_iter()
+            .map(|(c, suggested)| {
+                let last = runs
                     .get(&c.name)
-                    .map(|r| r.lock().unwrap_or_else(|e| e.into_inner()).clone()),
-                figures: crate::analysis::figures(c, &root),
+                    .map(|r| r.lock().unwrap_or_else(|e| e.into_inner()).clone());
+                let finished = last.as_ref().filter(|r| !r.running);
+                let figures = crate::analysis::figures(&c, &root).or_else(|| {
+                    let run = finished?;
+                    crate::analysis::figures_from_output(&run.output).map(|f| Figures {
+                        as_of: Some(run.started.clone()),
+                        ..f
+                    })
+                });
+                let since = finished
+                    .map(|r| r.started.clone())
+                    .or_else(|| figures.as_ref().and_then(|f| f.as_of.clone()));
+                let stale = since.and_then(|t| s.changed_since(&t, c.reads.as_deref()).ok());
+                CheckStatus {
+                    watched: crate::analysis::watches(&c, &root),
+                    name: c.name,
+                    run: c.run,
+                    suggested,
+                    last,
+                    figures,
+                    stale,
+                }
             })
             .collect())
     })
@@ -624,20 +847,23 @@ pub(super) struct RunCheck {
     name: String,
 }
 
-/// Starts one check. Returns at once: what it is doing arrives through `/analysis`.
+/// Starts one check. Returns at once: what it is doing arrives through `/analysis`. A check
+/// the repository suggested is saved to the configuration first, for this repository, so
+/// that pressing Run once is how a found check becomes a configured one.
 pub(super) async fn post_analysis_run(
     state: Ctx,
     Json(body): Json<RunCheck>,
 ) -> ApiResult<CheckRun> {
     let checks = state.checks.clone();
     let run = with_session(&state, move |s| {
-        let check = s
-            .config
-            .analysis
-            .iter()
-            .find(|c| c.name == body.name)
-            .cloned()
+        let root = s.root().to_path_buf();
+        let (check, suggested) = checks_of(s, &root)
+            .into_iter()
+            .find(|(c, _)| c.name == body.name)
             .with_context(|| format!("no check called {:?}", body.name))?;
+        if suggested {
+            s.save_check(&check)?;
+        }
         let mut runs = checks.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(existing) = runs.get(&check.name) {
             if existing.lock().unwrap_or_else(|e| e.into_inner()).running {

@@ -15,6 +15,11 @@ test:
 integration-test:
 	cargo nextest run --features web --run-ignored all -E 'binary(nginx_proxy)'
 
+# How long every request the page makes takes against this repository itself, cold and warm,
+# each against a budget of 400 ms. Release, because a debug build measures the compiler.
+perf:
+	cargo nextest run --release --features web --run-ignored all -E 'test(perf::)' --no-capture
+
 # The page itself, in a headless Chromium at a phone's size. Needs podman, and pulls about a
 # gigabyte of browser the first time. This is the only test that can see the page: everything
 # else reads what the server sends, which a clipped menu does not change.

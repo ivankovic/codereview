@@ -51,7 +51,7 @@ header .tabs button.active { border-bottom-color: var(--accent); color: var(--ac
 .dim { color: var(--dim); }
 main { flex: 1; display: flex; min-height: 0; }
 aside#tree { width: 280px; min-width: 180px; max-width: 50vw; overflow: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 6px 0; resize: horizontal; }
-/* The tree is the explorer's, and the overview is where the explorer starts. */
+/* The tree is the explorer's, and beside the overview on a wide screen, a click from a file. */
 body:not([data-view=explore]):not([data-view=overview]) #tree { display: none; }
 aside#tree .row { padding: 1px 8px; cursor: pointer; white-space: nowrap; display: flex; gap: 4px; align-items: center; }
 aside#tree .row:hover { background: var(--cursor); }
@@ -62,6 +62,7 @@ aside#tree .row .st.A, aside#tree .name.A { color: var(--ins-fg); }
 aside#tree .row .st.D { color: var(--del-fg); }
 aside#tree .row .st.q, aside#tree .name.q { color: var(--dim); }
 aside#tree .dir { font-weight: 600; }
+aside#tree .row.more { color: var(--dim); }
 aside#tree .cnt { color: var(--exact); font-size: 11px; margin-left: auto; }
 aside#tree .add { visibility: hidden; margin-left: 6px; padding: 0 4px; color: var(--dim); }
 aside#tree .row.dir:hover .add { visibility: visible; }
@@ -130,10 +131,19 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .overview .fig.warn { color: var(--moved); cursor: pointer; }
 .overview .ins { color: var(--ins-fg); } .overview .del { color: var(--del-fg); }
 .overview .state { border-bottom: 1px solid var(--border); padding-bottom: 10px; }
-/* The checks, under the repositories: one row each, with what the last run said. */
-.checks { padding: 8px 12px 16px; }
-.checks .head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
-.checks .head .path { font-weight: 600; }
+/* The tests, at the end of the overview: how to run them, with what the last run said and
+   whether the code has moved since; then what they say, a folded list per file. */
+.overview h4 { margin: 12px 0 4px; font-size: 12px; font-weight: 600; color: var(--dim); }
+.checks .check .stale { font-size: 12px; }
+.checks .check .stale.fresh { color: var(--ins-fg); }
+.checks .check .stale.old { color: var(--moved); }
+.overview .suite details { margin: 1px 0; }
+.overview .suite summary { cursor: pointer; padding: 3px 6px; border-radius: 4px; }
+.overview .suite summary:hover { background: var(--cursor); }
+.overview .suite .item.test { padding-left: 22px; }
+.overview .suite .item.ignored .grow { color: var(--dim); }
+.overview .suite .caveat { font-size: 12px; margin: 0 6px 4px; max-width: 80ch; }
+.overview .asof { font-size: 12px; margin: 4px 6px; font-style: italic; }
 .checks .check { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; row-gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .checks .check .name { font-weight: 600; min-width: 6em; }
 .checks .check .verdict { font-size: 12px; }
@@ -142,19 +152,17 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .checks .check.running .verdict { color: var(--accent); }
 .checks .check .figures { font-size: 12px; }
 .checks .check .badge { font-size: 11px; }
-/* The status list: a repository a row, with the reasons to open it beside its name. */
-.list.status .item.repo { flex-wrap: wrap; row-gap: 4px; align-items: center; }
-.list.status .name { font-weight: 600; cursor: pointer; }
-.list.status .name:hover { color: var(--accent); }
-.list.status .counts { display: flex; gap: 6px; align-items: center; }
-.list.status .counts button[disabled] { opacity: .45; }
-.list.status .counts button.has { border-color: var(--accent); color: var(--accent); }
-.list.status .last { flex-basis: 100%; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list .item .grow { flex: 1; }
 .split { display: flex; height: 100%; min-height: 0; }
 .split > div { flex: 1; overflow: auto; min-width: 0; }
 .split > div:first-child { border-right: 1px solid var(--border); max-width: 50%; }
 .details { padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); font-family: ui-monospace, monospace; white-space: pre-wrap; }
+/* A picture in the working tree, fitted to the pane, on a checkerboard so that transparency
+   shows as transparency. */
+.picture { padding: 16px; text-align: center; border-bottom: 1px solid var(--border); }
+.picture img { max-width: 100%; max-height: 70vh; image-rendering: auto;
+  background: repeating-conic-gradient(var(--panel) 0% 25%, var(--bg) 0% 50%) 50% / 16px 16px; }
+.picture .caption { margin-top: 6px; font-size: 12px; }
 .status-letter { display: inline-block; width: 1.2em; font-family: ui-monospace, monospace; }
 .status-letter.A { color: var(--ins-fg); } .status-letter.D { color: var(--del-fg); } .status-letter.M { color: var(--upd-fg); } .status-letter.R { color: var(--mov-fg); } .status-letter.q { color: var(--dim); }
 .sbs { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
@@ -324,9 +332,8 @@ body.zen.hasmsg footer { display: flex; }
   <select id="repo" title="which repository the page shows" hidden></select>
   <span id="branch" class="dim"></span>
   <nav class="tabs">
-    <button data-view="status">Status</button>
+    <button data-view="overview">Overview</button>
     <button data-view="explore" class="active">Explore</button>
-    <button data-view="overview" hidden></button>
     <button data-view="changes">Changes</button>
     <button data-view="log">Log</button>
     <button data-view="review">Review <span id="pending" class="badge"></span></button>
@@ -371,7 +378,7 @@ const state = {
   // path -> the one-letter change mark, which is not the same shape as a ChangedFile's
   // `status`, a word.
   statusLetters: {}, pending: 0, hasCommits: true,
-  tree: { collapsed: new Set(), filter: '' },
+  tree: { collapsed: new Set(), filter: '', shown: new Set() },
   file: null,      // { path, lines, text, comments, notes, line_ops, blame }
   diff: null,      // { params, data, unified, siblings, index, back }
   log: null,       // { path, commits, selected, files, exhausted }
@@ -567,7 +574,7 @@ async function switchRepo(index) {
   state.repo = index;
   watch.version = null;
   state.file = null; state.diff = null; state.log = null; state.allComments = undefined;
-  state.tree.collapsed = new Set(); state.tree.filter = '';
+  state.tree.collapsed = new Set(); state.tree.filter = ''; state.tree.shown = new Set();
   Object.assign(agent, { version: 0, entries: [], permission: null, running: false, name: '', status: 'not started',
     progress: '', usage: '', pollFailures: 0, startedAt: null });
   state.allComments = await api('/comments');
@@ -583,6 +590,9 @@ async function switchRepo(index) {
 $('#repo').onchange = e => switchRepo(Number(e.target.value)).then(() => navigate(routes.tree())).catch(fail);
 
 // ----- tree -----------------------------------------------------------------------------------
+
+// How many files a directory shows before the rest fold behind "… N more".
+const TREE_FOLD = 10;
 
 function buildTree() {
   const root = { dirs: new Map(), files: [] };
@@ -612,13 +622,26 @@ function renderTree() {
       parts.push(`<div class="row dir" data-dir="${esc(d.path)}" style="padding-left:${8 + depth * 14}px"><span class="st"></span>${collapsed ? '▸' : '▾'} ${esc(name)}/${dcnt}<span class="add" title="comment on this directory">+</span></div>`);
       if (!collapsed) walk(d, depth + 1);
     }
-    for (const f of node.files.sort((a, b) => a.name.localeCompare(b.name))) {
+    // A directory of hundreds of files is a wall, and the next directory is somewhere below
+    // it. Past the tenth, files are folded behind a "… N more" row, except those the tree
+    // has something to say about: changed, commented on, or the one open. A filter is a
+    // request to see everything it matches, so nothing folds while one is typed.
+    const files = node.files.sort((a, b) => a.name.localeCompare(b.name));
+    const dirPath = node.path || '';
+    const speaks = f => !!state.statusLetters[f.path] || !!counts[f.path] || (state.file && state.file.path === f.path);
+    const foldable = !state.tree.filter && files.length > TREE_FOLD + 1;
+    const shown = foldable && state.tree.shown.has(dirPath);
+    let hidden = 0;
+    files.forEach((f, i) => {
+      if (foldable && !shown && i >= TREE_FOLD && !speaks(f)) { hidden++; return; }
       const st = state.statusLetters[f.path] || '';
       const cls = st === '?' ? 'q' : st;
       const sel = state.file && state.file.path === f.path ? ' selected' : '';
       const cnt = counts[f.path] ? `<span class="cnt">●${esc(counts[f.path])}</span>` : '';
       parts.push(`<div class="row${sel}" data-file="${esc(f.path)}" style="padding-left:${8 + depth * 14}px"><span class="st ${esc(cls)}">${esc(st)}</span><span class="name ${esc(cls)}">${esc(f.name)}</span>${cnt}</div>`);
-    }
+    });
+    if (hidden) parts.push(`<div class="row more" data-more="${esc(dirPath)}" style="padding-left:${8 + depth * 14}px"><span class="st"></span>… ${hidden} more</div>`);
+    else if (shown) parts.push(`<div class="row more" data-fewer="${esc(dirPath)}" style="padding-left:${8 + depth * 14}px"><span class="st"></span>… fewer</div>`);
   };
   walk(buildTree(), 0);
   const tree = $('#tree');
@@ -633,9 +656,23 @@ function renderTree() {
     el.querySelector('.add').onclick = e => { e.stopPropagation(); addPathComment(el.dataset.dir); };
   });
   tree.querySelectorAll('[data-file]').forEach(el => el.onclick = () => openFile(el.dataset.file));
+  tree.querySelectorAll('[data-more]').forEach(el => el.onclick = () => { state.tree.shown.add(el.dataset.more); renderTree(); });
+  tree.querySelectorAll('[data-fewer]').forEach(el => el.onclick = () => { state.tree.shown.delete(el.dataset.fewer); renderTree(); });
 }
 
 // ----- code rendering -------------------------------------------------------------------------
+
+// Highlighted lines arrive packed: a table of styles once, and per line [style, text] pairs
+// with runs of one style already joined. Back into one object per segment here, on arrival,
+// so that everything that draws a line reads as it always did.
+function inflate(lines, styles) {
+  return (lines || []).map(line => line.map(([s, text]) => ({ ...styles[s], text })));
+}
+function inflateDiff(d) {
+  d.before_lines = inflate(d.before_lines, d.styles);
+  d.after_lines = inflate(d.after_lines, d.styles);
+  return d;
+}
 
 function segStyle(seg) {
   let s = '';
@@ -716,8 +753,10 @@ function commentRow(c, colspan, onChange) {
   const done = c.comment.section !== 'Pending';
   const who = esc(c.comment.author || 'comment');
   let note = '';
-  if (st === 'moved') note = `moved from line ${c.comment.line}`;
-  if (st === 'stale') note = `stale, was line ${c.comment.line}`;
+  // A comment that names a commit counts its line there, and was followed from it.
+  const at = c.comment.commit ? ` in ${c.comment.commit}` : '';
+  if (st === 'moved') note = `moved from line ${c.comment.line}${at}`;
+  if (st === 'stale') note = `stale, was line ${c.comment.line}${at}`;
   const tr = document.createElement('tr');
   tr.className = 'comment';
   tr.innerHTML = `<td colspan="${colspan}"><div class="cmt ${st}${done ? ' done' : ''}">
@@ -744,7 +783,16 @@ function commentRow(c, colspan, onChange) {
 // when given, puts an "extend" button on the form: the next line number tapped becomes the
 // other end of the range, which is what shift-click does with a keyboard. `initial` keeps
 // what was typed when the form is rebuilt for the new range.
-function commentForm(path, line, endLine, sourceLine, colspan, onDone, onExtend, initial = '') {
+// The commit a diff's after side is, when it is one: a line number read off it counts there.
+// The working tree and the index are not commits.
+function afterRevision(p) {
+  if (p.kind === 'commit') return p.hash || null;
+  if (p.kind === 'revisions') return p.to || null;
+  return null;
+}
+
+// `at` is the commit the line numbers count in, when they were read off a commit's diff.
+function commentForm(path, line, endLine, sourceLine, colspan, onDone, onExtend, initial = '', at = null) {
   const tr = document.createElement('tr');
   tr.className = 'form';
   const label = line ? ':' + (endLine > line ? `${line}-${endLine}` : `${line}`) : '';
@@ -758,7 +806,7 @@ function commentForm(path, line, endLine, sourceLine, colspan, onDone, onExtend,
   const save = () => {
     const text = ta.value.trim();
     if (!text) return;
-    api('/comments', { body: { path, line: line || null, end_line: line ? endLine : null, text, source_line: line ? sourceLine : null } }).then(() => onDone(true)).catch(fail);
+    api('/comments', { body: { path, line: line || null, end_line: line ? endLine : null, text, source_line: line ? sourceLine : null, at: line ? at : null } }).then(() => onDone(true)).catch(fail);
   };
   on(tr, 'save', save);
   on(tr, 'ask', () => {
@@ -783,7 +831,11 @@ let commentAnchorLine = null, extending = false;
 
 async function openFile(path, line) {
   try {
+    // A big file is a moment to fetch and draw; a tap that shows nothing meanwhile reads as
+    // a tap that did nothing. A refresh of the file already open keeps it on screen.
+    if (!state.file || state.file.path !== path) $('#content').innerHTML = '<div class="center">reading the file…</div>';
     const f = await api('/file?path=' + encodeURIComponent(path));
+    f.lines = inflate(f.lines, f.styles);
     // The fingerprint stamps the open file, so another file is another baseline.
     watch.version = null;
     state.file = { ...f, blame: null };
@@ -791,6 +843,7 @@ async function openFile(path, line) {
     navigate(routes.file(path, line));
     // On a phone the file replaces the tree.
     document.body.classList.add('showfile');
+    renderFile.upToLine = line || 0;
     renderFile();
     renderTree();
     if (line) scrollToLine(line);
@@ -831,6 +884,8 @@ function showTree() {
   setZen(false);
   setTabs('explore');
   document.body.classList.remove('showfile');
+  // With nothing open, whatever view was up would sit beside the tree under the wrong tab.
+  if (!state.file) $('#content').innerHTML = '<div class="center">Pick a file from the tree.</div>';
   navigate(routes.tree());
 }
 
@@ -860,7 +915,7 @@ function renderFile() {
   head.className = 'panelhead';
   head.innerHTML = `<button class="phone" data-act="up" title="back to the file tree">‹ files</button><span class="path">${esc(f.path)}</span>
     ${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
-    <span class="dim lines">${f.lines.length} lines</span>
+    <span class="dim lines">${f.total_lines > f.lines.length ? 'first ' + f.lines.length + ' of ' + f.total_lines : f.lines.length} lines</span>
     <span class="spacer"></span>
     <button data-act="comment" title="comment on the file as a whole">Comment</button>
     <button class="phone" data-act="menu" title="everything else this file can do">⋯</button>
@@ -896,7 +951,12 @@ function renderFile() {
     n.innerHTML = f.notes.map(x => '• ' + esc(x.text)).join('\n');
     content.appendChild(n);
   }
-  if (f.binary) { content.insertAdjacentHTML('beforeend', '<div class="center">binary file</div>'); return; }
+  // A picture is shown as one; an SVG, which is text, has its source under it as well.
+  if (isImage(f.path)) showPicture(content, f.path);
+  if (f.binary) {
+    if (!isImage(f.path)) content.insertAdjacentHTML('beforeend', '<div class="center">binary file</div>');
+    return;
+  }
 
   const table = document.createElement('table');
   table.className = 'code';
@@ -932,7 +992,15 @@ function renderFile() {
   // Comments on the file as a whole have no line; they head the file.
   for (const c of f.comments) if (!c.line) table.appendChild(commentRow(c, cols, onChange));
   let firstMatch = null;
-  f.lines.forEach((segs, i) => {
+  // Rows are drawn in batches, the first at once and the rest a frame at a time, so that a
+  // long file shows its head while the rest of it is still being built and the page stays
+  // able to scroll and take a tap meanwhile. A later render, or leaving the file, stops a
+  // batch run that is still going. Whatever is asked for up front — a line to scroll to —
+  // is drawn in the first batch.
+  const generation = ++renderFile.generation;
+  const upTo = Math.max(ROWS_AT_ONCE, (renderFile.upToLine || 0) + ROWS_AT_ONCE / 4);
+  renderFile.upToLine = 0;
+  const row = (segs, i) => {
     const n = i + 1;
     const op = f.line_ops ? f.line_ops[i] : 'none';
     const tr = document.createElement('tr');
@@ -952,13 +1020,26 @@ function renderFile() {
     tr.querySelector('td.n').onclick = e => beginComment(n, e.shiftKey || extending);
     table.appendChild(tr);
     for (const c of byLine[n] || []) table.appendChild(commentRow(c, cols, onChange));
-  });
-  // Comments past the end of the file.
-  for (const c of f.comments) if (c.line && c.end_line > f.lines.length) table.appendChild(commentRow(c, cols, onChange));
+  };
+  const finish = () => {
+    // Comments past the end of the file.
+    for (const c of f.comments) if (c.line && c.end_line > f.lines.length) table.appendChild(commentRow(c, cols, onChange));
+    if (state.search && firstMatch) scrollToLine(firstMatch);
+  };
+  let next = 0;
+  const batch = (count) => {
+    const end = Math.min(f.lines.length, next + count);
+    for (; next < end; next++) row(f.lines[next], next);
+    if (next < f.lines.length) requestAnimationFrame(() => { if (renderFile.generation === generation && table.isConnected) batch(ROWS_AT_ONCE); });
+    else finish();
+  };
+  batch(upTo);
   content.appendChild(table);
   fileHint();
-  if (state.search && firstMatch) scrollToLine(firstMatch);
 }
+// How many rows a file draws before yielding to the browser.
+const ROWS_AT_ONCE = 1500;
+renderFile.generation = 0;
 
 // ----- symbols --------------------------------------------------------------------------------
 
@@ -1261,10 +1342,12 @@ async function commitChanges(staged, files) {
 
 // ----- overview -------------------------------------------------------------------------------
 
-// What a repository opens on: what it says it is, where to start reading, what the rest of it
-// leans on, and how it is doing. Two requests, because the last of those needs the symbol
-// index and the first one on a cold repository is seconds of parsing — the page draws what it
-// has and fills that part in when it arrives.
+// What a repository opens on: how it is doing, what it says it is, where to start reading and
+// what the rest of it leans on, then its tests — how to run them and what the last run said,
+// what they say the system does, and what they leave alone. Several requests, because what it
+// leans on and its tests need the symbol index, which on a cold repository is seconds of
+// parsing, and the checks are their own: the page draws what it has and fills the rest in as
+// it arrives.
 async function showOverview() {
   setZen(false);
   setTabs('overview');
@@ -1281,7 +1364,7 @@ async function showOverview() {
       <span class="dim mono">${esc(st.branch)}</span>
       <span class="spacer"></span>
       <button data-act="files">Files</button>
-      <button data-act="explain" title="have the agent write an orientation into NOTES.md">Explain this repository</button></div>
+      <button data-act="explain" title="have the agent write an orientation into OVERVIEW.md, under About">Explain this repository</button></div>
       <div class="overview">
         <section class="state">
           <div class="figures">
@@ -1290,7 +1373,6 @@ async function showOverview() {
             <span class="fig ${st.pending ? 'live' : ''}" data-act="pending"><b>${st.pending}</b> pending</span>
             ${st.stale || st.moved ? `<span class="fig warn" data-act="pending" title="comments whose lines have moved or gone">${st.stale ? num(st.stale, 'stale') : ''}${st.stale && st.moved ? ', ' : ''}${st.moved ? num(st.moved, 'moved') : ''}</span>` : ''}
             <span class="fig"><b>${st.commits}</b> commits this week</span>
-            ${st.commits ? `<span class="fig"><span class="ins">+${st.added}</span> <span class="del">−${st.removed}</span></span>` : ''}
             ${st.todos ? `<span class="fig"><b>${st.todos}</b> TODO/FIXME</span>` : ''}
           </div>
           ${st.authors.length ? `<div class="dim">this week: ${esc(st.authors.join(', '))}</div>` : ''}
@@ -1299,6 +1381,10 @@ async function showOverview() {
         ${o.readme ? `<section><h3>${esc(o.readme.path)}</h3><pre class="readme">${esc(o.readme.opening)}</pre></section>` : ''}
         <section><h3>Start here</h3><div class="entries"></div></section>
         <section><h3>What the rest of it leans on</h3><div class="leaning dim">reading the symbols…</div></section>
+        <section class="testing"><h3>Tests</h3>
+          <div class="checks dim">reading the checks…</div>
+          <h4>What they say</h4><div class="suite dim">reading the tests…</div>
+        </section>
         ${o.docs.length ? '<section><h3>Also written down</h3><div class="docs"></div></section>' : ''}
         ${st.biggest.length ? '<section><h3>Biggest files</h3><div class="biggest"></div></section>' : ''}
       </div>`;
@@ -1322,38 +1408,158 @@ async function showOverview() {
     const big = content.querySelector('.biggest');
     if (big) for (const b of st.biggest) link(big, b.path, (b.bytes / 1024).toFixed(0) + ' KiB');
 
-    // The slow half, once the rest is on screen.
-    try {
-      const leaning = await api('/leans_on');
-      const into = content.querySelector('.leaning');
-      if (!into) return;
-      into.className = 'leaning';
-      into.innerHTML = '';
-      if (!leaning.length) {
-        into.className = 'leaning dim';
-        into.textContent = 'Nothing here defines names the rest of the tree uses.';
-        return;
-      }
-      for (const l of leaning) link(into, l.path, l.names.join(', '));
-    } catch (e) {
-      const into = content.querySelector('.leaning');
-      if (into) into.textContent = 'could not read the symbols: ' + e.message;
-    }
+    // The slow parts, once the rest is on screen. The checks are not waited for: they fail,
+    // and redraw themselves while one runs, on their own.
+    renderChecks(content.querySelector('.overview .checks'));
+    await loadSymbolParts(content, link);
   } catch (e) { fail(e); }
 }
 
-// Prose beats any ranking, and the agent can write it. It goes into NOTES.md under General,
-// where it is a file anyone can read and the next reader finds it without asking again.
+// What needs the symbol index: what the tree leans on, and the tests. While the server is
+// still building that index for a repository just opened, it answers from OVERVIEW.md, as of
+// the commit that file names; that is drawn, said, and asked about again in two seconds,
+// until the fresh answer comes.
+async function loadSymbolParts(content, link) {
+  let fromFile = null;
+  try {
+    const { leaning, as_of } = await api('/leans_on');
+    fromFile = as_of;
+    const into = content.querySelector('.leaning');
+    if (!into) return;
+    into.className = 'leaning';
+    into.innerHTML = '';
+    if (!leaning.length) {
+      into.className = 'leaning dim';
+      into.textContent = as_of ? 'Nothing written down yet.' : 'Nothing here defines names the rest of the tree uses.';
+    }
+    for (const l of leaning) link(into, l.path, l.names.join(', '));
+    if (as_of) into.appendChild(asOfNote(as_of));
+  } catch (e) {
+    const into = content.querySelector('.leaning');
+    if (into) into.textContent = 'could not read the symbols: ' + e.message;
+  }
+  const suite = content.querySelector('.suite');
+  try {
+    const inventory = await api('/tests');
+    renderSuite(suite, inventory, link);
+    if (inventory.as_of && suite) suite.appendChild(asOfNote(inventory.as_of));
+    fromFile = fromFile || inventory.as_of;
+  } catch (e) {
+    if (suite) suite.textContent = 'could not read the tests: ' + e.message;
+  }
+  if (fromFile) setTimeout(() => { if (content.isConnected) loadSymbolParts(content, link); }, 2000);
+}
+
+// Where a list from OVERVIEW.md stands: the commit it was written at, how far behind that
+// is, and that the fresh one is on its way.
+function asOfNote(as_of) {
+  const el = document.createElement('div');
+  el.className = 'dim asof';
+  const behind = as_of.commits_since ? `, ${as_of.commits_since} ${as_of.commits_since === 1 ? 'commit' : 'commits'} ago` : '';
+  el.textContent = as_of.commit ? `From OVERVIEW.md as of ${as_of.commit}${behind}; reading the repository…` : 'Reading the repository…';
+  el.title = 'the symbol index is being built; this is what was last written down';
+  return el;
+}
+
+// What the tests say the system does, file by file, each file folded until it is opened: a
+// list someone who did not write them can read as a specification, since tests are named for
+// what they check. Then what they leave alone: the files the rest of the tree leans on most
+// that no test code names, which is where a change breaks the most with nothing to say so.
+function renderSuite(into, inv, link) {
+  if (!into || !into.isConnected) return;
+  into.className = 'suite';
+  if (!inv.total) {
+    into.innerHTML = `<div class="dim">No tests found. What counts as one: a <code>#[test]</code> function in Rust, a <code>test_</code> function where pytest looks, a <code>TestXxx</code> in a Go <code>_test.go</code> file, an <code>it()</code> or <code>test()</code> in a <code>.test</code> or <code>.spec</code> file.</div>`;
+  } else {
+    const files = inv.files.length;
+    into.innerHTML = `<div class="dim">${inv.total} ${inv.total === 1 ? 'test' : 'tests'} in ${files} ${files === 1 ? 'file' : 'files'}${inv.ignored ? ' · ' + inv.ignored + ' marked to skip' : ''}</div>`;
+    for (const f of inv.files) {
+      const d = document.createElement('details');
+      const skipped = f.tests.filter(t => t.ignored).length;
+      d.innerHTML = `<summary><span class="mono">${esc(f.path)}</span> <span class="dim">${f.tests.length}${skipped ? ', ' + skipped + ' skipped' : ''}</span></summary>`;
+      for (const t of f.tests) {
+        const el = document.createElement('div');
+        el.className = 'item test' + (t.ignored ? ' ignored' : '');
+        el.title = t.name + ' — line ' + t.line;
+        el.innerHTML = `<span class="grow">${esc(t.label)}</span>${t.ignored ? '<span class="dim why">skipped</span>' : ''}`;
+        // From OVERVIEW.md a test has no line; the file opens at the top.
+        el.onclick = () => t.line ? openFile(t.path, t.line) : openFile(t.path);
+        d.appendChild(el);
+      }
+      into.appendChild(d);
+    }
+  }
+  if (inv.untested.length) {
+    const head = document.createElement('h4');
+    head.textContent = 'Leaned on, and named by no test';
+    into.appendChild(head);
+    const caveat = document.createElement('div');
+    caveat.className = 'dim caveat';
+    caveat.textContent = 'Named, not run: a test that reaches a file through a URL or a command line never names what it reaches, so look before believing one of these.';
+    into.appendChild(caveat);
+    const list = document.createElement('div');
+    for (const u of inv.untested) link(list, u.path, u.names.join(', '));
+    into.appendChild(list);
+  }
+}
+
+// Prose beats any ranking, and the agent can write it. It goes into OVERVIEW.md under About,
+// with the facts it explains, where the tool keeps it and the next reader finds it.
 function explainRepository() {
   askAgent({
     preset: 'about_code',
     text: 'Orient someone who has never seen this repository. In a few short paragraphs: what it is for, '
       + 'which files to read first and in what order, and anything about its shape that would surprise a newcomer. '
-      + 'Then write what you said into NOTES.md under the General heading, as notes, keeping whatever is already there.',
+      + 'Then write what you said into OVERVIEW.md under the "## About" heading, replacing what is under that heading and touching nothing else in the file.',
   });
 }
 
-// ----- status ---------------------------------------------------------------------------------
+// Whether a result is about the code on disk: a result from before the last commit, or from
+// before a file was saved, is a result about something else, however green it is.
+function staleness(stale) {
+  if (!stale) return '';
+  const { commits, files } = stale;
+  if (!commits && !files) return '<span class="stale fresh" title="nothing committed or saved since">matches the tree</span>';
+  const bits = [];
+  if (commits) bits.push(`${commits} ${commits === 1 ? 'commit' : 'commits'}`);
+  if (files) bits.push(`${files} changed ${files === 1 ? 'file' : 'files'}`);
+  return `<span class="stale old" title="committed or saved after this result">${bits.join(' and ')} since</span>`;
+}
+
+// The names `media::image_type` knows as pictures; the server refuses the rest.
+function isImage(path) {
+  return /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/i.test(path);
+}
+
+// The picture at `path`, fetched with the API token like any request and shown from memory,
+// since an <img> pointing at the API could not send the token. Its size goes under it once it
+// has loaded, so a picture shrunk to fit says how big it really is.
+async function showPicture(into, path) {
+  const box = document.createElement('div');
+  box.className = 'picture';
+  box.innerHTML = '<div class="dim">loading the picture…</div>';
+  into.appendChild(box);
+  try {
+    const res = await fetch('/api/image?path=' + encodeURIComponent(path) + '&repo=' + state.repo,
+      { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const img = document.createElement('img');
+    img.alt = path;
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      caption.textContent = `${img.naturalWidth} × ${img.naturalHeight} · ${(blob.size / 1024).toFixed(blob.size < 10240 ? 1 : 0)} KiB`;
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); caption.textContent = 'the browser could not show this picture'; };
+    const caption = document.createElement('div');
+    caption.className = 'dim caption';
+    img.src = url;
+    box.replaceChildren(img, caption);
+  } catch (e) {
+    box.innerHTML = `<div class="dim">could not load the picture: ${esc(e.message)}</div>`;
+  }
+}
 
 // How long ago, in the roughest terms that are still true. A review is not a stopwatch.
 function ago(iso) {
@@ -1368,70 +1574,30 @@ function ago(iso) {
   }
 }
 
-// Every repository at once, which is the one screen a phone is better at than a laptop: what
-// is waiting, where, without opening anything. Each row is three answers to "why would I open
-// this", and each of them opens it at the right place.
-async function showStatus() {
-  setTabs('status');
-  navigate(routes.view('status'));
-  const content = $('#content');
-  content.innerHTML = `<div class="panelhead"><span class="path">status</span><span class="dim">reading…</span></div>`;
-  try {
-    const repos = await api('/status');
-    content.innerHTML = `<div class="panelhead"><span class="path">status</span>
-      <span class="dim">${repos.length} ${repos.length === 1 ? 'repository' : 'repositories'}</span>
-      <span class="spacer"></span><button data-act="again" title="read every repository again">Refresh</button></div><div class="list status"></div>`;
-    on(content, 'again', showStatus);
-    const list = content.querySelector('.list');
-    repos.forEach((r, i) => {
-      const el = document.createElement('div');
-      el.className = 'item repo';
-      el.innerHTML = `<span class="grow name">${esc(r.name)}</span>
-        <span class="counts">
-          <button class="small ${r.pending ? 'has' : ''}" data-act="pending" ${r.pending ? '' : 'disabled'}>${r.pending} pending</button>
-          <button class="small ${r.changed ? 'has' : ''}" data-act="changed" ${r.changed ? '' : 'disabled'}>${r.changed} changed</button>
-          <span class="branch mono dim">${esc(r.branch)}</span>
-        </span>
-        <span class="last dim">${r.last ? esc(r.last.subject) + ' · ' + ago(r.last.date) : 'no commits yet'}</span>`;
-      // Every way in switches to that repository first; the page holds one at a time.
-      const go = async what => {
-        if (i !== state.repo) await switchRepo(i);
-        if (what === 'pending') showReview();
-        else if (what === 'changed') showChanges();
-        else showOverview();
-      };
-      el.querySelector('.name').onclick = () => go('tree').catch(fail);
-      on(el, 'pending', e => { e.stopPropagation(); go('pending').catch(fail); });
-      on(el, 'changed', e => { e.stopPropagation(); go('changed').catch(fail); });
-      list.appendChild(el);
-    });
-    await renderChecks(list);
-    hint('Click a count to go straight to it.', 'Tap a count to go straight to it.');
-  } catch (e) { fail(e); }
-}
-
 // The checks configured for this machine, as they stand in the repository the page is on: what
 // the last run did, and what its artefact says, which are two different things — a figure can
-// be there with no run behind it, left by the same command typed in a terminal.
-async function renderChecks(after) {
+// be there with no run behind it, left by the same command typed in a terminal. Drawn into
+// `into`, and again every two seconds while one runs, for as long as `into` is on the page.
+async function renderChecks(into) {
   let checks;
-  try { checks = await api('/analysis'); } catch (e) { return fail(e); }
-  const section = document.createElement('div');
-  section.className = 'checks';
-  const repo = state.repos[state.repo];
-  if (!checks.length) {
-    section.innerHTML = `<div class="dim">No checks configured. <code>[[analysis]]</code> in the config file names one: a label, a command, and what it leaves behind.</div>`;
-    after.after(section);
+  try { checks = await api('/analysis'); } catch (e) {
+    into.textContent = 'could not read the checks: ' + e.message;
     return;
   }
-  section.innerHTML = `<div class="head"><span class="path">checks</span><span class="dim">in ${esc(repo ? repo.name : 'this repository')}</span></div>`;
+  if (!into.isConnected) return;
+  into.className = 'checks';
+  into.innerHTML = '';
+  if (!checks.length) {
+    into.innerHTML = `<div class="dim">Nothing here says how to run its tests: no Makefile <code>test</code> or <code>check</code> target, and no Cargo, npm, pytest or Go project at the top. <code>[[analysis]]</code> in the config file names a check by hand: a label, a command, and what it leaves behind.</div>`;
+    return;
+  }
   for (const c of checks) {
     const last = c.last;
     const figures = c.figures;
     const state_ = last && last.running ? 'running' : last ? (last.exit === 0 ? 'passed' : 'failed') : '';
     const bits = [];
     if (figures && figures.tests !== null && figures.tests !== undefined) {
-      bits.push(`${figures.tests} tests`);
+      bits.push(`${figures.tests} ${figures.tests === 1 ? 'test' : 'tests'}`);
       if (figures.failed) bits.push(`${figures.failed} failed`);
       if (figures.skipped) bits.push(`${figures.skipped} skipped`);
     }
@@ -1440,23 +1606,25 @@ async function renderChecks(after) {
     const el = document.createElement('div');
     el.className = 'check ' + state_;
     el.innerHTML = `<span class="name">${esc(c.name)}</span>
-      <span class="verdict">${last && last.running ? 'running, ' + ago(last.started).replace(' ago', '') : last ? (last.exit === 0 ? 'passed' : 'failed (' + last.exit + ')') + ' in ' + last.seconds.toFixed(1) + 's, ' + ago(last.started) : 'not run here yet'}</span>
+      <span class="verdict">${last && last.running ? 'running, ' + ago(last.started).replace(' ago', '') : last ? (last.exit === 0 ? 'passed' : 'failed (' + last.exit + ')') + ' in ' + last.seconds.toFixed(1) + 's, ' + ago(last.started) : c.suggested ? 'found here, not run yet' : 'not run here yet'}</span>
       <span class="figures dim">${esc(bits.join(' · '))}</span>
+      ${staleness(c.stale)}
       ${c.watched ? '<span class="badge" title="this check also runs on its own when the repository settles">watched</span>' : ''}
+      ${c.suggested ? '<span class="badge" title="found in the repository rather than configured; running it saves it to the config file, for this repository">found</span>' : ''}
       <span class="spacer"></span>
-      <button class="small" data-act="run" ${last && last.running ? 'disabled' : ''} title="${esc(c.run)}">Run</button>
+      <button class="small" data-act="run" ${last && last.running ? 'disabled' : ''} title="${esc(c.run)}${c.suggested ? ' — and save it to the config file' : ''}">Run</button>
       ${last && last.output ? '<button class="small" data-act="output">Output</button>' : ''}`;
     on(el, 'run', () => api('/analysis/run', { body: { name: c.name } })
-      .then(() => { msg(c.name + ' started'); setTimeout(showStatus, 400); })
+      .then(() => { msg(c.name + (c.suggested ? ' started, and saved to the config file for this repository' : ' started')); setTimeout(() => renderChecks(into), 400); })
       .catch(fail));
     on(el, 'output', () => askText(c.name, '', 'Close', last.output));
-    section.appendChild(el);
+    into.appendChild(el);
   }
-  after.after(section);
   // While something is running, keep the page honest about it without asking the user to.
-  if (checks.some(c => c.last && c.last.running) && state.view === 'status') {
+  // Leaving the overview, or switching repository, takes `into` off the page and ends this.
+  if (checks.some(c => c.last && c.last.running)) {
     clearTimeout(state.checkTimer);
-    state.checkTimer = setTimeout(() => { if (state.view === 'status') showStatus(); }, 2000);
+    state.checkTimer = setTimeout(() => { if (into.isConnected) renderChecks(into); }, 2000);
   }
 }
 
@@ -1553,7 +1721,7 @@ async function selectCommit(i, chosen = false) {
 // browser's back goes to whatever opened the diff, not through every file paged past.
 async function showDiff(params, siblings, index, { replace = false } = {}) {
   try {
-    const data = await api('/diff?' + qs(params));
+    const data = inflateDiff(await api('/diff?' + qs(params)));
     // Side by side needs room for two columns of code; below that it is unreadable. The
     // choice then sticks, so paging through files with ] and [ does not keep flipping layout.
     const unified = state.diff ? state.diff.unified : window.innerWidth < 1100;
@@ -1613,7 +1781,7 @@ function renderDiff() {
   const bl = d.before.text.split('\n'), al = d.after.text.split('\n');
   const onChange = async () => {
     const q = qs(diff.params);
-    diff.data = await api('/diff?' + q);
+    diff.data = inflateDiff(await api('/diff?' + q));
     state.allComments = await api('/comments');
     await loadState();
     renderDiff();
@@ -1637,7 +1805,7 @@ function renderDiff() {
     tr.innerHTML = `<td class="m">${mk}</td><td class="n">${n}</td><td class="c">${renderSegments(segs || [], s.spans[i], ranges)}</td>`;
     if (side === 'after') tr.querySelector('td.n').onclick = () => {
       $('#content .form')?.closest('tr')?.remove();
-      const form = commentForm(diff.params.path, n, n, al[i] || '', 3, saved => { form.remove(); if (saved) onChange().catch(fail); });
+      const form = commentForm(diff.params.path, n, n, al[i] || '', 3, saved => { form.remove(); if (saved) onChange().catch(fail); }, null, '', afterRevision(diff.params));
       tr.after(form);
     };
     return tr;
@@ -1816,7 +1984,6 @@ function setTabs(view) {
 // have their own list, which drifted.
 function rerenderCurrentView() {
   switch (state.view) {
-    case 'status': return showStatus();
     case 'overview': return showOverview();
     case 'changes': return showChanges(!!state.changesStaged);
     case 'log': return showLog(state.log && state.log.path, true);
@@ -1835,13 +2002,13 @@ document.querySelectorAll('header .tabs button').forEach(b => b.onclick = () => 
   // A tab always starts its view afresh, rather than redrawing what was there. Explore
   // goes back to the open file, or, tapped again on a phone while a file is up, to the tree.
   if (v === 'explore') {
-    // Nothing open: the overview. A file open: that file. On a phone, tapped again while the
-    // file is up: the tree, which is how you get to the next one.
+    // Nothing open: the tree, since the overview has a tab of its own. A file open: that file.
+    // On a phone, tapped again while the file is up: the tree, which is how you get to the next.
     if (phone() && state.view === 'explore' && document.body.classList.contains('showfile')) showTree();
-    else if (!state.file) showOverview();
+    else if (!state.file) showTree();
     else { setTabs('explore'); navigate(routes.file(state.file.path)); renderFile(); }
   }
-  if (v === 'status') showStatus();
+  if (v === 'overview') showOverview();
   if (v === 'changes') showChanges();
   if (v === 'log') showLog(null, true);
   if (v === 'review') showReview();
@@ -1984,7 +2151,7 @@ $('#theme').onchange = async e => {
     await loadState();
     // The colours are baked into what the server sends for code, so a diff has to be asked
     // for again; everything else redraws from what is already here.
-    if (state.view === 'diff' && state.diff) state.diff.data = await api('/diff?' + qs(state.diff.params));
+    if (state.view === 'diff' && state.diff) state.diff.data = inflateDiff(await api('/diff?' + qs(state.diff.params)));
     if (state.view === 'explore' && state.file) await openFile(state.file.path);
     else rerenderCurrentView();
     msg('theme saved to the config file');
@@ -2037,7 +2204,6 @@ async function route() {
   if (path === '/changes') return showChanges(params.staged === '1');
   if (path === '/log') return showLog(params.path || null, true, params.commit || null);
   if (path === '/diff' && params.path) return showDiff(params, [{ path: params.path, old_path: params.old_path || null, status: params.status || 'M' }], 0);
-  if (path === '/status') return showStatus();
   if (path === '/tree') return showTree();
   if (path === '/review') return showReview();
   if (path === '/notes') return showNotes();
