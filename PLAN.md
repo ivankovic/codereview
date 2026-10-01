@@ -13,28 +13,28 @@ the same format `nvim-review` writes, so the two tools can be used on the same f
 holds observations that are not tasks: what a module is for, what to watch out for, decisions
 made while reviewing.
 
-Diffs come from the `codediff` crate: syntax-aware, tree-sitter based, reporting insertions,
-deletions, updates and moves rather than whichever lines happened to align. Files codediff has no
+Diffs come from the `omnidiff` crate: syntax-aware, tree-sitter based, reporting insertions,
+deletions, updates and moves rather than whichever lines happened to align. Files omnidiff has no
 grammar for (Makefiles, for one) fall back to its plain-text line diff.
 
 ## Decisions
 
 - **One crate, feature-gated front ends.** `tui` is on by default; `web` is opt-in. Same layout
-  as codediff, for the same reasons: one `cargo install` gives the working binary, and a library
+  as omnidiff, for the same reasons: one `cargo install` gives the working binary, and a library
   consumer can take only the core.
-- **Git through the `git` binary**, not libgit2 or gitoxide. codediff's own review module made
+- **Git through the `git` binary**, not libgit2 or gitoxide. omnidiff's own review module made
   the same choice: nothing here needs more than `status`, `ls-files`, `log`, `show` and
   `diff-tree`, and shelling out costs no build-time dependency and matches whatever git the user
   has configured (worktrees, sparse checkouts, credential helpers).
-- **Languages.** Rust, Python, TypeScript, HTML and Makefile first. codediff covers the first
+- **Languages.** Rust, Python, TypeScript, HTML and Makefile first. omnidiff covers the first
   four structurally; Makefile gets the line diff plus syntect highlighting. Everything else
-  codediff and syntect know works too, since nothing is special-cased per language.
+  omnidiff and syntect know works too, since nothing is special-cased per language.
 - **Stale comments are expected, not an error.** Every comment records the text of the line it
   was left on. When a file changes, a comment whose line no longer matches is re-anchored by
   searching for that text; if it is found once, the comment follows it, otherwise it is shown as
   stale. `codereview reanchor` rewrites `REVIEW.md` with the new line numbers.
 - **The browser UI is a local server**, bound to loopback with a per-session token, serving a
-  single embedded page. No build step, no node toolchain. Same approach as `codediff-web`.
+  single embedded page. No build step, no node toolchain. Same approach as `omnidiff-web`.
 - **The server keeps no state of its own.** What is worth remembering goes in `REVIEW.md` and
   `NOTES.md`, where any editor can read it; what is merely where you are — the open file, the
   tab, the scroll, a review half worked through — belongs to the browser that is looking, in
@@ -54,7 +54,7 @@ grammar for (Makefiles, for one) fall back to its plain-text line diff.
   browsers see the same numbers because they are looking at the same files, a restart loses
   nothing that was not already on disk, and the rule above survives a feature that would
   otherwise have needed a database.
-- **AGPL-3.0-or-later**, like codediff.
+- **AGPL-3.0-or-later**, like omnidiff.
 
 ## Phases
 
@@ -65,7 +65,7 @@ phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
 
 1. **Core** (`src/repo.rs`, `src/review.rs`, `src/notes.rs`, `src/anchor.rs`, `src/diff.rs`,
    `src/highlight.rs`): git access, the two Markdown files with round-trip parsing, comment
-   re-anchoring, the codediff wrapper, and UI-independent syntax highlighting. Unit tests for
+   re-anchoring, the omnidiff wrapper, and UI-independent syntax highlighting. Unit tests for
    the parsers against a scratch git repository. CLI subcommands `list`, `add`, `reanchor` so
    the core is usable from scripts and by agents before any UI exists.
 2. **TUI**: file tree and viewer with comment gutter; add, edit, complete and delete comments;
@@ -115,7 +115,7 @@ src/notes.rs       NOTES.md: Note model, parse, write
 src/overview.rs    what a repository looks like when you open it: its own words, where to
                    start, and how it is doing
 src/anchor.rs      re-anchoring comments after edits
-src/diff.rs        codediff wrapper, per-line paint model shared by both UIs
+src/diff.rs        omnidiff wrapper, per-line paint model shared by both UIs
 src/highlight.rs   syntect highlighting into UI-independent segments
 src/theme.rs       colour schemes shared by both front ends
 src/config.rs      the config file

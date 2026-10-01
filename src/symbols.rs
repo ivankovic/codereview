@@ -1,5 +1,5 @@
 //! Symbol navigation without a language server: definitions and identifier occurrences,
-//! extracted with the tree-sitter grammars codediff already carries, for every file in the
+//! extracted with the tree-sitter grammars omnidiff already carries, for every file in the
 //! repository. Good enough to answer "where is this defined" and "where is this used" in a
 //! tree that changes too fast for anyone to keep a language server happy, and it works the
 //! same for every language that has a grammar.
@@ -14,8 +14,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use codediff::code::Language;
-use codediff::code::language::{language_for_path_and_content, to_treesitter};
+use omnidiff::code::Language;
+use omnidiff::code::language::{language_for_path_and_content, to_treesitter};
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser, Point};
 

@@ -40,7 +40,7 @@ pub fn draw_workspace(frame: &mut Frame, ws: &mut Workspace) {
     }
 }
 
-/// ` 1 codereview │ 2 codediff ⠋ │ 3 nvim-review ?3 `: number, name, and what is going on
+/// ` 1 codereview │ 2 omnidiff ⠋ │ 3 nvim-review ?3 `: number, name, and what is going on
 /// there: `?` while its agent waits for permission, a spinner while it works, the pending
 /// comment count.
 fn draw_repo_strip(frame: &mut Frame, ws: &Workspace, area: Rect) {
