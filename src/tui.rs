@@ -776,8 +776,8 @@ mod tests {
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("No recording"), "{screen}");
 
-        // Enter is the test's source; q leaves the screen for the code.
-        press(&mut app, &[KeyCode::Char('k'), KeyCode::Enter]);
+        // `s` is the test's source; q leaves the screen for the code.
+        press(&mut app, &[KeyCode::Char('k'), KeyCode::Char('s')]);
         assert!(matches!(app.screen(), Screen::Explorer));
         let viewer = app.viewer.as_ref().unwrap();
         assert_eq!(viewer.path, "tests/cli.rs");
@@ -786,6 +786,156 @@ mod tests {
         assert!(matches!(app.screen(), Screen::EndToEnd(_)));
         press(&mut app, &[KeyCode::Char('q')]);
         assert!(matches!(app.screen(), Screen::Explorer));
+    }
+
+    #[test]
+    fn a_test_leads_to_the_code_it_ran_and_what_documents_it() {
+        use super::app::TestRow;
+        let dir = scratch_repo();
+        let root = dir.path();
+        let write = |path: &str, text: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            "src/review.rs",
+            "pub fn save_review_file() {}\n\npub fn load_review_file() {}\n\npub fn unused_here() {}\n",
+        );
+        write(
+            "src/unit.rs",
+            "#[test]\nfn saving_works() {\n    crate::review::save_review_file();\n}\n",
+        );
+        write(
+            "README.md",
+            "# tool\n\nIt reviews code.\n\n## Saving a review\n\nThe review is saved to a file \
+             and loaded again.\n\n## Colours\n\nSchemes.\n",
+        );
+        write(
+            "tests/cli.rs",
+            "// drives it through portable_pty\n#[test]\nfn a_review_is_saved() {\n    press(\"c\");\n    \
+             press(\"Enter\");\n}\n",
+        );
+        write(
+            "target/e2e/terminal/a-review-is-saved/test.json",
+            r#"{"test": "a_review_is_saved", "file": "tests/cli.rs", "line": 3, "passed": true,
+                "duration_ms": 1000, "recording": "terminal.cast", "steps": [
+                {"at_ms": 0, "line": 4, "kind": "action", "text": "start a review"},
+                {"at_ms": 700, "line": 5, "kind": "check", "text": "the review is saved",
+                 "passed": true}]}"#,
+        );
+        write(
+            "target/e2e/terminal/a-review-is-saved/terminal.cast",
+            "{\"version\": 2, \"width\": 30, \"height\": 3}\n[0.0, \"o\", \"typing\"]\n\
+             [0.7, \"o\", \"\\u001b[2J\\u001b[Hsaved\"]\n",
+        );
+        write(
+            "target/e2e/terminal/a-review-is-saved/coverage.lcov",
+            "SF:src/review.rs\nDA:1,4\nDA:3,0\nDA:5,0\nend_of_record\n\
+             SF:tests/cli.rs\nDA:4,1\nend_of_record\n",
+        );
+        let mut app = App::new(scratch_session(root), None);
+        let mut term = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        press(&mut app, &[KeyCode::Char('E')]);
+        until_indexed(&mut app);
+
+        // Enter opens the test on its own.
+        press(&mut app, &[KeyCode::Enter]);
+        let Screen::EndToEndTest(state) = app.screen() else {
+            panic!("the test's own screen");
+        };
+        let rows = state.rows.items.clone();
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("test a review is saved"), "{screen}");
+        assert!(
+            screen.contains("tests/cli.rs:3 · it drives a terminal"),
+            "{screen}"
+        );
+        assert!(screen.contains("typing"), "the recording, paused: {screen}");
+        for heading in [
+            "Steps",
+            "Code it ran",
+            "Documentation",
+            "Smaller tests that reach the same code",
+        ] {
+            assert!(rows.contains(&TestRow::Heading(heading.into())), "{rows:?}");
+        }
+        assert!(screen.contains("start a review"), "{screen}");
+        assert!(
+            screen.contains("4 │ press(\"c\");"),
+            "the step's own line: {screen}"
+        );
+        assert!(
+            screen.contains("src/review.rs  1 line, 1 only this test"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("Saving a review — README.md:5  a guess: shares"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("saving works · unit · src/unit.rs:2 · shares src/review.rs"),
+            "{screen}"
+        );
+
+        // Enter on a step goes to its moment of the recording.
+        let step = rows.iter().position(|r| *r == TestRow::Step(1)).unwrap();
+        if let Some(Screen::EndToEndTest(state)) = app.screens.last_mut() {
+            state.rows.cursor = step;
+        }
+        press(&mut app, &[KeyCode::Enter]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("saved"), "{screen}");
+        assert!(
+            screen.contains("▶0:00.7"),
+            "the step playback is at: {screen}"
+        );
+
+        // A file it ran opens with those lines marked.
+        let ran = rows.iter().position(|r| *r == TestRow::Ran(0)).unwrap();
+        if let Some(Screen::EndToEndTest(state)) = app.screens.last_mut() {
+            state.rows.cursor = ran;
+        }
+        press(&mut app, &[KeyCode::Enter]);
+        assert!(matches!(app.screen(), Screen::Explorer));
+        let viewer = app.viewer.as_ref().unwrap();
+        assert_eq!(viewer.path, "src/review.rs");
+        assert_eq!(viewer.current_line(), Some(0));
+        let marked = viewer.ran.as_ref().expect("the lines it ran");
+        assert!(marked.covers(0) && !marked.covers(2));
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("1 ▌pub fn save_review_file"), "{screen}");
+        assert!(screen.contains("ran by “a review is saved”"), "{screen}");
+
+        // The documentation opens at its heading.
+        press(&mut app, &[KeyCode::Char('E'), KeyCode::Enter]);
+        let doc = match app.screen() {
+            Screen::EndToEndTest(state) => state
+                .rows
+                .items
+                .iter()
+                .position(|r| *r == TestRow::Doc(0))
+                .unwrap(),
+            _ => panic!("the test's own screen"),
+        };
+        if let Some(Screen::EndToEndTest(state)) = app.screens.last_mut() {
+            state.rows.cursor = doc;
+        }
+        press(&mut app, &[KeyCode::Enter]);
+        let viewer = app.viewer.as_ref().unwrap();
+        assert_eq!(viewer.path, "README.md");
+        assert_eq!(viewer.current_line(), Some(4));
+        assert!(
+            viewer.ran.is_none(),
+            "a file opened otherwise is not marked"
+        );
+
+        // q goes back to the list.
+        press(
+            &mut app,
+            &[KeyCode::Char('E'), KeyCode::Enter, KeyCode::Char('q')],
+        );
+        assert!(matches!(app.screen(), Screen::EndToEnd(_)));
     }
 
     #[test]

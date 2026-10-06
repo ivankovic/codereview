@@ -25,6 +25,7 @@ pub mod anchor;
 pub mod claude;
 pub mod config;
 pub mod diff;
+pub mod docs;
 pub mod e2e;
 pub mod facts;
 #[cfg(test)]

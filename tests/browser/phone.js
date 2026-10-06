@@ -46,9 +46,10 @@ function callerLine(fn) {
 const slug = name => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 const tests = [];
-/// A test: a sentence saying what the page does, and the steps that show it.
-function test(name, body) {
-  tests.push({ name, body, line: callerLine(test) });
+/// A test: a sentence saying what the page does, and the steps that show it. `docs` names
+/// the documentation it demonstrates, as `path#heading`.
+function test(name, body, { docs = [] } = {}) {
+  tests.push({ name, body, docs, line: callerLine(test) });
 }
 
 /// Whether a tap in the middle of `selector` would land on it, rather than on whatever is
@@ -117,7 +118,7 @@ test('a repository opens on its end-to-end tests, each with its recording', asyn
   await page.click('.e2e-test.failed [data-act=source]');
   await page.waitForSelector('table.code td.n');
   t.ok('the test opens at its line', await page.evaluate(() => location.hash.includes('/file/tests/cli.rs')), await page.evaluate(() => location.hash));
-});
+}, { docs: ['SPECS.md#What a repository opens on'] });
 
 test('a repository without end-to-end tests opens on saying so', async t => {
   const page = t.page;
@@ -131,7 +132,7 @@ test('a repository without end-to-end tests opens on saying so', async t => {
   await page.click('.e2e .finding [data-act=spec]');
   await page.waitForSelector('.spec details.level');
   t.ok('they open', await page.evaluate(() => location.hash.startsWith('#/r1/spec')), await page.evaluate(() => location.hash));
-});
+}, { docs: ['SPECS.md#What a repository opens on'] });
 
 test('the summary says what a repository is, where to start and how it is doing', async t => {
   const page = t.page;
@@ -310,7 +311,7 @@ test('a picture is shown, fitted to the phone', async t => {
     return fits && !document.querySelector('#content').textContent.includes('binary file') ? true : 'width ' + img.getBoundingClientRect().width;
   }));
   t.ok('with its size under it', await page.evaluate(() => /\d+ × \d+/.test(document.querySelector('.picture .caption').textContent)));
-});
+}, { docs: ['SPECS.md#Browser UI'] });
 
 test('a file keeps its header and menu in reach while it scrolls', async t => {
   const page = t.page;
@@ -354,7 +355,7 @@ test('writing a comment takes over the screen', async t => {
   t.step('tap Cancel');
   await page.click('#content tr.form [data-act=cancel]');
   await pause(200);
-});
+}, { docs: ['SPECS.md#Browser UI'] });
 
 test('zen leaves the code and one way back', async t => {
   const page = t.page;
@@ -385,10 +386,50 @@ test('long lines wrap where the screen ends', async t => {
   t.ok('and does not once lines wrap', await page.evaluate(() => $('#content').scrollWidth <= $('#content').clientWidth + 1));
 });
 
+test('a test opens on its own, with the code it ran and what documents it', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('.e2e-test.failed a.label');
+  t.step('tap the failed test');
+  await page.click('.e2e-test.failed a.label');
+  await page.waitForSelector('.testview .ran .item');
+  t.ok('it has an address of its own', await page.evaluate(() => location.hash.startsWith('#/test?')), await page.evaluate(() => location.hash));
+  t.ok('each step says which line of the test took it', await page.evaluate(() => {
+    const src = document.querySelector('.testview ol.steps li .src');
+    return src && /^9: assert!\(true\);$/.test(src.textContent.trim()) ? true : src && src.textContent;
+  }));
+  t.ok('the code it ran comes first, with what only it ran', await page.evaluate(() => {
+    const row = document.querySelector('.testview .ran .item');
+    return /src\/core\.rs[\s\S]*2 · 2 only here/.test(row.textContent) ? true : row.textContent;
+  }));
+  t.ok('the documentation it names', await page.evaluate(() => {
+    const row = document.querySelector('.testview .docs .item');
+    return /Saving a review[\s\S]*README\.md:\d+[\s\S]*named by the test/.test(row.textContent) ? true : row && row.textContent;
+  }));
+  t.ok('and the smaller tests below it', await page.evaluate(() =>
+    /a review round trips/.test(document.querySelector('.testview .smaller').textContent)));
+  t.ok('the code it ran is a finger tall', await page.evaluate(() =>
+    document.querySelector('.testview .ran .item').getBoundingClientRect().height >= 32));
+  await t.inView('.testview .ran .item');
+  t.step('open the code it ran');
+  await page.click('.testview .ran .item');
+  await page.waitForSelector('table.code tr.ran');
+  t.ok('the file marks the lines the test ran', await page.evaluate(() =>
+    [...document.querySelectorAll('table.code tr.ran')].map(r => r.dataset.line).join(',') === '1,2'));
+  t.ok('and says whose they are', await page.evaluate(() => /a review is saved/.test(document.querySelector('.ranbanner').textContent)));
+  t.step('go back to the test');
+  await page.click('.ranbanner [data-act=test]');
+  await page.waitForSelector('.testview .docs .item');
+  t.step('open what documents it');
+  await page.click('.testview .docs .item');
+  await page.waitForSelector('table.code td.n');
+  t.ok('the documentation opens at its heading', await page.evaluate(() => /README\.md\?line=\d+/.test(location.hash)), await page.evaluate(() => location.hash));
+}, { docs: ['SPECS.md#What a repository opens on'] });
+
 // ---------------------------------------------------------------------------------------------
 
 /// Runs one test on a page of its own, recording it, and writes what it left.
-async function run(browser, spec) {
+async function run(browser, spec, server) {
   const dir = `${OUT}/${slug(spec.name)}`;
   fs.mkdirSync(dir, { recursive: true });
   const page = await browser.newPage();
@@ -398,6 +439,12 @@ async function run(browser, spec) {
   // desktop, 980 pixels wide: without this the video is the phone in one corner of a black
   // frame three times its size.
   await page.setContent('<meta name="viewport" content="width=device-width, initial-scale=1">');
+  // What the page's script ran, from here to the end of the test: Chromium keeps the count
+  // across the navigations a test makes.
+  await page.coverage.startJSCoverage({ resetOnNavigation: false });
+  // And the server's, when it is built to count: what it ran before this test is not this
+  // test's.
+  if (server) await server('/coverage');
   const recorder = await page.screencast({ path: `${dir}/raw.webm` });
   paced(page);
   const started = new Date();
@@ -437,6 +484,8 @@ async function run(browser, spec) {
   // A moment of the end state, so the video does not stop on the last tap.
   await pause(400);
   await recorder.stop();
+  fs.writeFileSync(`${dir}/page.lcov`, pageLcov(await page.coverage.stopJSCoverage()));
+  if (server) await server('/coverage?test=' + slug(spec.name));
   await page.close();
   // Written as it was recorded, a stream, the video says neither how long it is nor where
   // its frames are, and a player can then neither show its length nor seek in it. Copying it
@@ -459,10 +508,40 @@ async function run(browser, spec) {
     dirty: !!under.dirty,
     recording: 'video.webm',
     run_by: under.run_by,
+    docs: spec.docs,
     steps,
   };
   fs.writeFileSync(`${dir}/test.json`, JSON.stringify(result, null, 1) + '\n');
   return result;
+}
+
+/// The lines of `src/web/index.html` the page's own script ran, as lcov, from what Chromium
+/// says ran: ranges of the script's text. The script starts on the line of its `<script>` tag,
+/// which the harness looks up and passes in.
+function pageLcov(entries) {
+  const lines = new Set();
+  for (const e of entries) {
+    if (!e.text.includes('function renderFile')) continue;
+    const starts = [0];
+    for (let i = 0; i < e.text.length; i++) if (e.text[i] === '\n') starts.push(i + 1);
+    const lineOf = offset => {
+      let lo = 0, hi = starts.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (starts[mid] <= offset) lo = mid; else hi = mid - 1;
+      }
+      return lo;
+    };
+    for (const r of e.ranges) {
+      if (r.end <= r.start) continue;
+      for (let l = lineOf(r.start); l <= lineOf(r.end - 1); l++) {
+        if (e.text.slice(starts[l], starts[l + 1] ?? e.text.length).trim()) lines.add(l);
+      }
+    }
+  }
+  if (!lines.size || !under.script_line) return '';
+  const da = [...lines].sort((a, b) => a - b).map(l => `DA:${under.script_line + l},1`).join('\n');
+  return `SF:src/web/index.html\n${da}\nend_of_record\n`;
 }
 
 /// How long the video holds on what a tap, a keystroke or a page load led to. Run at machine
@@ -511,9 +590,21 @@ function errorLine(e) {
 
 (async () => {
   const browser = await puppeteer.launch({ args: ['--no-sandbox'] });
+  // When the server counts what it runs, a call between tests takes each test's share. The
+  // API wants the page's own token, which a page that signs in has; that page is closed
+  // before any test starts, so that nothing it asks for is counted.
+  let server = null;
+  if (under.coverage) {
+    const signIn = await browser.newPage();
+    await signIn.goto(url, { waitUntil: 'networkidle0' });
+    const token = await signIn.evaluate(() => TOKEN);
+    await signIn.close();
+    const base = new URL(url).origin;
+    server = path => fetch(base + '/api' + path, { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
+  }
   let failed = 0;
   for (const spec of tests) {
-    const result = await run(browser, spec);
+    const result = await run(browser, spec, server);
     if (!result.passed) failed++;
     console.log((result.passed ? 'ok   ' : 'FAIL ') + spec.name);
     for (const s of result.steps.filter(s => s.kind === 'check' && !s.passed)) {

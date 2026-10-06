@@ -115,7 +115,7 @@ const END_TO_END_WORDS: &[&str] = &[
 
 /// The words of `text`, lowercase: split at anything that is not a letter or a digit, and
 /// at a change from lower case to upper case, so `signIn` and `sign_in` both give `sign`, `in`.
-fn words(text: &str) -> Vec<String> {
+pub(crate) fn words(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut word = String::new();
     let mut previous_lower = false;

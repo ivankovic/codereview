@@ -19,7 +19,7 @@ mod end_to_end;
 mod explorer;
 mod screens;
 
-use end_to_end::draw_end_to_end;
+use end_to_end::{draw_end_to_end, draw_end_to_end_test};
 use explorer::draw_explorer;
 use screens::{
     draw_changes, draw_diff, draw_locations, draw_log, draw_notes, draw_review, draw_spec,
@@ -175,6 +175,7 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
         Screen::Locations(_) => draw_locations(frame, app, main),
         Screen::Spec(_) => draw_spec(frame, app, main),
         Screen::EndToEnd(_) => draw_end_to_end(frame, app, main),
+        Screen::EndToEndTest(_) => draw_end_to_end_test(frame, app, main),
         Screen::Agent => {
             let theme = app.theme.clone();
             let label = app.agent_label();
@@ -371,9 +372,16 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             Screen::Explorer => app.viewer.as_ref().and_then(|v| {
                 let line = v.current_line()?;
-                let op = v.line_ops.as_ref()?.get(line).copied()?;
-                op.is_change()
-                    .then(|| format!("{} vs HEAD", crate::tui::style::op_marker(op)))
+                let ran = v
+                    .ran
+                    .as_ref()
+                    .filter(|r| r.covers(line))
+                    .map(|r| format!("▌ ran by “{}”", r.test));
+                ran.or_else(|| {
+                    let op = v.line_ops.as_ref()?.get(line).copied()?;
+                    op.is_change()
+                        .then(|| format!("{} vs HEAD", crate::tui::style::op_marker(op)))
+                })
             }),
             _ => None,
         };
@@ -412,7 +420,10 @@ fn hint_for(screen: &Screen) -> &'static str {
             "Enter open/close, diff, test or area  h close fold  / search  f files a test names  s stretch  q back"
         }
         Screen::EndToEnd(_) => {
-            "Space play  ] [ steps  0 start  z whole  Enter test  o video  q code"
+            "Enter the test  Space play  ] [ steps  0 start  z whole  s source  o video  q code"
+        }
+        Screen::EndToEndTest(_) => {
+            "Enter go there  Space play  ] [ steps  0 start  z whole  s source  o video  q back"
         }
         Screen::Agent => {
             "i ask  A address all pending  Esc cancel  1-9/y/n answer  t thoughts  l log  C clear  R restart  q back"
@@ -513,13 +524,26 @@ const HELP: &[(&str, &str)] = &[
     ),
     ("0", "back to the start of the recording"),
     ("z", "the recording on the whole screen, and back"),
-    ("Enter", "the test's source"),
+    (
+        "Enter",
+        "the test on its own: steps, the code it ran, its documentation, the tests below it",
+    ),
+    ("s", "the test's source"),
     ("o", "open the recording in the system's player (videos)"),
     (
         "a",
         "with no end-to-end tests: ask the agent to write the first ones",
     ),
     ("q", "the code"),
+    ("", ""),
+    ("One end-to-end test", ""),
+    ("Space  p  ] [  0  z  o", "the recording, as in the list"),
+    (
+        "Enter",
+        "a step: that moment of the recording; a file it ran: the file, the lines it ran marked ▌; a section or a test: there",
+    ),
+    ("s", "the test's source, at the step under the cursor"),
+    ("q", "back to the list"),
     ("", ""),
     ("Agent panel", ""),
     ("i", "ask something"),

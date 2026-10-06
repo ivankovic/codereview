@@ -84,12 +84,19 @@ pub struct Term {
     recording: Arc<Mutex<Recording>>,
     reader: Option<JoinHandle<()>>,
     steps: Vec<Step>,
+    /// The documentation the test demonstrates, as `path#heading`.
+    docs: Vec<String>,
     /// Whether the keys pressed now are already described by a step: `step` says what the
     /// next keys are for, and a check ends that.
     described: bool,
     // Dropped after the program is, which `Drop` sees to.
     repo: tempfile::TempDir,
     _home: tempfile::TempDir,
+    /// Where an instrumented binary writes its coverage profile, when the tests run under
+    /// `cargo llvm-cov`: one directory per test, so each test's coverage is its own.
+    profiles: Option<tempfile::TempDir>,
+    /// When the test was over: what the program drew after that, leaving, is not part of it.
+    ended: Option<f64>,
 }
 
 /// `name` as a directory name: lower case, anything else between words a single dash.
@@ -140,6 +147,13 @@ impl Term {
         cmd.env("TERM", "xterm-256color");
         cmd.env("HOME", home.path());
         cmd.env("CODEREVIEW_CONFIG", home.path().join("config.toml"));
+        let profiles = std::env::var_os("CARGO_LLVM_COV").map(|_| tempfile::tempdir().unwrap());
+        if let Some(dir) = &profiles {
+            cmd.env(
+                "LLVM_PROFILE_FILE",
+                dir.path().join("codereview-%p-%m.profraw"),
+            );
+        }
         cmd.env_remove("CODEREVIEW_PASSWORD_HASH");
         let child = pty.slave.spawn_command(cmd).expect("the binary starts");
         // The program holds the other end now; ours would keep the terminal open after it
@@ -194,8 +208,11 @@ impl Term {
             reader: Some(reader),
             steps: Vec::new(),
             described: false,
+            docs: Vec::new(),
             repo,
             _home: home,
+            profiles,
+            ended: None,
         }
     }
 
@@ -226,6 +243,12 @@ impl Term {
 
     fn at_ms(&self) -> u128 {
         self.started.elapsed().as_millis()
+    }
+
+    /// Names the section of the documentation this test shows working, as `path#heading`:
+    /// where a reviewer watching it is led to read what it is meant to do.
+    pub fn documents(&mut self, section: &str) {
+        self.docs.push(section.to_string());
     }
 
     /// Says what the keys pressed next are for.
@@ -385,11 +408,18 @@ impl Term {
         })
         .to_string();
         cast.push('\n');
+        let ended = self.ended.unwrap_or(f64::MAX);
         for (at, kind, text) in &self.recording.lock().unwrap().events {
+            if *at > ended {
+                break;
+            }
             cast.push_str(&json!([at, kind, text]).to_string());
             cast.push('\n');
         }
         std::fs::write(dir.join("terminal.cast"), cast).unwrap();
+        if let Some(profiles) = &self.profiles {
+            coverage(profiles.path(), &dir.join("coverage.lcov"));
+        }
 
         let steps: Vec<Value> = self
             .steps
@@ -422,6 +452,7 @@ impl Term {
             "commit": commit,
             "dirty": dirty,
             "recording": "terminal.cast",
+            "docs": self.docs,
             "steps": steps,
         });
         std::fs::write(
@@ -436,6 +467,21 @@ impl Drop for Term {
     fn drop(&mut self) {
         // The last screen is what the test was about: the recording holds on it too.
         std::thread::sleep(HOLD);
+        self.ended = Some(self.started.elapsed().as_secs_f64());
+        // Asked to leave rather than killed: a program writes its coverage profile on its
+        // way out, and a killed one writes nothing. Esc first, out of any prompt that would
+        // take Ctrl-C as text.
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.writer.write_all(ESC.as_bytes());
+            let _ = self.writer.flush();
+            std::thread::sleep(KEYSTROKE);
+            let _ = self.writer.write_all(b"\x03");
+            let _ = self.writer.flush();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while self.child.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
         if self.child.try_wait().ok().flatten().is_none() {
             let _ = self.child.kill();
             let _ = self.child.wait();
@@ -450,6 +496,21 @@ impl Drop for Term {
             }
         }
         self.write_out();
+    }
+}
+
+/// Turns the coverage profiles the program wrote in `profiles` into `out`, an lcov file of
+/// the lines it ran. Nothing is written when there is no profile or no tool to read one.
+fn coverage(profiles: &Path, out: &Path) {
+    let raw: Vec<PathBuf> = std::fs::read_dir(profiles)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "profraw"))
+        .collect();
+    if let Some(lcov) = crate::common::lcov_of(&raw, env!("CARGO_BIN_EXE_codereview")) {
+        let _ = std::fs::write(out, lcov);
     }
 }
 

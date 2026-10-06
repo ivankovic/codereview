@@ -5,11 +5,14 @@ Markdown files anyone can read. Built for codebases that change quickly, typical
 much of the code is written with AI assistance: comments survive the churn by remembering the
 line they were left on and finding it again after edits.
 
-- **Open a repository on what it demonstrably does**: its end-to-end tests, the ones that drive
-  it the way a person does, each beside the recording its last run left — a video of the page,
-  or the terminal played back — with whether it passed and how far the code has moved since.
-  Navigation into the code starts from a test. A repository with none opens on saying so, and
-  the agent is offered the job of writing the first ones, each leaving a recording to watch.
+- **Open a repository on what it demonstrably does**: its end-to-end tests, the ones that drive it
+  the way a person does, each beside the recording its last run left — a video of the page, or the
+  terminal played back — with whether it passed and how far the code has moved since. Navigation
+  into the code starts from a test: its own view lines its steps up with the recording and the
+  test's source, lists the code its run executed, what only it ran first, links the documentation it
+  demonstrates, and the smaller tests that reach the same code. A repository with none opens on
+  saying so, and the agent is offered the job of writing the first ones, each leaving a recording to
+  watch.
 - **Summarise a repository** rather than show a file tree: what its README says, where
   to start reading, which files the rest of the tree leans on — computed from the symbols, not
   declared anywhere — how it is doing, down to how many review comments have lost the lines
@@ -77,6 +80,7 @@ codereview toggle 3           # complete (or reopen) comment number 3 from `list
 codereview reanchor           # rewrite line numbers of comments whose lines moved
 codereview overview           # write OVERVIEW.md: what it is, where to start, what its tests check
 codereview e2e                # the end-to-end tests and how their last recorded runs went
+codereview e2e --test NAME    # one of them: its steps, the code it ran, its docs, tests below
 codereview def total          # where `total` is defined
 codereview refs total         # every place `total` occurs
 codereview symbols pars       # definitions whose name contains "pars"
@@ -102,7 +106,7 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 | `H` | history of the file |
 | `D` | diff the file against HEAD |
 | `L` `S` `R` `T` | repository log, working tree changes, review list, notes list |
-| `E` | end-to-end tests, what it opens on: `Space` plays, `]` `[` step, `q` the code |
+| `E` | end-to-end tests, what it opens on: `Space` plays, `Enter` a test on its own, `s` source |
 | `U` | the tests that name the open file |
 | `B` | blame column |
 | `t` | colour scheme picker, previewed live and saved |
@@ -281,7 +285,9 @@ of any repository should: each is one thing a person does, named as a sentence, 
 recording of itself under `target/e2e/` — an asciicast for the terminal UI, a video for the page
 — with a `test.json` listing its steps against the recording. `tests/terminal.rs` runs the real
 binary in a pseudo-terminal and is part of `make check`; `tests/browser/phone.js` drives the page
-in a headless Chromium at a phone's size and needs podman. `make e2e` runs both.
+in a headless Chromium at a phone's size and needs podman. `make e2e` runs both;
+`make e2e-coverage` runs them built to count what they run, so that each test also leaves the
+code it ran (it needs cargo-llvm-cov and `rustup component add llvm-tools`).
 
 `make perf` times every request the page makes against a clone of this repository, cold and
 then warm, and fails on any that takes over 400 ms: the pause between a tap and the screen

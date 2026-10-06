@@ -20,7 +20,7 @@
 
 mod common;
 
-use common::{have, port_is_free, run, runtime, scratch_repo, wait_for_port};
+use common::{have, lcov_of, port_is_free, run, runtime, scratch_repo, wait_for_port};
 use std::process::{Child, Command, Stdio};
 
 /// Well above the privileged range: the container shares the host's network, so this is a host
@@ -86,6 +86,35 @@ fn image() -> String {
     tag
 }
 
+/// Whether the tests run under `cargo llvm-cov`, and the server is built to count what it runs.
+fn counting() -> bool {
+    std::env::var_os("CARGO_LLVM_COV").is_some()
+}
+
+/// Puts together each browser test's `coverage.lcov`: what the page's script ran, which the
+/// script wrote beside the video, and, when the server counted, what it ran, from the profile
+/// it wrote for that test in `profiles`.
+fn gather_coverage(recordings: &std::path::Path, profiles: &std::path::Path) {
+    let Ok(dirs) = std::fs::read_dir(recordings) else {
+        return;
+    };
+    for dir in dirs.flatten().map(|e| e.path()) {
+        let page = dir.join("page.lcov");
+        let mut lcov = std::fs::read(&page).unwrap_or_default();
+        let _ = std::fs::remove_file(&page);
+        let slug = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let profile = profiles.join(format!("{slug}.profraw"));
+        if profile.is_file() {
+            if let Some(more) = lcov_of(&[profile], env!("CARGO_BIN_EXE_codereview")) {
+                lcov.extend(more);
+            }
+        }
+        if !lcov.is_empty() {
+            std::fs::write(dir.join("coverage.lcov"), lcov).unwrap();
+        }
+    }
+}
+
 /// Which commit of codereview is under test, and whether the tree has changes on top of it,
 /// for the recordings to say what they are a recording of; and which test ran them.
 fn under_test() -> String {
@@ -100,7 +129,15 @@ fn under_test() -> String {
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
     };
+    // The page's script starts on the line of its `<script>` tag, which is where the lines
+    // Chromium says it ran are counted from.
+    let script_line = include_str!("../src/web/index.html")
+        .lines()
+        .position(|l| l.trim() == "<script>")
+        .map(|i| i + 1);
     serde_json::json!({
+        "coverage": counting(),
+        "script_line": script_line,
         "commit": git(&["rev-parse", "HEAD"]),
         "dirty": git(&["status", "--porcelain"]).is_some_and(|s| !s.is_empty()),
         // This test only hands the script to a browser: the tests are the script's, and
@@ -139,7 +176,7 @@ fn every_browser_test_passes_in_a_real_browser() {
         repo.join("README.md"),
         "# scratch\n\nA repository the browser test looks at. It exists so that the overview \
          has a README to quote, an entry point to find, and a module for the rest of it to \
-         lean on.\n",
+         lean on.\n\n## Saving a review\n\nA review is written to REVIEW.md as it is saved.\n",
     )
     .unwrap();
     // A test target for the page to find and run, and a test for it to list.
@@ -212,15 +249,22 @@ fn every_browser_test_passes_in_a_real_browser() {
         serde_json::json!({
             "test": "a_review_is_saved", "file": "tests/cli.rs", "line": 7, "passed": false,
             "recording": "video.webm", "duration_ms": 2300,
+            "docs": ["README.md#Saving a review"],
             "steps": [
-                { "at_ms": 0, "line": 8, "kind": "action", "text": "save the review" },
-                { "at_ms": 1500, "line": 8, "kind": "check", "text": "REVIEW.md has it",
+                { "at_ms": 0, "line": 9, "kind": "action", "text": "save the review" },
+                { "at_ms": 1500, "line": 9, "kind": "check", "text": "REVIEW.md has it",
                   "passed": false, "detail": "REVIEW.md was empty" },
             ],
         }),
         "video.webm",
         include_bytes!("browser/fixture.webm"),
     );
+    // What that run executed: two lines of src/core.rs, which a unit test lives beside.
+    std::fs::write(
+        repo.join("target/e2e/fixture/saved/coverage.lcov"),
+        "SF:src/core.rs\nDA:1,1\nDA:2,1\nDA:3,0\nend_of_record\n",
+    )
+    .unwrap();
     // And a repository with no end-to-end test at all, which opens on saying so.
     let bare = work.path().join("bare");
     scratch_repo(&bare);
@@ -231,6 +275,7 @@ fn every_browser_test_passes_in_a_real_browser() {
     )
     .unwrap();
 
+    let profiles = counting().then(|| tempfile::tempdir().unwrap());
     let server = Command::new(env!("CARGO_BIN_EXE_codereview"))
         .args([
             "web",
@@ -243,6 +288,11 @@ fn every_browser_test_passes_in_a_real_browser() {
             bare.to_str().unwrap(),
         ])
         .env("CODEREVIEW_TOKEN", TOKEN)
+        .envs(
+            profiles
+                .as_ref()
+                .map(|p| ("CODEREVIEW_COVERAGE_DIR", p.path().to_path_buf())),
+        )
         .env("CODEREVIEW_CONFIG", work.path().join("config.toml"))
         .env_remove("CODEREVIEW_PASSWORD_HASH")
         .stdout(Stdio::null())
@@ -286,6 +336,11 @@ fn every_browser_test_passes_in_a_real_browser() {
         .arg(&recordings)
         .output()
         .expect("failed to copy the recordings out");
+
+    gather_coverage(
+        &recordings,
+        profiles.as_ref().map_or(work.path(), |p| p.path()),
+    );
 
     assert!(out.status.success(), "{report}");
     // A script that fell over before it ran a test would otherwise pass quietly.

@@ -96,6 +96,12 @@ pub struct Recording {
     pub run_by: Option<RunBy>,
     #[serde(default)]
     pub steps: Vec<Step>,
+    /// The documentation the test demonstrates, as `path#heading`, when the test says so.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub docs: Vec<String>,
+    /// Whether the run left `coverage.lcov` beside its recording. Filled in when read.
+    #[serde(default)]
+    pub covered: bool,
     /// Where `test.json` was found, relative to the repository root. Filled in when read.
     #[serde(default)]
     pub dir: String,
@@ -241,7 +247,82 @@ fn read(root: &Path, dir: &Path) -> Option<Recording> {
             && std::fs::symlink_metadata(dir.join(name)).is_ok_and(|m| m.is_file())
     });
     recording.kind = recording.recording.as_deref().and_then(kind_of);
+    recording.covered = std::fs::symlink_metadata(dir.join(COVERAGE)).is_ok_and(|m| m.is_file());
     Some(recording)
+}
+
+/// What a run leaves beside its recording to say which code it ran, in the lcov format every
+/// coverage tool can write.
+pub const COVERAGE: &str = "coverage.lcov";
+
+/// The lines of each file that `recording`'s run executed, by repository-relative path: what
+/// its `coverage.lcov` says ran at least once. A path outside the repository is left out, and
+/// so is anything the file names that is not a line count.
+pub fn lines_run(
+    root: &Path,
+    recording: &Recording,
+) -> Option<std::collections::BTreeMap<String, Vec<u32>>> {
+    if !recording.covered {
+        return None;
+    }
+    let text = std::fs::read_to_string(root.join(&recording.dir).join(COVERAGE)).ok()?;
+    Some(parse_lcov(root, &text))
+}
+
+/// [`lines_run`] from the text of an lcov file.
+pub fn parse_lcov(root: &Path, text: &str) -> std::collections::BTreeMap<String, Vec<u32>> {
+    let mut out: std::collections::BTreeMap<String, Vec<u32>> = std::collections::BTreeMap::new();
+    let mut file: Option<String> = None;
+    for line in text.lines() {
+        if let Some(path) = line.strip_prefix("SF:") {
+            let path = Path::new(path.trim());
+            let relative = if path.is_absolute() {
+                path.strip_prefix(root).ok().map(Path::to_path_buf)
+            } else {
+                Some(path.to_path_buf())
+            };
+            file = relative
+                .and_then(|p| {
+                    p.to_str()
+                        .map(|s| s.replace(std::path::MAIN_SEPARATOR, "/"))
+                })
+                .filter(|p| !p.is_empty() && !p.split('/').any(|c| c == ".."));
+        } else if let Some(rest) = line.strip_prefix("DA:") {
+            let Some(path) = &file else {
+                continue;
+            };
+            let mut parts = rest.split(',');
+            let (Some(n), Some(count)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            let (Ok(n), Ok(count)) = (n.trim().parse::<u32>(), count.trim().parse::<f64>()) else {
+                continue;
+            };
+            if count > 0.0 {
+                out.entry(path.clone()).or_default().push(n);
+            }
+        } else if line.starts_with("end_of_record") {
+            file = None;
+        }
+    }
+    for lines in out.values_mut() {
+        lines.sort_unstable();
+        lines.dedup();
+    }
+    out
+}
+
+/// `lines`, sorted, as runs of consecutive numbers, first and last.
+pub fn ranges(lines: &[u32]) -> Vec<(u32, u32)> {
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for &n in lines {
+        match out.last_mut() {
+            Some((_, last)) if *last + 1 == n => *last = n,
+            Some((_, last)) if *last == n => {}
+            _ => out.push((n, n)),
+        }
+    }
+    out
 }
 
 // ----- terminal recordings -------------------------------------------------------------------
@@ -295,6 +376,21 @@ pub struct Cast {
 }
 
 impl Cast {
+    /// Where a player should open: the first frame with anything on it, since a program that
+    /// takes the whole screen starts by clearing it, and a recording that opens on a blank
+    /// screen looks like one that holds nothing.
+    pub fn first_shown(&self) -> u64 {
+        self.frames
+            .iter()
+            .find(|f| {
+                f.rows
+                    .iter()
+                    .any(|(_, runs)| runs.iter().any(|r| !r.text.trim().is_empty()))
+            })
+            .or(self.frames.first())
+            .map_or(0, |f| f.at_ms)
+    }
+
     /// The whole screen at `at_ms`: every row as the last frame at or before then left it.
     pub fn screen_at(&self, at_ms: u64) -> Vec<Vec<Run>> {
         let mut rows = vec![Vec::new(); usize::from(self.height)];
@@ -493,6 +589,16 @@ mod tests {
         assert_eq!(second.at_ms, 500);
         assert_eq!(second.rows.len(), 1);
         assert_eq!(second.rows[0].1[0].text, "jello");
+        assert_eq!(cast.first_shown(), 0);
+        let blank_first = frames(
+            "{\"version\":2,\"width\":4,\"height\":1}\n[0.0,\"o\",\"\\u001b[2J\"]\n[0.5,\"o\",\"hi\"]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            blank_first.first_shown(),
+            500,
+            "a cleared screen is not worth opening on"
+        );
         let screen = cast.screen_at(10_000);
         assert_eq!(screen[0][0].text, "jello");
         assert_eq!(screen[1][0].text, "red");
@@ -510,6 +616,19 @@ mod tests {
             frames("{\"version\":2,\"width\":4,\"height\":1}\nnonsense\n[0.1,\"o\",\"ok\"]\n")
                 .unwrap();
         assert_eq!(cast.frames.len(), 1);
+    }
+
+    #[test]
+    fn coverage_says_which_lines_of_which_files_ran() {
+        let root = Path::new("/work/repo");
+        let text = "TN:\nSF:/work/repo/src/a.rs\nDA:1,3\nDA:2,0\nDA:3,1\nDA:4,2\nLF:4\nLH:3\n\
+                    end_of_record\nSF:src/b.js\nDA:9,1\nend_of_record\n\
+                    SF:/home/someone/.cargo/registry/x.rs\nDA:1,1\nend_of_record\n\
+                    SF:../outside.rs\nDA:1,1\nend_of_record\n";
+        let ran = parse_lcov(root, text);
+        assert_eq!(ran.keys().collect::<Vec<_>>(), ["src/a.rs", "src/b.js"]);
+        assert_eq!(ran["src/a.rs"], [1, 3, 4]);
+        assert_eq!(ranges(&ran["src/a.rs"]), [(1, 1), (3, 4)]);
     }
 
     #[test]

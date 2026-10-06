@@ -172,8 +172,12 @@ phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
       results and staleness, and the no-tests finding with the agent's offer. Both front ends,
       and `codereview e2e`. A test is end to end only in a file of nothing but tests: a module
       that mentions a browser driver, as the one recognising them does, is not one.
-   3. **A test's own view**: steps against the video, the code it ran, the documentation,
-      the smaller tests below it.
+   3. **A test's own view** (built 2026-10-06): steps against the recording, each with the
+      line of the test that took it; the code its run executed, what no other end-to-end test
+      ran first; the documentation it names, or the closest sections as a guess; the smaller
+      tests that reach the same code. Coverage per test comes from the run like the recording:
+      this repository's own tests count it under `make e2e-coverage`, the terminal ones a
+      process each, the browser ones by a call between tests that only a coverage build has.
    4. **What a stretch did**, per test: recordings before and after, and the changed code no
       end-to-end test ran.
 

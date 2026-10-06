@@ -10,6 +10,7 @@
 
 use super::*;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::e2e::{EndToEnd, Opening};
@@ -43,66 +44,58 @@ pub struct EndToEndState {
     pub from_overview: bool,
     pub rows: ListState<E2eRow>,
     /// Terminal recordings played into frames, by their path, or why one could not be.
-    pub casts: HashMap<String, std::result::Result<Cast, String>>,
-    /// Where playback is, in milliseconds of the selected recording.
-    pub position_ms: u64,
-    /// While playing: when it started, and the position it started from.
-    pub playing: Option<(Instant, u64)>,
+    pub casts: HashMap<String, Played>,
+    /// The selected recording, and where playback is in it.
+    pub player: Player,
     /// The recording takes the whole screen.
     pub full: bool,
 }
 
-impl EndToEndState {
-    pub fn new(opening: Option<Opening>, from_overview: bool) -> Self {
-        let rows = opening.as_ref().map(rows_of).unwrap_or_default();
-        let mut state = Self {
-            opening,
-            from_overview,
-            rows: ListState::new(rows),
-            casts: HashMap::new(),
-            position_ms: 0,
-            playing: None,
-            full: false,
+/// A terminal recording played into frames, or why it could not be; shared between the list
+/// and a test's own screen, since playing one is the slow part.
+pub type Played = Arc<std::result::Result<Cast, String>>;
+
+/// One recording and where playback is in it: what the list shows for the selected test, and
+/// a test's own screen for its test.
+#[derive(Default)]
+pub struct Player {
+    pub recording: Option<Recording>,
+    /// The frames of a terminal recording; `None` for a video or no recording.
+    pub cast: Option<Played>,
+    /// Where playback is, in milliseconds of the recording.
+    pub position_ms: u64,
+    /// While playing: when it started, and the position it started from.
+    pub playing: Option<(Instant, u64)>,
+}
+
+impl Player {
+    /// `recording`, paused on its first frame with anything on it.
+    pub fn new(recording: Option<Recording>, cast: Option<Played>) -> Self {
+        let position_ms = match cast.as_deref() {
+            Some(Ok(cast)) => cast.first_shown(),
+            _ => 0,
         };
-        state.settle(1);
-        state
-    }
-
-    /// The test under the cursor, if it is one.
-    pub fn test(&self) -> Option<&EndToEnd> {
-        match self.rows.current()? {
-            E2eRow::Test(i) => self.opening.as_ref()?.tests.get(*i),
-            _ => None,
+        Self {
+            recording,
+            cast,
+            position_ms,
+            playing: None,
         }
     }
 
-    /// The recording of what is under the cursor: a test's, or an orphan.
-    pub fn recording(&self) -> Option<&Recording> {
-        let opening = self.opening.as_ref()?;
-        match self.rows.current()? {
-            E2eRow::Test(i) => opening.tests.get(*i)?.recording.as_ref(),
-            E2eRow::Orphan(i) => opening.orphans.get(*i),
-            _ => None,
-        }
-    }
-
-    /// The selected terminal recording, played, or why it could not be.
+    /// The terminal recording, played, or why it could not be.
     pub fn cast(&self) -> Option<&std::result::Result<Cast, String>> {
-        let recording = self.recording()?;
-        if recording.kind != Some(Kind::Terminal) {
-            return None;
-        }
-        self.casts.get(&recording.media()?)
+        self.cast.as_deref()
     }
 
-    /// How long the selected recording runs: the test's own duration, its last frame or its
-    /// last step, whichever is latest.
+    /// How long the recording runs: the test's own duration, its last frame or its last
+    /// step, whichever is latest.
     pub fn duration_ms(&self) -> u64 {
         let frames = match self.cast() {
             Some(Ok(cast)) => cast.duration_ms,
             _ => 0,
         };
-        let Some(recording) = self.recording() else {
+        let Some(recording) = &self.recording else {
             return frames;
         };
         let steps = recording.steps.last().map_or(0, |s| s.at_ms);
@@ -111,7 +104,7 @@ impl EndToEndState {
 
     /// The step playback is at: the last one at or before the position.
     pub fn current_step(&self) -> Option<usize> {
-        let steps = &self.recording()?.steps;
+        let steps = &self.recording.as_ref()?.steps;
         steps.iter().rposition(|s| s.at_ms <= self.position_ms)
     }
 
@@ -153,7 +146,7 @@ impl EndToEndState {
     /// going forward, and going back a step a moment after the one playback is in returns to
     /// its start before the one before it.
     pub fn step_at(&self, forward: bool) -> Option<u64> {
-        let steps = &self.recording()?.steps;
+        let steps = &self.recording.as_ref()?.steps;
         let at = self.position_ms;
         if forward {
             steps.iter().map(|s| s.at_ms).find(|t| *t > at)
@@ -162,35 +155,45 @@ impl EndToEndState {
             earlier.last().copied().or(Some(0))
         }
     }
+}
+
+impl EndToEndState {
+    pub fn new(opening: Option<Opening>, from_overview: bool) -> Self {
+        let rows = opening.as_ref().map(rows_of).unwrap_or_default();
+        let mut state = Self {
+            opening,
+            from_overview,
+            rows: ListState::new(rows),
+            casts: HashMap::new(),
+            player: Player::default(),
+            full: false,
+        };
+        state.settle(1);
+        state
+    }
+
+    /// The test under the cursor, if it is one.
+    pub fn test(&self) -> Option<&EndToEnd> {
+        match self.rows.current()? {
+            E2eRow::Test(i) => self.opening.as_ref()?.tests.get(*i),
+            _ => None,
+        }
+    }
+
+    /// The recording of what is under the cursor: a test's, or an orphan.
+    pub fn recording(&self) -> Option<&Recording> {
+        let opening = self.opening.as_ref()?;
+        match self.rows.current()? {
+            E2eRow::Test(i) => opening.tests.get(*i)?.recording.as_ref(),
+            E2eRow::Orphan(i) => opening.orphans.get(*i),
+            _ => None,
+        }
+    }
 
     /// The cursor onto a test or an orphan, moving on in `direction` (or back, when there is
     /// nothing that way) past headings.
     fn settle(&mut self, direction: isize) {
-        let items = &self.rows.items;
-        if items.is_empty() || items[self.rows.cursor.min(items.len() - 1)].selectable() {
-            return;
-        }
-        let from = self.rows.cursor as isize;
-        for dir in [direction.signum(), -direction.signum()] {
-            let dir = if dir == 0 { 1 } else { dir };
-            let mut i = from;
-            while i >= 0 && (i as usize) < items.len() {
-                if items[i as usize].selectable() {
-                    self.rows.cursor = i as usize;
-                    return;
-                }
-                i += dir;
-            }
-        }
-    }
-
-    /// Back to the start of the newly selected recording, paused.
-    fn selected_anew(&mut self) {
-        self.playing = None;
-        self.position_ms = match self.cast() {
-            Some(Ok(cast)) => cast.frames.first().map_or(0, |f| f.at_ms),
-            _ => 0,
-        };
+        settle(&mut self.rows, direction, E2eRow::selectable);
     }
 
     /// Which test or orphan the cursor is on, to find it again in a fresh opening.
@@ -228,6 +231,57 @@ impl EndToEndState {
             self.rows.cursor = at;
         }
     }
+}
+
+/// Puts the cursor of `rows` on a row `selectable` accepts, moving on in `direction` (or
+/// back, when there is nothing that way) past the others.
+pub(super) fn settle<T>(
+    rows: &mut ListState<T>,
+    direction: isize,
+    selectable: impl Fn(&T) -> bool,
+) {
+    let items = &rows.items;
+    if items.is_empty() || selectable(&items[rows.cursor.min(items.len() - 1)]) {
+        return;
+    }
+    let from = rows.cursor as isize;
+    for dir in [direction.signum(), -direction.signum()] {
+        let dir = if dir == 0 { 1 } else { dir };
+        let mut i = from;
+        while i >= 0 && (i as usize) < items.len() {
+            if selectable(&items[i as usize]) {
+                rows.cursor = i as usize;
+                return;
+            }
+            i += dir;
+        }
+    }
+}
+
+/// `recording`'s frames, from `casts` when it was played before, played and kept there when
+/// not. `None` for anything but a terminal recording.
+pub(super) fn played(
+    root: &std::path::Path,
+    casts: &mut HashMap<String, Played>,
+    recording: &Recording,
+) -> Option<Played> {
+    if recording.kind != Some(Kind::Terminal) {
+        return None;
+    }
+    let media = recording.media()?;
+    Some(
+        casts
+            .entry(media)
+            .or_insert_with_key(|media| {
+                Arc::new(
+                    std::fs::read_to_string(root.join(media))
+                        .map_err(anyhow::Error::from)
+                        .and_then(|text| crate::recording::frames(&text))
+                        .map_err(|e| format!("{e:#}")),
+                )
+            })
+            .clone(),
+    )
 }
 
 /// The list: each file's tests under its name, then the recordings of tests no longer here.
@@ -297,6 +351,7 @@ impl App {
             _ => false,
         });
         if !stale {
+            self.refresh_end_to_end_tests(only_provisional);
             return;
         }
         let (opening, from_overview) = self.read_opening();
@@ -314,6 +369,7 @@ impl App {
             **state = fresh;
         }
         self.load_cast();
+        self.refresh_end_to_end_tests(only_provisional);
     }
 
     /// Plays the selected terminal recording into frames, the first time it is selected,
@@ -323,30 +379,27 @@ impl App {
         let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
             return;
         };
-        let media = state
-            .recording()
-            .filter(|r| r.kind == Some(Kind::Terminal))
-            .and_then(Recording::media);
-        if let Some(media) = media {
-            state.casts.entry(media).or_insert_with_key(|media| {
-                std::fs::read_to_string(root.join(media))
-                    .map_err(anyhow::Error::from)
-                    .and_then(|text| crate::recording::frames(&text))
-                    .map_err(|e| format!("{e:#}"))
-            });
-        }
-        state.selected_anew();
+        let recording = state.recording().cloned();
+        let cast = recording
+            .as_ref()
+            .and_then(|r| played(&root, &mut state.casts, r));
+        state.player = Player::new(recording, cast);
     }
 
     /// Whether a recording is playing, so the screen has to be drawn again soon.
     pub fn animating(&self) -> bool {
-        matches!(self.screen(), Screen::EndToEnd(s) if s.playing.is_some())
+        match self.screen() {
+            Screen::EndToEnd(s) => s.player.playing.is_some(),
+            Screen::EndToEndTest(s) => s.player.playing.is_some(),
+            _ => false,
+        }
     }
 
     /// Moves a playing recording on. True when it moved.
     pub(super) fn advance_playback(&mut self) -> bool {
         match self.screens.last_mut() {
-            Some(Screen::EndToEnd(state)) => state.advance(Instant::now()),
+            Some(Screen::EndToEnd(state)) => state.player.advance(Instant::now()),
+            Some(Screen::EndToEndTest(state)) => state.player.advance(Instant::now()),
             _ => false,
         }
     }
@@ -383,26 +436,17 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc if state.full => state.full = false,
             KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
-            KeyCode::Char(' ') | KeyCode::Char('p') => match state.cast() {
-                Some(Ok(_)) => state.toggle_play(now),
-                Some(Err(e)) => {
-                    let e = e.clone();
-                    self.error(format!("the recording cannot be played: {e}"));
-                }
-                None if state
-                    .recording()
-                    .is_some_and(|r| r.kind == Some(Kind::Video)) =>
-                {
-                    self.info("a video plays outside the terminal: o opens it");
-                }
-                None => self.info("this test has no recording to play"),
-            },
-            KeyCode::Char(']') | KeyCode::Char('[') => {
-                if let Some(at) = state.step_at(key.code == KeyCode::Char(']')) {
-                    state.seek(at, now);
+            KeyCode::Char(' ') | KeyCode::Char('p') => {
+                if let Some(said) = play(&mut state.player, now) {
+                    self.say(said);
                 }
             }
-            KeyCode::Char('0') => state.seek(0, now),
+            KeyCode::Char(']') | KeyCode::Char('[') => {
+                if let Some(at) = state.player.step_at(key.code == KeyCode::Char(']')) {
+                    state.player.seek(at, now);
+                }
+            }
+            KeyCode::Char('0') => state.player.seek(0, now),
             KeyCode::Char('z') => state.full = !state.full,
             KeyCode::Char('a') if missing => {
                 let ask = state
@@ -416,41 +460,93 @@ impl App {
                 self.info("the agent is offered the first end-to-end tests when there are none; i asks it anything");
             }
             KeyCode::Char('o') => {
-                let Some(recording) = state.recording() else {
-                    self.info("no recording here");
-                    return;
-                };
-                let Some(media) = recording.media() else {
-                    self.info("this test has no recording");
-                    return;
-                };
-                let path = self.session.root().join(&media);
-                match open_externally(&path) {
-                    Ok(()) => self.info(format!("opened {media}")),
-                    Err(e) => self.error(format!("cannot open {media}: {e:#}")),
-                }
+                let recording = state.recording().cloned();
+                self.open_recording(recording.as_ref());
             }
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+            // A test opens on its own screen; an orphan, whose test is gone, has nothing
+            // more to show than the list does.
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right if state.test().is_some() => {
+                let t = state.test().expect("a test");
+                let (path, name) = (t.test.path.clone(), t.test.name.clone());
+                self.push_end_to_end_test(&path, &name);
+            }
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('s') => {
                 let target = match (state.test(), state.recording()) {
                     (Some(t), _) => Some((t.test.path.clone(), t.test.line)),
                     (None, Some(r)) => Some((r.file.clone(), r.line)),
                     _ => None,
                 };
-                match target {
-                    Some((path, line)) if self.session.files.contains(&path) => {
-                        self.jump_to(&path, line.max(1));
-                    }
-                    Some((path, _)) => self.info(format!("{path} is not in the tree any more")),
-                    None => {}
+                if let Some((path, line)) = target {
+                    self.go_to_source(&path, line);
                 }
             }
             _ => {}
         }
     }
+
+    /// The test's source at `line`, when its file is still there.
+    pub(super) fn go_to_source(&mut self, path: &str, line: usize) {
+        if self.session.files.iter().any(|f| f == path) {
+            self.jump_to(path, line.max(1));
+        } else {
+            self.info(format!("{path} is not in the tree any more"));
+        }
+    }
+
+    /// Hands a recording to the system's player.
+    fn open_recording(&mut self, recording: Option<&Recording>) {
+        let Some(recording) = recording else {
+            self.info("no recording here");
+            return;
+        };
+        let Some(media) = recording.media() else {
+            self.info("this test has no recording");
+            return;
+        };
+        let path = self.session.root().join(&media);
+        match open_externally(&path) {
+            Ok(()) => self.info(format!("opened {media}")),
+            Err(e) => self.error(format!("cannot open {media}: {e:#}")),
+        }
+    }
+
+    pub(super) fn say(&mut self, said: Said) {
+        match said {
+            Said::Info(text) => self.info(text),
+            Said::Error(text) => self.error(text),
+        }
+    }
+}
+
+/// What a key had to say instead of doing anything.
+pub(super) enum Said {
+    Info(String),
+    Error(String),
+}
+
+/// Space on a recording: plays or pauses one that can be played here, or says why not.
+pub(super) fn play(player: &mut Player, now: Instant) -> Option<Said> {
+    match player.cast() {
+        Some(Ok(_)) => {
+            player.toggle_play(now);
+            None
+        }
+        Some(Err(e)) => Some(Said::Error(format!("the recording cannot be played: {e}"))),
+        None if player
+            .recording
+            .as_ref()
+            .is_some_and(|r| r.kind == Some(Kind::Video)) =>
+        {
+            Some(Said::Info(
+                "a video plays outside the terminal: o opens it".into(),
+            ))
+        }
+        None => Some(Said::Info("this test has no recording to play".into())),
+    }
 }
 
 /// Hands `path` to the system's own opener, detached: the terminal UI keeps the screen.
-fn open_externally(path: &std::path::Path) -> Result<()> {
+pub(super) fn open_externally(path: &std::path::Path) -> Result<()> {
     let program = if cfg!(target_os = "macos") {
         "open"
     } else {

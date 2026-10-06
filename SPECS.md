@@ -333,6 +333,12 @@ The browser test harness names itself as the runner of the page's tests in each 
 remuxes each video once more after recording, which writes its length and where its frames are,
 so that a player can show the one and seek in the other.
 
+Two more things may sit beside a recording. `docs` in `test.json` names the documentation the
+test demonstrates, each as `path#heading`, the heading as written or as a link to it is spelled.
+`coverage.lcov` is the code the run executed, in lcov: its `SF` paths, absolute under the
+repository or relative to it, and the `DA` lines with a count above nothing; paths outside the
+repository are left out.
+
 This repository's own end-to-end tests leave theirs under `target/e2e/terminal/` and
 `target/e2e/browser/`, a directory per test named after it in lower case with dashes. The
 terminal tests start the binary in a 110 by 32 pseudo-terminal in a scratch repository with a
@@ -340,6 +346,15 @@ home and a configuration file of their own, and each replaces only its own direc
 run at the same time. The browser tests run one after another in a container, each on a fresh
 page at 360 by 640, and the whole browser directory is replaced after every run, so a test that
 is gone takes its recording with it.
+
+Run under `cargo llvm-cov` (`make e2e-coverage`), each terminal test's program writes its
+coverage profile to a directory of its own and is asked to leave with Esc and Ctrl-C, since a
+killed program writes none; what it drew while leaving is cut from the recording. The browser
+tests share one server, which in a build instrumented for coverage, and only there, answers a
+call that writes what it has run to a file named for the test and starts counting afresh; the
+page's script is counted by Chromium for every run, coverage build or not. The harnesses turn
+the profiles into each test's `coverage.lcov` with the toolchain's `llvm-profdata` and
+`llvm-cov`.
 
 ## What a repository opens on
 
@@ -366,6 +381,20 @@ working tree has changed since then outside the recordings' own directories, wor
 status and one log for all of them. Writing, replacing or removing a `test.json` moves the
 repository's fingerprint, though git ignores those directories, so a page that is open redraws
 when a test run finishes.
+
+A test's own view is where a reviewer goes into the code from. Beside its recording are its
+steps, each with the line of the test that took it, read from the test's file. Then the code its
+run executed, a file at a time, with how many lines ran and how many of those no other
+end-to-end test ran, ordered by the second and then the first, at most sixty; the test's own
+files are not code it ran, and nor is anything the repository does not list. Without
+`coverage.lcov` the view says the run left none. Then its documentation: the sections it names,
+or, when it names none, at most three guessed from the words of its sentence — quoted text and
+anything spelled like a path left out — against the headings and bodies of every Markdown file
+except REVIEW.md, NOTES.md, OVERVIEW.md and a changelog: a section must share at least two words
+with it, a word counts for more the fewer sections use it, three times as much in a heading, and
+less in a long section than a short one. A named section that is not there is not replaced by a
+guess. Last, at most twenty smaller tests that name a file the run executed or live in one,
+each file counting for more the higher it ranks in what the test ran.
 
 A repository with no end-to-end test opens on that finding: nothing drives it the way a person
 does, so nothing shows that it works. What one would look like is said for the kind of software it
@@ -449,10 +478,26 @@ the whole screen. Under it are the test's steps with their times, the one the po
 highlighted. `Space` or `p` plays and pauses, from the start again once it has ended; `]` and
 `[` go to the next and previous step; `0` goes back to the start; while it plays the screen is
 drawn every 40 ms. A video cannot be drawn, so it is named, and `o` hands it to the system's
-opener (`xdg-open`, or `open` on macOS). `Enter` opens the test's source at its line. A
+opener (`xdg-open`, or `open` on macOS). `s` opens the test's source at its line. A
 repository with no end-to-end tests opens on that finding instead: what one would look like for
 the kind of software it seems to be, how many tests of other kinds it has, and `a`, which sends
 the agent the request for the first ones, each leaving a recording.
+
+`Enter` opens a test on a screen of its own, over the list: where it is and why it counts, how
+its last run went and what any failed check saw, its recording with the same keys as the list,
+and below it one list in four parts. Its steps, each with its moment and its mark and, under it,
+the line of the test that took it, the step playback is at marked; `Enter` on one goes to its
+moment and `s` to its line. The code it ran, a file a row with how many lines it ran and how many
+of those no other end-to-end test ran, those first; or, without coverage, that its run left none
+and, where the Makefile has an `e2e-coverage` target, that it records it. `Enter` opens the file
+at the first line it ran, with every line it ran marked by a bar in the gutter and the status
+line naming the test on a marked line; the mark lasts while that file stays open and through a
+refresh, and a file opened any other way has none. The documentation it names, or the closest
+sections as a guess with the words they share, each opening at its heading. The smaller tests
+that name a file it ran or live in one, with their level and the files they share, each opening
+at its source. A screen opened while the symbols are still being read says so and fills in when
+they are. `q` goes back to the list. The terminal end-to-end tests name the section they
+demonstrate (`documents`), and under `cargo llvm-cov` each writes the coverage of its own run.
 
 ## Browser UI
 
@@ -531,19 +576,24 @@ keeps the scroll where it was, says nothing in the footer, and leaves the agent'
 agent's own poll. A write of the page's own moves the version too, so the next reading after one
 becomes the baseline instead of redrawing what the page has just drawn.
 
-A repository opens on its end-to-end tests, under the Tests tab, at the root address; the
-overview is the Summary tab, at `summary`, and the specification is All tests, under the same
-tab. Each end-to-end test is a card, grouped by file, in a grid as wide as the screen allows: a
-mark for how its last run went, its sentence, a security or skipped badge, its file and line
-(which opens it), why it counts, when it ran and whether the tree has moved since, then its
-recording, what any failed check saw instead, and its steps, folded. A video is fetched with the
-API token and played from memory by the browser's own player, once its card comes near the
-screen; a terminal recording is fetched as the server's frames and drawn as text on a dark
-terminal, sized to fit its card, opening on the first frame with anything on it, with a play
-button, a scrubber and the time. Tapping a step goes to its moment of the recording, and the step
-at the current moment is lit as it plays. The header counts the end-to-end tests against all the
-tests, the failed and the ones without a recording. A repository without any opens on the
-finding, with the button that asks the agent and one to the tests it has.
+A repository opens on its end-to-end tests, under the Tests tab, at the root address; the overview
+is the Summary tab, at `summary`, and the specification is All tests, under the same tab. Each
+end-to-end test is a card, grouped by file, in a grid as wide as the screen allows: a mark for how
+its last run went, its sentence, a security or skipped badge, its file and line (which opens it),
+why it counts, when it ran and whether the tree has moved since, then its recording, what any failed
+check saw instead, and its steps, folded. A video is fetched with the API token and played from
+memory by the browser's own player, once its card comes near the screen; a terminal recording is
+fetched as the server's frames and drawn as text on a dark terminal, sized to fit its card, opening
+on the first frame with anything on it, with a play button, a scrubber and the time. Tapping a step
+goes to its moment of the recording, and the step at the current moment is lit as it plays. The
+header counts the end-to-end tests against all the tests, the failed and the ones without a
+recording. A repository without any opens on the finding, with the button that asks the agent and
+one to the tests it has. A test's sentence opens its own view, at `test` with its file and name: the
+recording and its failures beside the steps, each step's line of the test under it, which opens the
+test there, and tapping a step goes to its moment; then the code it ran, each file with a bar of
+what ran and what only it ran, the documentation marked as named or as a guess with the words it
+shares, and the smaller tests. A file opened from the code it ran marks those lines in its gutter,
+under a line naming the test that leads back to it; another file opened later is not marked.
 
 The overview is not on the file tree either. It is what the project says it is —
 the prose its README opens with, as plain text, up to the first heading after it — then where to
@@ -641,6 +691,8 @@ their current anchor state (`--all`, `--path`, `--json`), `add` and `note` write
 files (`add` takes `N` or `N-M` lines, or none at all for a comment on a whole file or
 directory), `toggle` moves a comment between sections by its number in `list --all`, `reanchor`
 rewrites line numbers, `def`, `refs` and `symbols` query the index, `e2e` lists the end-to-end
-tests with how their last recorded runs went (`--json` for all of it), and `agent` sends one
+tests with how their last recorded runs went (`--json` for all of it; `--test NAME` for one of
+them, with its steps, the code it ran, its documentation and the tests below it), and `agent`
+sends one
 prompt and streams the answer to stdout (permission requests are asked on the terminal, or
 auto-allowed with `--yes`). `-C DIR` selects the repository.

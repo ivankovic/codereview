@@ -705,6 +705,7 @@ fn router(state: AppState) -> Router {
         .route("/tests", get(api::get_tests))
         .route("/spec", get(api::get_spec))
         .route("/e2e", get(api::get_e2e))
+        .route("/e2e/test", get(api::get_e2e_test))
         .route("/recording", get(api::get_recording))
         .route("/cast", get(api::get_cast))
         .route("/tests_of", get(api::get_tests_of))
@@ -742,7 +743,11 @@ fn router(state: AppState) -> Router {
         .route("/agent/cancel", post(agent::post_agent_cancel))
         .route("/agent/stop", post(agent::post_agent_stop))
         .route("/agent/clear", post(agent::post_agent_clear))
-        .route("/logout", post(post_logout))
+        .route("/logout", post(post_logout));
+    // Only in a build instrumented for coverage, which is never one that is deployed.
+    #[cfg(coverage)]
+    let api = api.route("/coverage", post(coverage::post_coverage));
+    let api = api
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -758,6 +763,57 @@ fn router(state: AppState) -> Router {
         .nest("/api", api)
         .layer(middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+/// The server's coverage a test at a time, for the browser tests: one server answers all of
+/// them, so what each one ran is what the counters say between two calls here. Compiled only
+/// when `cargo llvm-cov` builds the crate (it sets `--cfg coverage`), and even then it writes
+/// only where `CODEREVIEW_COVERAGE_DIR` says, under a name made of letters, digits and dashes.
+#[cfg(coverage)]
+mod coverage {
+    use super::*;
+    use std::ffi::{CString, c_char, c_int};
+
+    unsafe extern "C" {
+        fn __llvm_profile_reset_counters();
+        fn __llvm_profile_set_filename(name: *const c_char);
+        fn __llvm_profile_write_file() -> c_int;
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct CoverageQuery {
+        /// Write what ran since the last call to `<test>.profraw`; without it, only start
+        /// counting afresh.
+        test: Option<String>,
+    }
+
+    pub(super) async fn post_coverage(Query(q): Query<CoverageQuery>) -> Response {
+        let Some(dir) = std::env::var_os("CODEREVIEW_COVERAGE_DIR") else {
+            return ApiError(StatusCode::NOT_FOUND, "coverage is not being taken".into())
+                .into_response();
+        };
+        if let Some(test) = q.test {
+            let named =
+                !test.is_empty() && test.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+            if !named {
+                return ApiError(StatusCode::BAD_REQUEST, "not a test's name".into())
+                    .into_response();
+            }
+            let path = std::path::Path::new(&dir).join(format!("{test}.profraw"));
+            let Ok(path) = CString::new(path.to_string_lossy().into_owned()) else {
+                return ApiError(StatusCode::BAD_REQUEST, "not a path".into()).into_response();
+            };
+            // SAFETY: the profiler runtime is linked into every instrumented build, and
+            // copies the name it is given before this returns.
+            unsafe {
+                __llvm_profile_set_filename(path.as_ptr());
+                __llvm_profile_write_file();
+            }
+        }
+        // SAFETY: as above; resetting counters is what the runtime offers this for.
+        unsafe { __llvm_profile_reset_counters() };
+        StatusCode::NO_CONTENT.into_response()
+    }
 }
 
 async fn require_token(

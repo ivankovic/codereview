@@ -136,6 +136,31 @@ pub(super) async fn get_e2e(state: Ctx) -> ApiResult<EndToEndResponse> {
     ))
 }
 
+#[derive(Deserialize)]
+pub(super) struct TestQuery {
+    file: String,
+    name: String,
+}
+
+/// One end-to-end test as its own view shows it: the code it ran, the documentation it
+/// demonstrates and the smaller tests below it. Needs the symbol index, and while the server
+/// is still building it says so rather than building a second one; the page asks again.
+pub(super) async fn get_e2e_test(
+    state: Ctx,
+    Query(q): Query<TestQuery>,
+) -> ApiResult<crate::e2e::Detail> {
+    if state.warming.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(ApiError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "still reading the tests".into(),
+        ));
+    }
+    let detail = with_session(&state, move |s| Ok(crate::e2e::detail(s, &q.file, &q.name))).await?;
+    detail
+        .map(Json)
+        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "no such end-to-end test".into()))
+}
+
 /// The recording `path` names, when it is one a test run left: the path is checked against
 /// what was found, never opened because a request named it.
 fn recording_file(s: &Session, path: &str) -> Result<std::path::PathBuf> {

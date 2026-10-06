@@ -199,6 +199,35 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .e2e-test details.steps li.failed { color: var(--del-fg); }
 .e2e-test details.steps li.now { background: var(--cursor); color: var(--fg); }
 .e2e-test details.steps .at { color: var(--dim); margin-right: 4px; }
+.e2e.testview .meta { margin-bottom: 10px; }
+.e2e.testview.failed .mark { color: var(--del-fg); } .e2e.testview.passed .mark { color: var(--ins-fg); }
+.e2e.testview .watch { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; align-items: start; }
+@media (max-width: 800px) { .e2e.testview .watch { grid-template-columns: minmax(0, 1fr); } }
+.e2e.testview .media video { width: 100%; max-height: 75vh; background: #000; border-radius: 4px; display: block; }
+.e2e.testview .media .none { padding: 18px 8px; text-align: center; border: 1px dashed var(--border); border-radius: 4px; }
+.e2e.testview .side h3 { margin-top: 0; }
+.e2e.testview ol.steps { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow: auto; }
+.e2e.testview ol.steps li { padding: 4px 6px; border-radius: 4px; cursor: pointer; }
+.e2e.testview ol.steps li.check { color: var(--dim); }
+.e2e.testview ol.steps li.failed { color: var(--del-fg); }
+.e2e.testview ol.steps li.now { background: var(--cursor); color: var(--fg); }
+.e2e.testview ol.steps .at { color: var(--dim); margin-right: 4px; }
+.e2e.testview ol.steps .src { display: block; font-size: 11px; color: var(--dim); padding-left: 4.5em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.e2e.testview ol.steps .src:hover { color: var(--accent); }
+.e2e.testview section { margin-top: 18px; }
+.e2e.testview .item { display: flex; gap: 10px; align-items: center; padding: 5px 6px; border-radius: 4px; cursor: pointer; min-height: 32px; }
+.e2e.testview .item:hover { background: var(--cursor); }
+.e2e.testview .item .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.e2e.testview .ranfile .bar { position: relative; width: 120px; height: 8px; background: var(--code-bg); border-radius: 4px; overflow: hidden; flex: none; }
+.e2e.testview .ranfile .bar span { position: absolute; left: 0; top: 0; bottom: 0; }
+.e2e.testview .ranfile .bar .all { background: var(--mov-strong); }
+.e2e.testview .ranfile .bar .only { background: var(--ins-fg); }
+.e2e.testview .ranfile .count { font-size: 12px; white-space: nowrap; }
+.e2e.testview .badge.guess { color: var(--dim); border-style: dashed; }
+.e2e-test .head a.label { color: inherit; cursor: pointer; }
+.e2e-test .head a.label:hover { color: var(--accent); }
+table.code tr.ran td.n { box-shadow: inset 3px 0 var(--ins-fg); }
+.ranbanner { padding: 4px 10px; font-size: 12px; background: var(--cursor); display: flex; gap: 8px; align-items: center; }
 .e2e .finding { max-width: 70ch; margin: 24px auto; border: 1px solid var(--moved); border-radius: 8px; padding: 14px 18px; background: var(--panel); }
 .e2e .finding h2 { margin: 0 0 8px; color: var(--moved); font-size: 17px; }
 .e2e .finding .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
@@ -973,6 +1002,9 @@ async function openFile(path, line) {
     // A big file is a moment to fetch and draw; a tap that shows nothing meanwhile reads as
     // a tap that did nothing. A refresh of the file already open keeps it on screen.
     if (!state.file || state.file.path !== path) $('#content').innerHTML = '<div class="center">reading the file…</div>';
+    // The lines a test ran are marked in the file it was opened on from that test, and only
+    // there: another file is another question.
+    if (state.ran && state.ran.path !== path) state.ran = null;
     const f = await api('/file?path=' + encodeURIComponent(path));
     f.lines = inflate(f.lines, f.styles);
     // The fingerprint stamps the open file, so another file is another baseline.
@@ -1070,6 +1102,16 @@ function renderFile() {
       <button data-act="zen" title="${TOUCH ? 'the file and nothing else' : 'the file and nothing else (z)'}">Zen</button>
     </span>`;
   content.appendChild(head);
+  if (state.ran && state.ran.path === f.path) {
+    const ran = state.ran;
+    const banner = document.createElement('div');
+    banner.className = 'ranbanner';
+    const lines = ran.ranges.reduce((n, [a, b]) => n + b - a + 1, 0);
+    banner.innerHTML = `<span class="grow">The ${lines} lines marked are what <a data-act="test">${esc(ran.label)}</a> ran.</span><button data-act="unran" title="stop marking them">✕</button>`;
+    on(banner, 'test', () => showTestView(ran.file, ran.name));
+    on(banner, 'unran', () => { state.ran = null; renderFile(); });
+    content.appendChild(banner);
+  }
   on(head, 'up', showTree);
   head.querySelectorAll('[data-act=tests]').forEach(b => b.onclick = () => showTestsOf(f.path));
   on(head, 'note', () => addNote(f.path));
@@ -1142,12 +1184,13 @@ function renderFile() {
   const generation = ++renderFile.generation;
   const upTo = Math.max(ROWS_AT_ONCE, (renderFile.upToLine || 0) + ROWS_AT_ONCE / 4);
   renderFile.upToLine = 0;
+  const ran = state.ran && state.ran.path === f.path ? state.ran.ranges : null;
   const row = (segs, i) => {
     const n = i + 1;
     const op = f.line_ops ? f.line_ops[i] : 'none';
     const tr = document.createElement('tr');
     tr.dataset.line = n;
-    tr.className = 'op-' + op;
+    tr.className = 'op-' + op + (ran && ran.some(([a, b]) => a <= n && n <= b) ? ' ran' : '');
     const marker = f.comments.find(c => c.line && c.line <= n && n <= c.end_line);
     const mk = marker ? `<span style="color:var(--${marker.state})">●</span>` : (op !== 'none' ? {insert:'+',delete:'-',update:'~',move:'>'}[op] : '');
     const ranges = searchRangesFor(lines[i] || '');
@@ -1778,6 +1821,7 @@ const LEVEL_SAYS = {
 async function showEndToEnd() {
   setZen(false);
   setTabs('e2e');
+  state.testView = null;
   const route = routes.e2e();
   navigate(route);
   document.body.classList.remove('showfile');
@@ -1856,6 +1900,119 @@ function renderEndToEnd(content, o) {
   root.scrollTop = keep;
 }
 
+// One end-to-end test on a page of its own: where a reviewer goes into the code from. Its
+// recording with the steps beside it, each with the line of the test that took it; then the
+// code its run executed, what only it ran first; the documentation it demonstrates; and the
+// smaller tests that reach the same code.
+async function showTestView(file, name) {
+  setZen(false);
+  setTabs('e2e');
+  state.testView = { file, name };
+  const route = routes.test(file, name);
+  navigate(route);
+  document.body.classList.remove('showfile');
+  const content = $('#content');
+  content.innerHTML = '<div class="center">reading the test…</div>';
+  let d;
+  try {
+    d = await api('/e2e/test?' + qs({ file, name }));
+  } catch (e) {
+    if (/still reading/.test(e.message)) {
+      setTimeout(() => { if (currentRoute === route) showTestView(file, name); }, 2000);
+      return;
+    }
+    content.innerHTML = '';
+    return fail(e);
+  }
+  if (currentRoute !== route) return;
+  const r = d.recording;
+  const status = !r ? 'norec' : r.passed ? 'passed' : 'failed';
+  content.innerHTML = `<div class="panelhead"><span class="path">${esc(d.label)}</span><span class="spacer"></span>
+      <button data-act="source">Test source</button></div>
+    <div class="e2e testview ${status}">
+      <div class="meta dim"><span class="mark">${{ passed: '✓', failed: '✗', norec: '○' }[status]}</span>
+        <a data-act="source" class="mono">${esc(d.path)}:${d.line}</a> · ${esc(d.why)}${r ? ' · ' + recordingAge(d, r) : ''}${r && r.commit ? ` · at <span class="mono">${esc(r.commit.slice(0, 7))}</span>${r.dirty ? ' with uncommitted changes' : ''}` : ''}</div>
+      <div class="watch"><div class="media"></div><div class="side"><div class="failures"></div><h3>Steps</h3><ol class="steps"></ol></div></div>
+      <section><h3>Code it ran</h3><div class="ran"></div></section>
+      <section><h3>Documentation</h3><div class="docs"></div></section>
+      <section><h3>Smaller tests that reach the same code</h3><div class="smaller"></div></section>
+    </div>`;
+  content.querySelectorAll('[data-act=source]').forEach(b => b.onclick = () => openFile(d.path, d.line || undefined));
+  const view = content.querySelector('.testview');
+  const media = view.querySelector('.media');
+  const steps = view.querySelector('ol.steps');
+  let player = null;
+  if (!r) media.innerHTML = '<div class="none dim">No recording yet: this test has not left one where the tool looks.</div>';
+  else {
+    player = r.kind === 'terminal' ? castPlayer(media, r) : r.kind === 'video' ? videoPlayer(media, r) : null;
+    if (!player) media.innerHTML = '<div class="none dim">The test ran, but left no recording this page can play.</div>';
+    for (const s of r.steps.filter(s => s.kind === 'check' && s.passed === false)) {
+      view.querySelector('.failures').insertAdjacentHTML('beforeend',
+        `<div class="fail"><b>✗ ${esc(s.text)}</b>${s.detail ? `<pre>${esc(s.detail)}</pre>` : ''}</div>`);
+    }
+    r.steps.forEach((s, i) => {
+      const li = document.createElement('li');
+      li.className = s.kind + (s.passed === false ? ' failed' : '');
+      li.innerHTML = `<div><span class="at mono">${clock(s.at_ms)}</span> ${s.kind === 'check' ? (s.passed === false ? '✗' : '✓') + ' ' : ''}${esc(s.text)}</div>
+        ${d.sources[i] ? `<a class="src mono" title="line ${s.line} of the test">${s.line}: ${esc(d.sources[i])}</a>` : ''}`;
+      li.onclick = e => {
+        if (e.target.closest('.src')) return openFile(d.path, s.line);
+        if (player) player.seek(s.at_ms);
+      };
+      steps.appendChild(li);
+    });
+    if (player) player.onTime = ms => {
+      let current = -1;
+      r.steps.forEach((s, i) => { if (s.at_ms <= ms) current = i; });
+      steps.querySelectorAll('li').forEach((li, i) => li.classList.toggle('now', i === current));
+    };
+  }
+  if (!r || !r.steps.length) steps.innerHTML = '<li class="dim">The run listed no steps.</li>';
+
+  const ran = view.querySelector('.ran');
+  if (!d.ran) {
+    ran.innerHTML = `<div class="dim">${r ? 'The run left no coverage, so what it ran is not known. A <span class="mono">coverage.lcov</span> beside its <span class="mono">test.json</span> says.' : 'It has not run.'}</div>`;
+  } else if (!d.ran.length) {
+    ran.innerHTML = '<div class="dim">Its coverage names no file of this repository.</div>';
+  } else {
+    const most = Math.max(...d.ran.map(f => f.lines));
+    for (const f of d.ran) {
+      const row = document.createElement('div');
+      row.className = 'item ranfile';
+      row.innerHTML = `<span class="mono grow">${esc(f.path)}</span>
+        <span class="bar" title="${f.lines} lines ran, ${f.only_here} of them in no other end-to-end test"><span class="all" style="width:${(100 * f.lines / most).toFixed(1)}%"></span><span class="only" style="width:${(100 * f.only_here / most).toFixed(1)}%"></span></span>
+        <span class="dim count">${f.lines}${f.only_here ? ` · <b>${f.only_here} only here</b>` : ''}</span>`;
+      row.onclick = () => {
+        state.ran = { path: f.path, ranges: f.ranges, label: d.label, file: d.path, name: d.name };
+        openFile(f.path, f.ranges.length ? f.ranges[0][0] : undefined);
+      };
+      ran.appendChild(row);
+    }
+  }
+
+  const docs = view.querySelector('.docs');
+  if (!d.docs.length) docs.innerHTML = `<div class="dim">${r && r.docs && r.docs.length ? 'The sections it names are not there.' : 'Nothing written down shares enough of its words.'}</div>`;
+  for (const doc of d.docs) {
+    const row = document.createElement('div');
+    row.className = 'item';
+    row.innerHTML = `<span class="grow">${esc(doc.heading)}</span><span class="mono dim">${esc(doc.path)}:${doc.line}</span>
+      <span class="badge ${doc.declared ? '' : 'guess'}" title="${doc.declared ? 'the test names it' : 'a guess, from the words they share: ' + esc(doc.shared.join(', '))}">${doc.declared ? 'named by the test' : 'a guess'}</span>`;
+    row.onclick = () => openFile(doc.path, doc.line);
+    docs.appendChild(row);
+  }
+
+  const smaller = view.querySelector('.smaller');
+  if (!d.smaller.length) smaller.innerHTML = `<div class="dim">${d.ran ? 'No smaller test names the code it ran.' : 'Known once its coverage is.'}</div>`;
+  for (const t of d.smaller) {
+    const row = document.createElement('div');
+    row.className = 'item';
+    row.innerHTML = `<span class="grow">${esc(t.label)} <span class="dim">${esc(LEVEL_NAMES[t.level] || t.level)}</span></span>
+      <span class="mono dim" title="${esc(t.shared.join(', '))}">${esc(t.path)}:${t.line}</span>`;
+    row.onclick = () => openFile(t.path, t.line || undefined);
+    smaller.appendChild(row);
+  }
+}
+
 // How long ago a recording was made, and how far the code has moved on since.
 function recordingAge(t, r) {
   if (!r) return '';
@@ -1879,7 +2036,7 @@ function e2eCard(t, r) {
   const mark = { passed: '✓', failed: '✗', norec: '○' }[status];
   const file = t ? t.path : r.file;
   const line = t ? t.line : r.line;
-  card.innerHTML = `<div class="head"><span class="mark">${mark}</span><span class="label">${esc(label)}</span>
+  card.innerHTML = `<div class="head"><span class="mark">${mark}</span><a class="label" data-act="detail" title="the test on its own: what it ran, what documents it, the tests below it">${esc(label)}</a>
       ${t && t.security ? '<span class="badge sec" title="its name or path is about security">security</span>' : ''}
       ${t && t.ignored ? '<span class="badge">skipped</span>' : ''}</div>
     <div class="meta dim">${t ? `<a data-act="source" class="mono">${esc(file)}${line ? ':' + line : ''}</a> · ${esc(t.why)}` : esc(file) + ' · its test is not there any more'}${r ? ' · ' + recordingAge(t, r) : ''}</div>
@@ -1887,6 +2044,7 @@ function e2eCard(t, r) {
     <div class="failures"></div>
     <details class="steps" hidden><summary></summary><ol></ol></details>`;
   if (t) on(card, 'source', () => openFile(t.path, t.line || undefined));
+  if (t) on(card, 'detail', () => showTestView(t.path, t.name));
   const media = card.querySelector('.media');
   if (!r) {
     media.innerHTML = '<div class="none dim">No recording yet: this test has not left one where the tool looks.</div>';
@@ -2796,7 +2954,7 @@ function setTabs(view) {
 // have their own list, which drifted.
 function rerenderCurrentView() {
   switch (state.view) {
-    case 'e2e': return showEndToEnd();
+    case 'e2e': return state.testView ? showTestView(state.testView.file, state.testView.name) : showEndToEnd();
     case 'overview': return showOverview();
     case 'spec': return showSpec(state.specParams || {});
     case 'changes': return showChanges(!!state.changesStaged);
@@ -3013,6 +3171,7 @@ $('#theme').onchange = async e => {
 const routes = {
   prefix: () => state.repo ? `#/r${state.repo}` : '#',
   e2e: () => routes.prefix() + '/',
+  test: (file, name) => routes.prefix() + '/test?' + qs({ file, name }),
   overview: () => routes.prefix() + '/summary',
   tree: () => routes.prefix() + '/tree',
   file: (path, line) => routes.prefix() + '/file/' + encodeURIComponent(path).replace(/%2F/g, '/') + (line ? '?line=' + line : ''),
@@ -3067,6 +3226,7 @@ async function route() {
   if (path === '/agent') return showAgent();
   if (path === '/spec') return showSpec(params);
   if (path === '/summary') return showOverview();
+  if (path === '/test' && params.file && params.name) return showTestView(params.file, params.name);
   // What is left is the repository itself, which opens on what it demonstrably does: its
   // end-to-end tests, each with the recording of its last run.
   return showEndToEnd();

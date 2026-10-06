@@ -97,6 +97,24 @@ impl Search {
     }
 }
 
+/// The lines an end-to-end test ran in a file, marked in its gutter while it was opened from
+/// that test.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RanBy {
+    /// The test, as its sentence.
+    pub test: String,
+    /// 1-based, first and last of each run of lines.
+    pub ranges: Vec<(u32, u32)>,
+}
+
+impl RanBy {
+    /// Whether the test ran `line`, 0-based.
+    pub fn covers(&self, line: usize) -> bool {
+        let line = line as u32 + 1;
+        self.ranges.iter().any(|(a, b)| (*a..=*b).contains(&line))
+    }
+}
+
 pub struct Viewer {
     pub path: String,
     pub lines: Vec<String>,
@@ -119,6 +137,8 @@ pub struct Viewer {
     /// Start line (0-based) of a visual selection.
     pub visual: Option<usize>,
     pub search: Option<Search>,
+    /// The lines the end-to-end test this file was opened from ran.
+    pub ran: Option<RanBy>,
 }
 
 impl Viewer {
@@ -133,6 +153,7 @@ impl Viewer {
             comments: view.comments,
             blame: None,
             line_ops: None,
+            ran: None,
             binary: view.binary,
             rows: Vec::new(),
             cursor: 0,
@@ -542,7 +563,12 @@ impl Viewer {
                         spans.push(Span::styled(text, dim));
                     }
                     spans.push(Span::styled(format!("{:>digits$} ", i + 1), dim));
-                    spans.push(Span::styled("│", dim));
+                    // A line the test it was opened from ran: the bar the code leans on.
+                    if self.ran.as_ref().is_some_and(|r| r.covers(i)) {
+                        spans.push(Span::styled("▌", style::fg(theme.insert_fg)));
+                    } else {
+                        spans.push(Span::styled("│", dim));
+                    }
                     let search = self
                         .search
                         .as_ref()

@@ -71,6 +71,10 @@ serde_json = "1"
 # the tool itself, reads the screen the way a terminal would draw it.
 portable-pty = "0.9"
 
+[lints.rust]
+# `cargo llvm-cov` sets `--cfg coverage`; the browser tests' per-test coverage is built on it.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
+
 [features]
 default = ["tui"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:ratatui-image", "dep:image"]

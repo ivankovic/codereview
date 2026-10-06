@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use codereview::anchor::AnchorState;
 use codereview::session::Session;
@@ -121,6 +121,10 @@ enum Command {
     /// The end-to-end tests, each with how its last recorded run went: what a repository
     /// opens on.
     E2e {
+        /// One test, by its name or its phrase: what it ran, what documents it, and the
+        /// smaller tests below it.
+        #[arg(long)]
+        test: Option<String>,
         /// Everything, as JSON.
         #[arg(long)]
         json: bool,
@@ -189,7 +193,10 @@ fn main() -> Result<()> {
         Some(Command::Toggle { number }) => toggle(&from, number),
         Some(Command::Reanchor) => reanchor(&from),
         Some(Command::Overview) => overview_file(&from),
-        Some(Command::E2e { json }) => end_to_end(&from, json),
+        Some(Command::E2e { test, json }) => match test {
+            Some(name) => end_to_end_test(&from, &name, json),
+            None => end_to_end(&from, json),
+        },
         Some(Command::Def { name }) => definitions(&from, &name),
         Some(Command::Refs { name }) => references(&from, &name),
         Some(Command::Symbols { query }) => symbols(&from, &query),
@@ -310,6 +317,77 @@ fn end_to_end(from: &std::path::Path, json: bool) -> Result<()> {
         opening.failed,
         opening.unrecorded
     );
+    Ok(())
+}
+
+/// `e2e --test`: one end-to-end test, and where it leads.
+fn end_to_end_test(from: &std::path::Path, name: &str, json: bool) -> Result<()> {
+    let mut session = Session::open(from)?;
+    let file = session
+        .end_to_end()
+        .tests
+        .into_iter()
+        .find(|t| t.test.name == name || t.test.label == name)
+        .map(|t| t.test.path)
+        .with_context(|| format!("no end-to-end test called {name:?}"))?;
+    let d = codereview::e2e::detail(&mut session, &file, name)
+        .with_context(|| format!("no end-to-end test called {name:?}"))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&d)?);
+        return Ok(());
+    }
+    println!(
+        "{} ({}:{})",
+        d.test.test.label, d.test.test.path, d.test.test.line
+    );
+    if let Some(r) = &d.test.recording {
+        println!("\nsteps");
+        for (s, source) in r.steps.iter().zip(&d.sources) {
+            let mark = match s.passed {
+                Some(true) => "✓ ",
+                Some(false) => "✗ ",
+                None => "",
+            };
+            println!("  {:>6.1}s {mark}{}", s.at_ms as f64 / 1000.0, s.text);
+            if let Some(source) = source {
+                println!("          {source}");
+            }
+        }
+    }
+    println!("\ncode it ran");
+    match &d.ran {
+        None => println!("  the run left no coverage.lcov"),
+        Some(files) => {
+            for f in files {
+                println!(
+                    "  {} — {} lines, {} only this test",
+                    f.path, f.lines, f.only_here
+                );
+            }
+        }
+    }
+    println!("\ndocumentation");
+    for doc in &d.docs {
+        let how = if doc.declared {
+            "named by the test".to_string()
+        } else {
+            format!("a guess: {}", doc.shared.join(", "))
+        };
+        println!(
+            "  {} — {}:{} ({how})",
+            doc.section.heading, doc.section.path, doc.section.line
+        );
+    }
+    println!("\nsmaller tests that reach the same code");
+    for t in &d.smaller {
+        println!(
+            "  {} ({}:{}) — {}",
+            t.test.test.label,
+            t.test.test.path,
+            t.test.test.line,
+            t.shared.join(", ")
+        );
+    }
     Ok(())
 }
 

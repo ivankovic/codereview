@@ -16,7 +16,7 @@
 //! A repository with none is told so before anything else, with what one would look like for
 //! the kind of software it seems to be, and the agent offered the job of writing the first.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -282,6 +282,208 @@ pub fn of(session: &Session, tests: Vec<TestCase>) -> Opening {
     }
 }
 
+/// A file an end-to-end test ran, and how much of it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RanFile {
+    pub path: String,
+    /// Lines it ran.
+    pub lines: usize,
+    /// Of those, the lines no other end-to-end test ran: what this test alone shows working.
+    pub only_here: usize,
+    /// The lines it ran, as first and last of each run of them.
+    pub ranges: Vec<(u32, u32)>,
+}
+
+/// A smaller test that reaches code the end-to-end test ran.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Smaller {
+    #[serde(flatten)]
+    pub test: crate::spec::SpecTest,
+    /// The files it shares with the end-to-end test.
+    pub shared: Vec<String>,
+}
+
+/// One end-to-end test as its own view shows it: where a reviewer goes into the code and the
+/// documentation from.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Detail {
+    #[serde(flatten)]
+    pub test: EndToEnd,
+    /// For each of the recording's steps, the line of the test that made it.
+    pub sources: Vec<Option<String>>,
+    /// The code its run executed, by what only it ran and then by how much; `None` when the
+    /// run left no coverage.
+    pub ran: Option<Vec<RanFile>>,
+    pub docs: Vec<crate::docs::DocLink>,
+    pub smaller: Vec<Smaller>,
+}
+
+/// At most this many files are listed as what a test ran, and smaller tests below it.
+const MOST_RAN: usize = 60;
+const MOST_SMALLER: usize = 20;
+
+/// The end-to-end test in `file` called `name`, with what it ran, what it documents and the
+/// tests below it. `None` when there is no such end-to-end test.
+pub fn detail(session: &mut Session, file: &str, name: &str) -> Option<Detail> {
+    let opening = session.end_to_end();
+    let test = opening
+        .tests
+        .iter()
+        .find(|t| t.test.path == file && (t.test.name == name || t.test.label == name))?
+        .clone();
+    let root = session.root().to_path_buf();
+
+    let source: Vec<String> = std::fs::read_to_string(root.join(file))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let sources = test
+        .recording
+        .iter()
+        .flat_map(|r| &r.steps)
+        .map(|s| {
+            s.line
+                .checked_sub(1)
+                .and_then(|i| source.get(i))
+                .map(|l| l.trim().to_string())
+        })
+        .collect();
+
+    // What it ran, against what every other end-to-end test ran.
+    let ran_by = |t: &EndToEnd| {
+        t.recording
+            .as_ref()
+            .and_then(|r| crate::recording::lines_run(&root, r))
+    };
+    let mine = ran_by(&test).map(|m| {
+        m.into_iter()
+            .filter(|(path, _)| !test_only(path) && session.files.binary_search(path).is_ok())
+            .collect::<BTreeMap<_, _>>()
+    });
+    let ran = mine.as_ref().map(|mine| {
+        let others: Vec<BTreeMap<String, Vec<u32>>> = opening
+            .tests
+            .iter()
+            .filter(|t| !(t.test.path == test.test.path && t.test.name == test.test.name))
+            .filter_map(ran_by)
+            .collect();
+        let mut files: Vec<RanFile> = mine
+            .iter()
+            .map(|(path, lines)| {
+                let elsewhere: HashSet<u32> = others
+                    .iter()
+                    .filter_map(|o| o.get(path))
+                    .flatten()
+                    .copied()
+                    .collect();
+                RanFile {
+                    path: path.clone(),
+                    lines: lines.len(),
+                    only_here: lines.iter().filter(|l| !elsewhere.contains(l)).count(),
+                    ranges: crate::recording::ranges(lines),
+                }
+            })
+            .collect();
+        files.sort_by(|a, b| (b.only_here, b.lines, &a.path).cmp(&(a.only_here, a.lines, &b.path)));
+        files.truncate(MOST_RAN);
+        files
+    });
+
+    // What the test says it shows is its sentence. Its steps are mostly how it gets there —
+    // open, leave, go back — which every test shares, and they would pull every test towards
+    // the same long sections.
+    let words = unquoted(&test.test.label);
+    let declared = test
+        .recording
+        .as_ref()
+        .map(|r| r.docs.clone())
+        .unwrap_or_default();
+    let docs = crate::docs::for_test(&root, &session.files, &declared, &words, 3);
+
+    // The smaller tests: those that name a file it ran, or live in one.
+    let smaller = match &mine {
+        None => Vec::new(),
+        Some(mine) => {
+            let tests: Vec<TestCase> = session
+                .tests(0)
+                .files
+                .into_iter()
+                .flat_map(|f| f.tests)
+                .collect();
+            let coverage = session.coverage();
+            let mut annotated = crate::spec::annotate(tests, Some(&coverage));
+            promote(&root, &mut annotated);
+            let mut found: Vec<Smaller> = annotated
+                .into_iter()
+                .filter(|t| matches!(t.level, Level::Unit | Level::Integration | Level::Security))
+                .filter_map(|t| {
+                    let mut shared: Vec<String> = t
+                        .reaches
+                        .iter()
+                        .chain(std::iter::once(&t.test.path))
+                        .filter(|p| mine.contains_key(*p))
+                        .cloned()
+                        .collect();
+                    shared.sort();
+                    shared.dedup();
+                    (!shared.is_empty()).then_some(Smaller { test: t, shared })
+                })
+                .collect();
+            // A file counts for more the higher it is in what the test ran, which puts the
+            // code only this test shows working first: a unit test of that is worth more than
+            // one of the plumbing every test goes through.
+            let rank: HashMap<&str, usize> = ran
+                .iter()
+                .flatten()
+                .enumerate()
+                .map(|(i, f)| (f.path.as_str(), i))
+                .collect();
+            let weight = |t: &Smaller| -> f64 {
+                t.shared
+                    .iter()
+                    .map(|p| 1.0 / (1 + rank.get(p.as_str()).copied().unwrap_or(MOST_RAN)) as f64)
+                    .sum()
+            };
+            found.sort_by(|a, b| {
+                weight(b).total_cmp(&weight(a)).then(
+                    (&a.test.test.path, a.test.test.line)
+                        .cmp(&(&b.test.test.path, b.test.test.line)),
+                )
+            });
+            found.truncate(MOST_SMALLER);
+            found
+        }
+    };
+
+    Some(Detail {
+        test,
+        sources,
+        ran,
+        docs,
+        smaller,
+    })
+}
+
+/// `text` without what it quotes, and without words spelled like paths or file names.
+fn unquoted(text: &str) -> String {
+    let mut out = String::new();
+    let mut quoted = false;
+    for c in text.chars() {
+        match c {
+            '“' => quoted = true,
+            '”' => quoted = false,
+            '"' | '`' => quoted = !quoted,
+            _ if !quoted => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace()
+        .filter(|w| !w.contains(['/', '.', '_', ':']))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// What kind of software the repository looks like, from its manifests and its files.
 pub fn kind(session: &Session) -> Option<String> {
     let root = session.root();
@@ -462,6 +664,98 @@ mod tests {
         let orphans: Vec<&str> = opening.orphans.iter().map(|r| r.test.as_str()).collect();
         assert_eq!(orphans, ["a test since deleted"]);
         assert!(!opening.missing());
+    }
+
+    #[test]
+    fn a_test_leads_to_the_code_it_ran_its_documentation_and_the_tests_below_it() {
+        let dir = scratch_repo();
+        let root = dir.path();
+        put(
+            root,
+            "src/review.rs",
+            "pub fn save_review_file() {}\npub fn load_review_file() {}\npub fn other() {}\n",
+        );
+        put(root, "src/page.rs", "pub fn draw() {}\n");
+        put(
+            root,
+            "src/unit.rs",
+            "#[test]\nfn save_works() { crate::review::save_review_file(); }\n",
+        );
+        put(
+            root,
+            "README.md",
+            "# tool\n\n## Saving a review\n\nThe review is saved to disk and loaded again.\n\n\
+             ## Drawing\n\nPages are drawn.\n",
+        );
+        put(
+            root,
+            "tests/cli.rs",
+            "// CARGO_BIN_EXE_tool\n#[test]\nfn a_review_is_saved() {\n    run(\"save\");\n}\n\
+             #[test]\nfn a_page_is_drawn() {\n    run(\"draw\");\n}\n",
+        );
+        let record = |slug: &str, name: &str, steps: &str, lcov: &str| {
+            put(
+                root,
+                &format!("target/e2e/t/{slug}/test.json"),
+                &format!(
+                    r#"{{"test": "{name}", "file": "tests/cli.rs", "passed": true,
+                        "steps": {steps}}}"#
+                ),
+            );
+            put(root, &format!("target/e2e/t/{slug}/coverage.lcov"), lcov);
+        };
+        record(
+            "saved",
+            "a_review_is_saved",
+            r#"[{"at_ms": 0, "line": 4, "kind": "action", "text": "save the review"}]"#,
+            &format!(
+                "SF:{}/src/review.rs\nDA:1,1\nDA:2,1\nDA:3,0\nend_of_record\n\
+                 SF:src/page.rs\nDA:1,1\nend_of_record\nSF:tests/cli.rs\nDA:4,1\nend_of_record\n",
+                root.display()
+            ),
+        );
+        record(
+            "drawn",
+            "a_page_is_drawn",
+            "[]",
+            "SF:src/page.rs\nDA:1,1\nend_of_record\n",
+        );
+        git(root, &["add", "-A"]);
+        let mut session = Session::open(root).unwrap();
+        let d = detail(&mut session, "tests/cli.rs", "a_review_is_saved").unwrap();
+        assert_eq!(d.sources, [Some("run(\"save\");".to_string())]);
+        let ran: Vec<(&str, usize, usize)> = d
+            .ran
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|f| (f.path.as_str(), f.lines, f.only_here))
+            .collect();
+        assert_eq!(
+            ran,
+            [("src/review.rs", 2, 2), ("src/page.rs", 1, 0)],
+            "what only it ran first; the test's own file is not code it ran"
+        );
+        assert_eq!(d.ran.as_ref().unwrap()[0].ranges, [(1, 2)]);
+        assert_eq!(d.docs[0].section.heading, "Saving a review", "{:?}", d.docs);
+        let smaller: Vec<&str> = d
+            .smaller
+            .iter()
+            .map(|s| s.test.test.name.as_str())
+            .collect();
+        assert_eq!(smaller, ["save_works"]);
+        assert_eq!(d.smaller[0].shared, ["src/review.rs"]);
+        assert!(detail(&mut session, "tests/cli.rs", "no_such_test").is_none());
+    }
+
+    fn git(root: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
     }
 
     #[test]

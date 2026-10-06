@@ -15,6 +15,7 @@ use crate::session::{DiffTarget, Session};
 use crate::spec::{Level, Stretch, TestChange, What};
 use crate::theme::Theme;
 mod end_to_end;
+mod one_test;
 mod overlays;
 mod screens;
 
@@ -111,7 +112,8 @@ impl<T> ListState<T> {
     }
 }
 
-pub use end_to_end::{E2eRow, EndToEndState};
+pub use end_to_end::{E2eRow, EndToEndState, Player};
+pub use one_test::{EndToEndTestState, TestRow};
 pub use screens::{
     ChangesState, DiffState, Hit, LocationsState, LogState, NotesState, ReviewState, SpecRow,
     SpecState, spec_rows,
@@ -128,6 +130,8 @@ pub enum Screen {
     Spec(Box<SpecState>),
     /// The end-to-end tests: what a repository opens on.
     EndToEnd(Box<EndToEndState>),
+    /// One end-to-end test on its own: its recording, steps, code, documentation.
+    EndToEndTest(Box<EndToEndTestState>),
     Agent,
 }
 
@@ -144,6 +148,7 @@ impl Screen {
             Screen::Locations(_) => "locations",
             Screen::Spec(_) => "spec",
             Screen::EndToEnd(_) => "end to end",
+            Screen::EndToEndTest(_) => "test",
             Screen::Agent => "agent",
         }
     }
@@ -445,15 +450,16 @@ impl App {
         }
         self.tree.replace_files(&self.session.files);
         if let Some(path) = self.viewer.as_ref().map(|v| v.path.clone()) {
-            let (cursor, scroll) = self
+            let (cursor, scroll, ran) = self
                 .viewer
                 .as_ref()
-                .map(|v| (v.cursor, v.scroll))
+                .map(|v| (v.cursor, v.scroll, v.ran.clone()))
                 .unwrap_or_default();
             self.open_file(&path);
             if let Some(v) = &mut self.viewer {
                 v.cursor = cursor.min(v.rows.len().saturating_sub(1));
                 v.scroll = scroll;
+                v.ran = ran;
             }
         }
         self.refresh_diff_comments();
@@ -1149,6 +1155,7 @@ impl App {
             Screen::Locations(_) => self.handle_locations_key(key),
             Screen::Spec(_) => self.handle_spec_key(key),
             Screen::EndToEnd(_) => self.handle_end_to_end_key(key),
+            Screen::EndToEndTest(_) => self.handle_end_to_end_test_key(key),
             Screen::Agent => {
                 let height = self.measured.main_height;
                 let config = self.session.config.agent.clone();
@@ -1585,6 +1592,7 @@ impl App {
             Screen::Notes(n) => n.items.move_by(delta),
             Screen::Spec(state) => state.rows.move_by(delta),
             Screen::EndToEnd(_) => self.move_end_to_end(delta),
+            Screen::EndToEndTest(_) => self.move_end_to_end_test(delta),
         }
     }
 }
