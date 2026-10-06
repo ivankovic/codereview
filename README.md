@@ -5,7 +5,12 @@ Markdown files anyone can read. Built for codebases that change quickly, typical
 much of the code is written with AI assistance: comments survive the churn by remembering the
 line they were left on and finding it again after edits.
 
-- **Open a repository** on what it is rather than on a file tree: what its README says, where
+- **Open a repository on what it demonstrably does**: its end-to-end tests, the ones that drive
+  it the way a person does, each beside the recording its last run left — a video of the page,
+  or the terminal played back — with whether it passed and how far the code has moved since.
+  Navigation into the code starts from a test. A repository with none opens on saying so, and
+  the agent is offered the job of writing the first ones, each leaving a recording to watch.
+- **Summarise a repository** rather than show a file tree: what its README says, where
   to start reading, which files the rest of the tree leans on — computed from the symbols, not
   declared anywhere — how it is doing, down to how many review comments have lost the lines
   they were left on, and its tests: what they say the system does, file by file, whether the
@@ -57,7 +62,8 @@ AGPL-3.0-or-later. Copyright 2026 Marko Ivankovic.
 codereview                    # terminal UI in the current repository
 codereview src/main.rs        # ... opened at a file
 codereview ~/src/a ~/src/b    # several repositories; gt/gT and W switch between them
-codereview ~/src              # a directory of checkouts: every repository below it
+codereview ~/src              # a directory of checkouts: every repository below it, and
+                              # any cloned or created there later, within seconds
 codereview web                # browser UI on a random loopback port, opens your browser
 codereview web ~/src/a ~/src/b   # ... serving several; a dropdown in the header switches
 codereview list               # pending comments, with their current line numbers
@@ -70,6 +76,7 @@ codereview note --path src/lib.rs "entry point for the parser"
 codereview toggle 3           # complete (or reopen) comment number 3 from `list --all`
 codereview reanchor           # rewrite line numbers of comments whose lines moved
 codereview overview           # write OVERVIEW.md: what it is, where to start, what its tests check
+codereview e2e                # the end-to-end tests and how their last recorded runs went
 codereview def total          # where `total` is defined
 codereview refs total         # every place `total` occurs
 codereview symbols pars       # definitions whose name contains "pars"
@@ -95,6 +102,8 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 | `H` | history of the file |
 | `D` | diff the file against HEAD |
 | `L` `S` `R` `T` | repository log, working tree changes, review list, notes list |
+| `E` | end-to-end tests, what it opens on: `Space` plays, `]` `[` step, `q` the code |
+| `U` | the tests that name the open file |
 | `B` | blame column |
 | `t` | colour scheme picker, previewed live and saved |
 | `h` `l` `w` `b` `0` `$` | move the column cursor |
@@ -267,6 +276,13 @@ so is any heading of your own; the tool keeps them as they are.
 `make check` runs rustfmt, clippy with `-D warnings` on every feature set, and the tests
 through [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`).
 
+The end-to-end tests are where a review of this repository starts, as the tool says a review
+of any repository should: each is one thing a person does, named as a sentence, and each leaves a
+recording of itself under `target/e2e/` — an asciicast for the terminal UI, a video for the page
+— with a `test.json` listing its steps against the recording. `tests/terminal.rs` runs the real
+binary in a pseudo-terminal and is part of `make check`; `tests/browser/phone.js` drives the page
+in a headless Chromium at a phone's size and needs podman. `make e2e` runs both.
+
 `make perf` times every request the page makes against a clone of this repository, cold and
 then warm, and fails on any that takes over 400 ms: the pause between a tap and the screen
 changing. It builds in release, since a debug build would time the compiler, and prints its
@@ -274,10 +290,10 @@ table either way.
 
 `make integration-test` runs the browser UI behind a real nginx, in a container, over TLS on a
 name: the site from [docs/deploy.md](docs/deploy.md), signing in with a password, reading and
-writing through the proxy. `make browser-test` opens the page itself in a headless Chromium the
-size of a telephone and taps its way through it, which is the only test here that can see a
-layout. Both need podman, which is why neither is part of `make check`. Rootless podman is enough,
-and is the point: no daemon, so running the suite costs nobody access to every other container on
-the machine. `CODEREVIEW_CONTAINER_RUNTIME` drives another runtime — `docker` works as a drop-in.
+writing through the proxy. `make browser-test` runs the page's end-to-end tests in a headless
+Chromium the size of a telephone, which are the only tests here that can see a layout. Both need
+podman, which is why neither is part of `make check`. Rootless podman is enough, and is the
+point: no daemon, so running the suite costs nobody access to every other container on the
+machine. `CODEREVIEW_CONTAINER_RUNTIME` drives another runtime — `docker` works as a drop-in.
 
 PLAN.md has the design and the roadmap, SPECS.md what the tool does in detail.

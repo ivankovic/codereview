@@ -1,6 +1,6 @@
 //! Drawing for the screens that stack on top of the explorer: the log and a commit's files,
-//! the changes list, a diff, the review list, the notes list, and a list of places to jump
-//! to.
+//! the changes list, a diff, the review list, the notes list, a list of places to jump to,
+//! and the specification.
 
 use super::*;
 
@@ -393,4 +393,194 @@ pub(super) fn draw_locations(frame: &mut Frame, app: &mut App, area: Rect) {
         },
     );
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The specification: what a stretch did to the tests, the ones that now ask less in the
+/// colour of a deletion, then every test by level, each with why it is there on the cursor.
+pub(super) fn draw_spec(frame: &mut Frame, app: &mut App, area: Rect) {
+    use crate::spec::What;
+    let theme = app.theme.clone();
+    let Screen::Spec(state) = app.screens.last_mut().expect("screen") else {
+        return;
+    };
+    let skipped = if state.ignored > 0 {
+        format!(" · {} marked to skip", state.ignored)
+    } else {
+        String::new()
+    };
+    let switch = if matches!(state.stretch, crate::spec::Stretch::Commit(_)) {
+        String::new()
+    } else {
+        format!("(s: {}) ", state.stretch.name())
+    };
+    let mut title: Vec<Span> = vec![
+        " specification ".into(),
+        format!("{} tests{skipped} ", state.total).dim(),
+        switch.dim(),
+    ];
+    if !state.query.is_empty() {
+        title.push(format!("/{} ", state.query).yellow());
+    }
+    let title: Line = title.into();
+    let block = title_block(&app.theme, title, true);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    // The cursor's own line explains a test's level; the list gets the rest.
+    let [list, foot] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
+    app.measured.list_height = list.height as usize;
+    state.rows.ensure_visible(list.height as usize);
+    let width = list.width as usize;
+    let dim = style::dim(&theme);
+    let alarm = style::fg(theme.delete_fg).bold();
+    let lines = list_lines(
+        style::cursor(&theme),
+        state.rows.items.iter(),
+        state.rows.cursor,
+        state.rows.scroll,
+        list.height as usize,
+        true,
+        |row| match row {
+            SpecRow::Heading(text, alarming) => {
+                let style = if *alarming {
+                    alarm
+                } else {
+                    style::accent(&theme).bold()
+                };
+                Line::from(Span::styled(text.clone(), style))
+            }
+            SpecRow::Text(text, finding) => {
+                let style = if *finding {
+                    style::fg(theme.moved)
+                } else {
+                    dim
+                };
+                Line::from(Span::styled(format!("  {text}"), style))
+            }
+            SpecRow::Change(c, depth) => {
+                let colour = match c.what {
+                    What::Removed | What::Skipped | What::Weakened => alarm,
+                    What::Added | What::Unskipped => style::fg(theme.insert_fg),
+                    What::Changed => style::fg(theme.update_fg),
+                    What::Renamed => style::fg(theme.move_fg),
+                };
+                let mut extra = Vec::new();
+                if let Some(was) = &c.was {
+                    extra.push(format!("was {was}"));
+                }
+                if let Some((before, after)) = c.checks.filter(|(b, a)| b != a) {
+                    extra.push(format!("{before} → {after} assertions"));
+                }
+                let place = format!("  {}:{}", c.path, c.line);
+                let indent = "  ".repeat(*depth as usize);
+                let head = format!("{indent}{:<10}", c.what.word());
+                let extra = if extra.is_empty() {
+                    String::new()
+                } else {
+                    format!("  ({})", extra.join(", "))
+                };
+                let avail = width.saturating_sub(head.width() + place.width() + 1);
+                let text: String = format!("{}{extra}", c.label).chars().take(avail).collect();
+                vec![
+                    Span::styled(head, colour),
+                    text.into(),
+                    Span::styled(place, dim),
+                ]
+                .into()
+            }
+            SpecRow::Area(a) => {
+                let cell = |n: usize| {
+                    let text = format!("{n:>5}");
+                    if n == 0 {
+                        Span::styled(text, dim)
+                    } else {
+                        Span::raw(text)
+                    }
+                };
+                let mut spans = vec![Span::raw(format!("  {:<14}", a.name))];
+                for (i, label) in ["sec", "e2e", "int", "unit"].iter().enumerate() {
+                    spans.push(Span::styled(format!(" {label}"), dim));
+                    spans.push(cell(a.levels[i]));
+                }
+                if a.files > 0 {
+                    let style = if a.unreached > 0 {
+                        style::fg(theme.moved)
+                    } else {
+                        dim
+                    };
+                    spans.push(Span::styled(
+                        format!("   {} of {} files named by no test", a.unreached, a.files),
+                        style,
+                    ));
+                }
+                spans.into()
+            }
+            SpecRow::Fold {
+                label,
+                count,
+                skipped,
+                depth,
+                open,
+                level,
+                ..
+            } => {
+                let indent = "  ".repeat(*depth as usize);
+                let mark = if *open { "▾" } else { "▸" };
+                let style = if *level {
+                    style::accent(&theme).bold()
+                } else {
+                    Style::new().bold()
+                };
+                let skipped = if *skipped > 0 {
+                    format!(", {skipped} skipped")
+                } else {
+                    String::new()
+                };
+                vec![
+                    Span::styled(format!("{indent}{mark} "), dim),
+                    Span::styled(label.clone(), style),
+                    Span::styled(format!(" {count}{skipped}"), dim),
+                ]
+                .into()
+            }
+            SpecRow::Test(t, depth) => {
+                let indent = "  ".repeat(*depth as usize + 1);
+                let mark = if t.test.ignored { " (skipped)" } else { "" };
+                let text = format!("{indent}{}{mark}", t.test.label);
+                let style = if t.test.ignored { dim } else { Style::new() };
+                Line::from(Span::styled(
+                    text.chars().take(width).collect::<String>(),
+                    style,
+                ))
+            }
+        },
+    );
+    frame.render_widget(Paragraph::new(lines), list);
+    let why = match state.rows.current() {
+        Some(SpecRow::Test(t, _)) => {
+            let names = if t.reaches.is_empty() {
+                "names no code directly".to_string()
+            } else {
+                let base = |p: &String| p.rsplit('/').next().unwrap_or(p).to_string();
+                let shown: Vec<String> = t.reaches.iter().take(4).map(base).collect();
+                let more = t.reaches.len().saturating_sub(4);
+                let more = if more > 0 {
+                    format!(" and {more} more")
+                } else {
+                    String::new()
+                };
+                format!("names {}{more} (f)", shown.join(", "))
+            };
+            format!("{}, line {}: {} · {names}", t.test.name, t.test.line, t.why)
+        }
+        Some(SpecRow::Area(a)) => format!("Enter: the tests that count towards {}", a.name),
+        Some(SpecRow::Change(c, _)) => format!("{}: {}", c.level_title(), state.span.label),
+        Some(SpecRow::Fold { open, .. }) => {
+            format!(
+                "Enter {}; h closes the fold the cursor is in",
+                if *open { "closes it" } else { "opens it" }
+            )
+        }
+        _ => state.span.label.clone(),
+    };
+    frame.render_widget(Paragraph::new(Line::from(Span::styled(why, dim))), foot);
 }

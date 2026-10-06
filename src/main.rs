@@ -118,6 +118,13 @@ enum Command {
     Reanchor,
     /// Write OVERVIEW.md: what the repository is, where to start, what its tests check.
     Overview,
+    /// The end-to-end tests, each with how its last recorded run went: what a repository
+    /// opens on.
+    E2e {
+        /// Everything, as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Where a symbol is defined.
     Def { name: String },
     /// Every place an identifier occurs.
@@ -155,12 +162,11 @@ fn main() -> Result<()> {
             paths,
         }) => {
             let all: Vec<String> = cli.paths.iter().chain(&paths).cloned().collect();
-            let sessions = open_targets(&from, &all)?
-                .into_iter()
-                .map(|(s, _)| s)
-                .collect();
+            let opened = open_targets(&from, &all)?;
+            let sessions = opened.targets.into_iter().map(|(s, _)| s).collect();
             codereview::web::run(
                 sessions,
+                opened.checkouts,
                 codereview::web::Serve {
                     host,
                     port,
@@ -183,6 +189,7 @@ fn main() -> Result<()> {
         Some(Command::Toggle { number }) => toggle(&from, number),
         Some(Command::Reanchor) => reanchor(&from),
         Some(Command::Overview) => overview_file(&from),
+        Some(Command::E2e { json }) => end_to_end(&from, json),
         Some(Command::Def { name }) => definitions(&from, &name),
         Some(Command::Refs { name }) => references(&from, &name),
         Some(Command::Symbols { query }) => symbols(&from, &query),
@@ -256,6 +263,52 @@ fn overview_file(from: &std::path::Path) -> Result<()> {
         "{} {}",
         codereview::facts::FILE_NAME,
         if wrote { "written" } else { "unchanged" }
+    );
+    Ok(())
+}
+
+/// `e2e`: the end-to-end tests and their recordings, a line each.
+fn end_to_end(from: &std::path::Path, json: bool) -> Result<()> {
+    let mut session = Session::open(from)?;
+    let opening = session.end_to_end();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&opening)?);
+        return Ok(());
+    }
+    if opening.missing() {
+        println!(
+            "No end-to-end tests: nothing drives {} the way a person does.",
+            opening.kind.as_deref().unwrap_or("the software")
+        );
+        return Ok(());
+    }
+    for t in &opening.tests {
+        let (mark, how) = match &t.recording {
+            None => ("○", "no recording".to_string()),
+            Some(r) => {
+                let stale = match t.stale {
+                    Some(s) if s.commits == 0 && s.files == 0 => ", matches the tree".into(),
+                    Some(s) => format!(", {} commits and {} files since", s.commits, s.files),
+                    None => String::new(),
+                };
+                let what = r.media().unwrap_or_else(|| "no recording".into());
+                (if r.passed { "✓" } else { "✗" }, format!("{what}{stale}"))
+            }
+        };
+        println!(
+            "{mark} {}:{} {} ({how})",
+            t.test.path, t.test.line, t.test.label
+        );
+        for f in t.recording.iter().flat_map(|r| r.failures()) {
+            println!("    ✗ line {}: {}", f.line, f.text);
+        }
+    }
+    println!(
+        "{} end-to-end tests of {}, {} failed, {} without a recording",
+        opening.tests.len(),
+        opening.total,
+        opening.failed,
+        opening.unrecorded
     );
     Ok(())
 }
@@ -338,10 +391,7 @@ fn hash_password() -> Result<()> {
 }
 
 #[cfg(any(feature = "tui", feature = "web"))]
-fn open_targets(
-    from: &std::path::Path,
-    paths: &[String],
-) -> Result<Vec<(Session, Option<String>)>> {
+fn open_targets(from: &std::path::Path, paths: &[String]) -> Result<codereview::session::Opened> {
     // The user's own file, the same one `Session::open` reads for every other subcommand.
     // Passing `None` here means the defaults, which is not the same thing at all: it is a
     // colour scheme the page cannot save, an agent that cannot be configured, and no checks.

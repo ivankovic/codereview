@@ -1,0 +1,467 @@
+//! The end-to-end tests, the screen a repository opens on: every test that drives the
+//! software the way a person does, with the recording its last run left behind, played here.
+//!
+//! A terminal recording is played into frames by `recording::frames` once, when its test is
+//! first selected, and drawn from the frame at the playback position. Nothing plays unasked:
+//! a selected test shows where its recording starts, paused, and Space runs it. A video
+//! cannot be drawn in a terminal, so it is handed to the system's player.
+//!
+//! A child module of `app`, like the other screens.
+
+use super::*;
+use std::collections::HashMap;
+use std::time::Instant;
+
+use crate::e2e::{EndToEnd, Opening};
+use crate::recording::{Cast, Kind, Recording};
+
+/// One row of the list: a file's heading, a test, or a recording whose test is gone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum E2eRow {
+    /// A test file, and how many end-to-end tests it holds.
+    File(String, usize),
+    /// An index into the opening's tests.
+    Test(usize),
+    /// The heading over the recordings of tests no longer here.
+    Orphans(usize),
+    /// An index into the opening's orphans.
+    Orphan(usize),
+}
+
+impl E2eRow {
+    fn selectable(&self) -> bool {
+        matches!(self, E2eRow::Test(_) | E2eRow::Orphan(_))
+    }
+}
+
+pub struct EndToEndState {
+    /// `None` until the tests have been read: the symbol index is still being built and there
+    /// is no `OVERVIEW.md` to stand in for it.
+    pub opening: Option<Opening>,
+    /// The tests came from `OVERVIEW.md` while the index is built, and are read again once
+    /// it is.
+    pub from_overview: bool,
+    pub rows: ListState<E2eRow>,
+    /// Terminal recordings played into frames, by their path, or why one could not be.
+    pub casts: HashMap<String, std::result::Result<Cast, String>>,
+    /// Where playback is, in milliseconds of the selected recording.
+    pub position_ms: u64,
+    /// While playing: when it started, and the position it started from.
+    pub playing: Option<(Instant, u64)>,
+    /// The recording takes the whole screen.
+    pub full: bool,
+}
+
+impl EndToEndState {
+    pub fn new(opening: Option<Opening>, from_overview: bool) -> Self {
+        let rows = opening.as_ref().map(rows_of).unwrap_or_default();
+        let mut state = Self {
+            opening,
+            from_overview,
+            rows: ListState::new(rows),
+            casts: HashMap::new(),
+            position_ms: 0,
+            playing: None,
+            full: false,
+        };
+        state.settle(1);
+        state
+    }
+
+    /// The test under the cursor, if it is one.
+    pub fn test(&self) -> Option<&EndToEnd> {
+        match self.rows.current()? {
+            E2eRow::Test(i) => self.opening.as_ref()?.tests.get(*i),
+            _ => None,
+        }
+    }
+
+    /// The recording of what is under the cursor: a test's, or an orphan.
+    pub fn recording(&self) -> Option<&Recording> {
+        let opening = self.opening.as_ref()?;
+        match self.rows.current()? {
+            E2eRow::Test(i) => opening.tests.get(*i)?.recording.as_ref(),
+            E2eRow::Orphan(i) => opening.orphans.get(*i),
+            _ => None,
+        }
+    }
+
+    /// The selected terminal recording, played, or why it could not be.
+    pub fn cast(&self) -> Option<&std::result::Result<Cast, String>> {
+        let recording = self.recording()?;
+        if recording.kind != Some(Kind::Terminal) {
+            return None;
+        }
+        self.casts.get(&recording.media()?)
+    }
+
+    /// How long the selected recording runs: the test's own duration, its last frame or its
+    /// last step, whichever is latest.
+    pub fn duration_ms(&self) -> u64 {
+        let frames = match self.cast() {
+            Some(Ok(cast)) => cast.duration_ms,
+            _ => 0,
+        };
+        let Some(recording) = self.recording() else {
+            return frames;
+        };
+        let steps = recording.steps.last().map_or(0, |s| s.at_ms);
+        frames.max(steps).max(recording.duration_ms)
+    }
+
+    /// The step playback is at: the last one at or before the position.
+    pub fn current_step(&self) -> Option<usize> {
+        let steps = &self.recording()?.steps;
+        steps.iter().rposition(|s| s.at_ms <= self.position_ms)
+    }
+
+    /// Moves playback on to `now`, stopping at the end. True when the position moved.
+    pub fn advance(&mut self, now: Instant) -> bool {
+        let Some((started, from)) = self.playing else {
+            return false;
+        };
+        let end = self.duration_ms();
+        let at = from + now.duration_since(started).as_millis() as u64;
+        let before = self.position_ms;
+        self.position_ms = at.min(end);
+        if at >= end {
+            self.playing = None;
+        }
+        self.position_ms != before || self.playing.is_none()
+    }
+
+    /// Plays from where it is, or pauses; from the start again once it has ended.
+    pub fn toggle_play(&mut self, now: Instant) {
+        if self.playing.take().is_some() {
+            return;
+        }
+        if self.position_ms >= self.duration_ms() {
+            self.position_ms = 0;
+        }
+        self.playing = Some((now, self.position_ms));
+    }
+
+    /// Goes to `at_ms`, playing on from there if it was playing.
+    pub fn seek(&mut self, at_ms: u64, now: Instant) {
+        self.position_ms = at_ms.min(self.duration_ms());
+        if self.playing.is_some() {
+            self.playing = Some((now, self.position_ms));
+        }
+    }
+
+    /// The next step's moment, or the previous one's: a step at the position is passed over
+    /// going forward, and going back a step a moment after the one playback is in returns to
+    /// its start before the one before it.
+    pub fn step_at(&self, forward: bool) -> Option<u64> {
+        let steps = &self.recording()?.steps;
+        let at = self.position_ms;
+        if forward {
+            steps.iter().map(|s| s.at_ms).find(|t| *t > at)
+        } else {
+            let earlier: Vec<u64> = steps.iter().map(|s| s.at_ms).filter(|t| *t < at).collect();
+            earlier.last().copied().or(Some(0))
+        }
+    }
+
+    /// The cursor onto a test or an orphan, moving on in `direction` (or back, when there is
+    /// nothing that way) past headings.
+    fn settle(&mut self, direction: isize) {
+        let items = &self.rows.items;
+        if items.is_empty() || items[self.rows.cursor.min(items.len() - 1)].selectable() {
+            return;
+        }
+        let from = self.rows.cursor as isize;
+        for dir in [direction.signum(), -direction.signum()] {
+            let dir = if dir == 0 { 1 } else { dir };
+            let mut i = from;
+            while i >= 0 && (i as usize) < items.len() {
+                if items[i as usize].selectable() {
+                    self.rows.cursor = i as usize;
+                    return;
+                }
+                i += dir;
+            }
+        }
+    }
+
+    /// Back to the start of the newly selected recording, paused.
+    fn selected_anew(&mut self) {
+        self.playing = None;
+        self.position_ms = match self.cast() {
+            Some(Ok(cast)) => cast.frames.first().map_or(0, |f| f.at_ms),
+            _ => 0,
+        };
+    }
+
+    /// Which test or orphan the cursor is on, to find it again in a fresh opening.
+    fn key(&self) -> Option<(String, String)> {
+        let opening = self.opening.as_ref()?;
+        match self.rows.current()? {
+            E2eRow::Test(i) => opening
+                .tests
+                .get(*i)
+                .map(|t| (t.test.path.clone(), t.test.name.clone())),
+            E2eRow::Orphan(i) => opening
+                .orphans
+                .get(*i)
+                .map(|r| (r.file.clone(), r.test.clone())),
+            _ => None,
+        }
+    }
+
+    fn find(&mut self, key: &(String, String)) {
+        let Some(opening) = self.opening.as_ref() else {
+            return;
+        };
+        let at = self.rows.items.iter().position(|row| match row {
+            E2eRow::Test(i) => opening
+                .tests
+                .get(*i)
+                .is_some_and(|t| t.test.path == key.0 && t.test.name == key.1),
+            E2eRow::Orphan(i) => opening
+                .orphans
+                .get(*i)
+                .is_some_and(|r| r.file == key.0 && r.test == key.1),
+            _ => false,
+        });
+        if let Some(at) = at {
+            self.rows.cursor = at;
+        }
+    }
+}
+
+/// The list: each file's tests under its name, then the recordings of tests no longer here.
+fn rows_of(opening: &Opening) -> Vec<E2eRow> {
+    let mut rows = Vec::new();
+    let counts = crate::e2e::by_file(&opening.tests);
+    let mut last: Option<&str> = None;
+    for (i, t) in opening.tests.iter().enumerate() {
+        if last != Some(t.test.path.as_str()) {
+            last = Some(t.test.path.as_str());
+            rows.push(E2eRow::File(
+                t.test.path.clone(),
+                counts.get(t.test.path.as_str()).copied().unwrap_or(0),
+            ));
+        }
+        rows.push(E2eRow::Test(i));
+    }
+    if !opening.orphans.is_empty() {
+        rows.push(E2eRow::Orphans(opening.orphans.len()));
+        rows.extend((0..opening.orphans.len()).map(E2eRow::Orphan));
+    }
+    rows
+}
+
+impl App {
+    /// The end-to-end tests, on top of the stack; the screen already there is replaced, on
+    /// the same test.
+    pub fn push_end_to_end(&mut self) {
+        let (opening, from_overview) = self.read_opening();
+        let mut state = EndToEndState::new(opening, from_overview);
+        if let Some(Screen::EndToEnd(old)) = self.screens.last() {
+            if let Some(key) = old.key() {
+                state.find(&key);
+            }
+            state.full = old.full;
+            self.screens.pop();
+        }
+        self.screens.push(Screen::EndToEnd(Box::new(state)));
+        self.load_cast();
+    }
+
+    /// The opening as it can be had now: from the index once it is built, from
+    /// `OVERVIEW.md` while it is, and not at all when there is neither, rather than building
+    /// a second index while the first is on its way.
+    fn read_opening(&mut self) -> (Option<Opening>, bool) {
+        if self.session.has_index() || self.warming.is_none() {
+            return (Some(self.session.end_to_end()), false);
+        }
+        let Some(facts) = &self.session.facts_file else {
+            return (None, false);
+        };
+        let tests = crate::testsuite::Inventory::from_facts(facts, 0)
+            .files
+            .into_iter()
+            .flat_map(|f| f.tests)
+            .collect();
+        (Some(crate::e2e::of(&self.session, tests)), true)
+    }
+
+    /// Reads the tests again for every end-to-end screen on the stack, keeping each on its
+    /// test: after a refresh, and when the index the first reading did without arrives.
+    pub(super) fn refresh_end_to_end(&mut self, only_provisional: bool) {
+        let stale = self.screens.iter().any(|s| match s {
+            Screen::EndToEnd(state) => {
+                !only_provisional || state.opening.is_none() || state.from_overview
+            }
+            _ => false,
+        });
+        if !stale {
+            return;
+        }
+        let (opening, from_overview) = self.read_opening();
+        for screen in &mut self.screens {
+            let Screen::EndToEnd(state) = screen else {
+                continue;
+            };
+            let key = state.key();
+            let mut fresh = EndToEndState::new(opening.clone(), from_overview);
+            if let Some(key) = key {
+                fresh.find(&key);
+            }
+            fresh.full = state.full;
+            fresh.casts = std::mem::take(&mut state.casts);
+            **state = fresh;
+        }
+        self.load_cast();
+    }
+
+    /// Plays the selected terminal recording into frames, the first time it is selected,
+    /// and puts playback at its start.
+    fn load_cast(&mut self) {
+        let root = self.session.root().to_path_buf();
+        let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
+            return;
+        };
+        let media = state
+            .recording()
+            .filter(|r| r.kind == Some(Kind::Terminal))
+            .and_then(Recording::media);
+        if let Some(media) = media {
+            state.casts.entry(media).or_insert_with_key(|media| {
+                std::fs::read_to_string(root.join(media))
+                    .map_err(anyhow::Error::from)
+                    .and_then(|text| crate::recording::frames(&text))
+                    .map_err(|e| format!("{e:#}"))
+            });
+        }
+        state.selected_anew();
+    }
+
+    /// Whether a recording is playing, so the screen has to be drawn again soon.
+    pub fn animating(&self) -> bool {
+        matches!(self.screen(), Screen::EndToEnd(s) if s.playing.is_some())
+    }
+
+    /// Moves a playing recording on. True when it moved.
+    pub(super) fn advance_playback(&mut self) -> bool {
+        match self.screens.last_mut() {
+            Some(Screen::EndToEnd(state)) => state.advance(Instant::now()),
+            _ => false,
+        }
+    }
+
+    /// Moves the cursor by `delta` rows, past headings, as the mouse wheel does.
+    pub(super) fn move_end_to_end(&mut self, delta: isize) {
+        let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
+            return;
+        };
+        let before = state.rows.cursor;
+        state.rows.move_by(delta);
+        state.settle(delta);
+        if state.rows.cursor != before {
+            self.load_cast();
+        }
+    }
+
+    pub(super) fn handle_end_to_end_key(&mut self, key: KeyEvent) {
+        let height = self.measured.list_height.max(1) as isize;
+        let now = Instant::now();
+        let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
+            return;
+        };
+        let before = state.rows.cursor;
+        if state.rows.handle_nav(key, height) {
+            let direction = state.rows.cursor as isize - before as isize;
+            state.settle(if direction < 0 { -1 } else { 1 });
+            if state.rows.cursor != before {
+                self.load_cast();
+            }
+            return;
+        }
+        let missing = state.opening.as_ref().is_some_and(Opening::missing);
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc if state.full => state.full = false,
+            KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
+            KeyCode::Char(' ') | KeyCode::Char('p') => match state.cast() {
+                Some(Ok(_)) => state.toggle_play(now),
+                Some(Err(e)) => {
+                    let e = e.clone();
+                    self.error(format!("the recording cannot be played: {e}"));
+                }
+                None if state
+                    .recording()
+                    .is_some_and(|r| r.kind == Some(Kind::Video)) =>
+                {
+                    self.info("a video plays outside the terminal: o opens it");
+                }
+                None => self.info("this test has no recording to play"),
+            },
+            KeyCode::Char(']') | KeyCode::Char('[') => {
+                if let Some(at) = state.step_at(key.code == KeyCode::Char(']')) {
+                    state.seek(at, now);
+                }
+            }
+            KeyCode::Char('0') => state.seek(0, now),
+            KeyCode::Char('z') => state.full = !state.full,
+            KeyCode::Char('a') if missing => {
+                let ask = state
+                    .opening
+                    .as_ref()
+                    .map(|o| o.ask.clone())
+                    .unwrap_or_default();
+                self.ask_agent(ask, Vec::new());
+            }
+            KeyCode::Char('a') => {
+                self.info("the agent is offered the first end-to-end tests when there are none; i asks it anything");
+            }
+            KeyCode::Char('o') => {
+                let Some(recording) = state.recording() else {
+                    self.info("no recording here");
+                    return;
+                };
+                let Some(media) = recording.media() else {
+                    self.info("this test has no recording");
+                    return;
+                };
+                let path = self.session.root().join(&media);
+                match open_externally(&path) {
+                    Ok(()) => self.info(format!("opened {media}")),
+                    Err(e) => self.error(format!("cannot open {media}: {e:#}")),
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                let target = match (state.test(), state.recording()) {
+                    (Some(t), _) => Some((t.test.path.clone(), t.test.line)),
+                    (None, Some(r)) => Some((r.file.clone(), r.line)),
+                    _ => None,
+                };
+                match target {
+                    Some((path, line)) if self.session.files.contains(&path) => {
+                        self.jump_to(&path, line.max(1));
+                    }
+                    Some((path, _)) => self.info(format!("{path} is not in the tree any more")),
+                    None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Hands `path` to the system's own opener, detached: the terminal UI keeps the screen.
+fn open_externally(path: &std::path::Path) -> Result<()> {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| anyhow::anyhow!("{program}: {e}"))
+}

@@ -16,9 +16,9 @@ pub(super) struct RepoSummary {
     pending: usize,
 }
 
-/// Every served repository, in command-line order.
+/// Every served repository: in command-line order, then the ones that appeared later.
 pub(super) async fn get_repos(State(state): State<AppState>) -> ApiResult<Vec<RepoSummary>> {
-    let repos = state.repos.clone();
+    let repos = state.repos.all();
     let list = tokio::task::spawn_blocking(move || {
         repos
             .iter()
@@ -96,6 +96,229 @@ pub(super) async fn get_tests(state: Ctx, Query(q): Query<TestsQuery>) -> ApiRes
             })
         })
         .await?,
+    ))
+}
+
+#[derive(Serialize)]
+pub(super) struct EndToEndResponse {
+    #[serde(flatten)]
+    opening: crate::e2e::Opening,
+    as_of: Option<crate::session::AsOf>,
+}
+
+/// What a repository opens on: its end-to-end tests, each with the recording its last run
+/// left. Needs the tests, so while the symbol index is built it answers from `OVERVIEW.md`
+/// like the other test views; the recordings are read from disk either way.
+pub(super) async fn get_e2e(state: Ctx) -> ApiResult<EndToEndResponse> {
+    let warming = state.warming.load(std::sync::atomic::Ordering::Relaxed);
+    Ok(Json(
+        with_session(&state, move |s| {
+            if let Some(as_of) = s.as_of().filter(|_| warming || s.facts_file.is_some()) {
+                let tests = match &s.facts_file {
+                    Some(facts) => crate::testsuite::Inventory::from_facts(facts, 0)
+                        .files
+                        .into_iter()
+                        .flat_map(|f| f.tests)
+                        .collect(),
+                    None => Vec::new(),
+                };
+                return Ok(EndToEndResponse {
+                    opening: crate::e2e::of(s, tests),
+                    as_of: Some(as_of),
+                });
+            }
+            Ok(EndToEndResponse {
+                opening: s.end_to_end(),
+                as_of: None,
+            })
+        })
+        .await?,
+    ))
+}
+
+/// The recording `path` names, when it is one a test run left: the path is checked against
+/// what was found, never opened because a request named it.
+fn recording_file(s: &Session, path: &str) -> Result<std::path::PathBuf> {
+    let found = crate::recording::find(s.root())
+        .into_iter()
+        .any(|r| r.media().as_deref() == Some(path));
+    if !found {
+        anyhow::bail!("{path} is not a recording a test left");
+    }
+    Ok(s.root().join(path))
+}
+
+/// A recording larger than this is not served: a test's video is a few megabytes.
+const MOST_RECORDING_BYTES: u64 = 256 << 20;
+
+/// A recording's bytes, with its media type. Ranges are honoured, since that is how a video
+/// element seeks.
+pub(super) async fn get_recording(
+    state: Ctx,
+    headers: axum::http::HeaderMap,
+    Query(q): Query<PathQuery>,
+) -> Result<Response, ApiError> {
+    let Some(kind) = crate::recording::media_type(&q.path) else {
+        return Err(ApiError(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            format!("{} is not a recording", q.path),
+        ));
+    };
+    let path = q.path.clone();
+    let bytes = with_session(&state, move |s| {
+        let file = recording_file(s, &path)?;
+        let size = std::fs::metadata(&file)?.len();
+        if size > MOST_RECORDING_BYTES {
+            anyhow::bail!("{path} is over {} MB", MOST_RECORDING_BYTES >> 20);
+        }
+        Ok(std::fs::read(file)?)
+    })
+    .await
+    .map_err(|e| ApiError(StatusCode::NOT_FOUND, e.1))?;
+    let total = bytes.len();
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| byte_range(v, total));
+    let common = [
+        (header::CONTENT_TYPE, kind.to_string()),
+        (header::ACCEPT_RANGES, "bytes".to_string()),
+        (
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'".to_string(),
+        ),
+    ];
+    Ok(match range {
+        Some((start, end)) => (
+            StatusCode::PARTIAL_CONTENT,
+            common,
+            [(
+                header::CONTENT_RANGE,
+                format!("bytes {start}-{end}/{total}"),
+            )],
+            bytes[start..=end].to_vec(),
+        )
+            .into_response(),
+        None => (common, bytes).into_response(),
+    })
+}
+
+/// The first range of a `Range: bytes=...` header, inclusive, within `total` bytes. Anything
+/// this cannot serve is answered with the whole file, which the header allows.
+fn byte_range(header: &str, total: usize) -> Option<(usize, usize)> {
+    let spec = header.strip_prefix("bytes=")?.split(',').next()?.trim();
+    let (start, end) = spec.split_once('-')?;
+    let last = total.checked_sub(1)?;
+    let (start, end) = match (start.trim(), end.trim()) {
+        ("", n) => {
+            let n: usize = n.parse().ok()?;
+            (total.saturating_sub(n), last)
+        }
+        (a, "") => (a.parse().ok()?, last),
+        (a, b) => (a.parse().ok()?, b.parse::<usize>().ok()?.min(last)),
+    };
+    (start <= end && end <= last).then_some((start, end))
+}
+
+/// A terminal recording played into frames of styled text, for the page to draw.
+pub(super) async fn get_cast(
+    state: Ctx,
+    Query(q): Query<PathQuery>,
+) -> ApiResult<crate::recording::Cast> {
+    Ok(Json(
+        with_session(&state, move |s| {
+            if crate::recording::kind_of(&q.path) != Some(crate::recording::Kind::Terminal) {
+                anyhow::bail!("{} is not a terminal recording", q.path);
+            }
+            let file = recording_file(s, &q.path)?;
+            crate::recording::frames(&std::fs::read_to_string(file)?)
+        })
+        .await?,
+    ))
+}
+
+#[cfg(test)]
+#[test]
+fn ranges_are_read_as_a_video_element_asks() {
+    assert_eq!(byte_range("bytes=0-", 10), Some((0, 9)));
+    assert_eq!(byte_range("bytes=2-4", 10), Some((2, 4)));
+    assert_eq!(byte_range("bytes=5-100", 10), Some((5, 9)));
+    assert_eq!(byte_range("bytes=-3", 10), Some((7, 9)));
+    assert_eq!(byte_range("bytes=9-2", 10), None);
+    assert_eq!(byte_range("bytes=10-", 10), None);
+    assert_eq!(byte_range("lines=1-2", 10), None);
+    assert_eq!(byte_range("bytes=0-", 0), None);
+}
+
+#[derive(Deserialize)]
+pub(super) struct SpecQuery {
+    /// `week` (the default), `last` or `uncommitted`.
+    #[serde(default)]
+    stretch: Option<String>,
+    /// One commit, against its parent: the drill-down from the log. Wins over `stretch`.
+    #[serde(default)]
+    commit: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(super) struct SpecResponse {
+    #[serde(flatten)]
+    spec: crate::spec::Spec,
+    /// Set when the tests came from `OVERVIEW.md` because the index is still being built;
+    /// what the stretch did to them never does, since that is read from the files it touched.
+    as_of: Option<crate::session::AsOf>,
+}
+
+/// The tests as a specification: by level, with what a stretch of history did to them. While
+/// the index is built the list comes from `OVERVIEW.md`, the same way the overview's does.
+pub(super) async fn get_spec(state: Ctx, Query(q): Query<SpecQuery>) -> ApiResult<SpecResponse> {
+    use crate::spec::Stretch;
+    let stretch = match (q.commit.as_deref(), q.stretch.as_deref()) {
+        (Some(hash), _) if !hash.is_empty() => Stretch::Commit(hash.to_string()),
+        (_, None | Some("" | "week")) => Stretch::Week,
+        (_, Some("last")) => Stretch::LastCommit,
+        (_, Some("uncommitted")) => Stretch::Uncommitted,
+        (_, Some(other)) => {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                format!("no stretch called {other:?}; week, last or uncommitted"),
+            ));
+        }
+    };
+    let warming = state.warming.load(std::sync::atomic::Ordering::Relaxed);
+    Ok(Json(
+        with_session(&state, move |s| {
+            if let Some(as_of) = s.as_of().filter(|_| warming || s.facts_file.is_some()) {
+                let tests = match &s.facts_file {
+                    Some(facts) => crate::testsuite::Inventory::from_facts(facts, 0)
+                        .files
+                        .into_iter()
+                        .flat_map(|f| f.tests)
+                        .collect(),
+                    None => Vec::new(),
+                };
+                return Ok(SpecResponse {
+                    spec: crate::spec::of(s, tests, None, &stretch)?,
+                    as_of: Some(as_of),
+                });
+            }
+            Ok(SpecResponse {
+                spec: s.spec(&stretch)?,
+                as_of: None,
+            })
+        })
+        .await?,
+    ))
+}
+
+/// The tests that name something the file defines, or that it holds: what a reader of a
+/// file asks before trusting it. Needs the symbol index, and builds it if it must.
+pub(super) async fn get_tests_of(
+    state: Ctx,
+    Query(q): Query<PathQuery>,
+) -> ApiResult<Vec<crate::spec::SpecTest>> {
+    Ok(Json(
+        with_session(&state, move |s| Ok(s.tests_reaching(&q.path))).await?,
     ))
 }
 
@@ -916,14 +1139,22 @@ pub(super) struct VersionQuery {
 #[derive(Serialize)]
 pub(super) struct Version {
     version: String,
+    /// How many repositories are served: the list grows when one appears in a directory of
+    /// checkouts, and the page reads it again when this moves.
+    repos: usize,
 }
 
 /// What the page polls to notice that the repository changed under it, whoever changed it.
 /// The number means nothing on its own; a page compares it with the last one it saw.
-pub(super) async fn get_version(state: Ctx, Query(q): Query<VersionQuery>) -> ApiResult<Version> {
+pub(super) async fn get_version(
+    State(app): State<AppState>,
+    state: Ctx,
+    Query(q): Query<VersionQuery>,
+) -> ApiResult<Version> {
     let version = with_session(&state, move |s| s.fingerprint(q.path.as_deref())).await?;
     Ok(Json(Version {
         version: version.to_string(),
+        repos: app.repos.len(),
     }))
 }
 

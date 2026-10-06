@@ -110,6 +110,73 @@ phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
    repository defines, read rather than run, as the nearest thing it has to a specification,
    and the files it leans on that no test names.
 
+6. **End-to-end tests are the centre.** When most of the code was written by an agent, reading
+   it line by line is the least useful thing a reviewer can do with an hour. What is worth the
+   time is what the system demonstrably does, and the one place where that is both written
+   down and checked by a machine is an end-to-end test: one that drives the software the way a
+   person does — a browser, a terminal, the command line — and looks at what comes back. So
+   the whole of the UI turns around them. Software that is only a library, with nobody driving
+   it, is set aside for now.
+
+   - **A repository opens on its end-to-end tests**, each one a sentence with the recording of
+     the software doing it beside it, whether it passed, against which commit, and whether that
+     is still the commit on screen. That list is the specification. Everything else in the tool
+     is reached from it.
+   - **Having none is the first finding**, not an empty list. A repository without end-to-end
+     tests opens on that: what one would look like for this kind of software, and the agent
+     offered the job of writing the first. The other views stay reachable, but a review does not
+     start in them.
+   - **A test is where navigation starts.** From a test: its steps, which are its own source
+     read as steps, each one a moment in the recording, so moving through the video moves
+     through the steps and the other way round; the code it ran; the documentation describing
+     what it checks; and the smaller tests that reach the same code. The code it ran comes from
+     coverage taken during that test's own run, because an end-to-end test drives a page or a
+     terminal and names almost nothing in the code it exercises. Without coverage the tool
+     falls back on what it can read, and says that it did. The documentation is the section a
+     test names as the one it demonstrates, where it names one; otherwise the closest match
+     between the test's words and the headings and prose of the documents, shown as a guess.
+   - **What a stretch of history did** is said per test. Tests removed, skipped or weakened come
+     first, since an agent that cannot make a test pass is tempted to make it stop asking; then
+     tests whose recording changed, the before beside the after; then the code changed in the
+     stretch that no end-to-end test ran, which is the short list where a person still has to
+     read code.
+   - Unit and integration tests are not dropped. They hang below the end-to-end tests that
+     reach the same code, and code reached only by them is marked so. Security stays a mark on
+     a test, at any level, rather than a view of its own.
+
+   The unit of review is the **repository**, with a stretch of history — uncommitted work, the
+   last commit, the last week — marked within it; any commit in the log drills down to the
+   same views for that commit alone. Explore, Changes and Log stay, as the code a test leads to.
+
+   **A recording is a file the run left behind**, like every other result. Per test, the run
+   leaves a directory under a root the configuration names, matched to the test by its name:
+   the recording (`video.webm` for a browser; `terminal.cast`, asciicast v2, for a terminal,
+   which the page plays as text and the terminal UI as frames), `test.json` (which test it is,
+   whether it passed, against which commit, and every step and check with the moment of the
+   recording it happened at and the line of the test that made it) and `coverage.lcov` (what
+   the test ran). A recording is made at a person's pace, with each tap marked, since one made
+   at machine speed is over before anyone has seen it.
+   Playwright already records a video per test; the rest is a small reporter or fixture per
+   runner, which the tool supplies for the runners it knows. A "before" to compare against is a
+   recording made at the base commit: committed with the tests when a project does that, made
+   in a worktree in the background under the same opt-in as a watched check, or else offered
+   as a button that says what it will run.
+
+   Steps, smallest first:
+   1. **This repository's own end-to-end tests** (built 2026-10-06). The browser check, one
+      test with dozens of checks inside it, is now one test per behaviour, each recording its
+      video and steps. The terminal UI has tests that run the binary in a pseudo-terminal and
+      record an asciicast. Without them the tool had nothing of its own to show, and no way to
+      know the rest works. Coverage per test is left for step 3, which is the first to need it.
+   2. **The opening view** (built 2026-10-06): the end-to-end tests with their recordings,
+      results and staleness, and the no-tests finding with the agent's offer. Both front ends,
+      and `codereview e2e`. A test is end to end only in a file of nothing but tests: a module
+      that mentions a browser driver, as the one recognising them does, is not one.
+   3. **A test's own view**: steps against the video, the code it ran, the documentation,
+      the smaller tests below it.
+   4. **What a stretch did**, per test: recordings before and after, and the changed code no
+      end-to-end test ran.
+
 ## Layout
 
 ```
@@ -133,6 +200,8 @@ src/media.rs       which files are pictures, by name
 src/symbols.rs     tree-sitter symbol index: definitions, occurrences, search, what the tree
                    leans on and what no test names
 src/testsuite.rs   the tests a repository defines, found in the same parse, per language
+src/spec.rs        the tests as a specification: each one's level, and what a stretch of
+                   history did to them
 src/acp.rs         Agent Client Protocol client
 src/claude.rs      Claude Code driven through its own streaming protocol
 src/agent.rs       the agent as the front ends see it, either backend

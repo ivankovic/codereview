@@ -12,7 +12,9 @@ use crate::notes::Note;
 use crate::repo::{ChangedFile, Commit, FileStatus};
 use crate::review::{self, Comment};
 use crate::session::{DiffTarget, Session};
+use crate::spec::{Level, Stretch, TestChange, What};
 use crate::theme::Theme;
+mod end_to_end;
 mod overlays;
 mod screens;
 
@@ -109,8 +111,10 @@ impl<T> ListState<T> {
     }
 }
 
+pub use end_to_end::{E2eRow, EndToEndState};
 pub use screens::{
-    ChangesState, DiffState, Hit, LocationsState, LogState, NotesState, ReviewState,
+    ChangesState, DiffState, Hit, LocationsState, LogState, NotesState, ReviewState, SpecRow,
+    SpecState, spec_rows,
 };
 
 pub enum Screen {
@@ -121,6 +125,9 @@ pub enum Screen {
     Review(ReviewState),
     Notes(NotesState),
     Locations(LocationsState),
+    Spec(Box<SpecState>),
+    /// The end-to-end tests: what a repository opens on.
+    EndToEnd(Box<EndToEndState>),
     Agent,
 }
 
@@ -135,6 +142,8 @@ impl Screen {
             Screen::Review(_) => "review",
             Screen::Notes(_) => "notes",
             Screen::Locations(_) => "locations",
+            Screen::Spec(_) => "spec",
+            Screen::EndToEnd(_) => "end to end",
             Screen::Agent => "agent",
         }
     }
@@ -448,6 +457,7 @@ impl App {
             }
         }
         self.refresh_diff_comments();
+        self.refresh_end_to_end(false);
         self.info("refreshed");
     }
 
@@ -713,9 +723,12 @@ impl App {
             if let Ok(index) = rx.try_recv() {
                 self.session.install_index(index);
                 self.warming = None;
+                // What was shown from OVERVIEW.md, or not at all, while the index was built.
+                self.refresh_end_to_end(true);
                 changed = true;
             }
         }
+        changed |= self.advance_playback();
         if active && self.kept_at.elapsed() >= std::time::Duration::from_secs(5) {
             self.kept_at = std::time::Instant::now();
             // What went wrong is not worth a message every five seconds; the file is a
@@ -1065,6 +1078,29 @@ impl App {
                 self.push_log(None);
                 return true;
             }
+            // The end-to-end tests, what the repository opened on, from anywhere.
+            KeyCode::Char('E') => {
+                self.push_end_to_end();
+                return true;
+            }
+            // The tests that name the open file.
+            KeyCode::Char('U') if matches!(self.screen(), Screen::Explorer) => {
+                self.push_tests_of_file();
+                return true;
+            }
+            // The specification; in the log, of the commit under the cursor.
+            KeyCode::Char('P') => {
+                let commit = match self.screen() {
+                    Screen::Log(state) => state.commits.current().map(|c| c.hash.clone()),
+                    _ => None,
+                };
+                let stretch = match commit {
+                    Some(hash) => Stretch::Commit(hash),
+                    None => Stretch::Week,
+                };
+                self.push_spec(stretch);
+                return true;
+            }
             KeyCode::Char('R') if !matches!(self.screen(), Screen::Agent) => {
                 self.push_review();
                 return true;
@@ -1111,6 +1147,8 @@ impl App {
             Screen::Review(_) => self.handle_review_key(key),
             Screen::Notes(_) => self.handle_notes_key(key),
             Screen::Locations(_) => self.handle_locations_key(key),
+            Screen::Spec(_) => self.handle_spec_key(key),
+            Screen::EndToEnd(_) => self.handle_end_to_end_key(key),
             Screen::Agent => {
                 let height = self.measured.main_height;
                 let config = self.session.config.agent.clone();
@@ -1545,6 +1583,8 @@ impl App {
                     as usize;
             }
             Screen::Notes(n) => n.items.move_by(delta),
+            Screen::Spec(state) => state.rows.move_by(delta),
+            Screen::EndToEnd(_) => self.move_end_to_end(delta),
         }
     }
 }

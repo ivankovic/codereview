@@ -14,11 +14,17 @@
   needs podman (rootless is enough; `CODEREVIEW_CONTAINER_RUNTIME` drives another runtime);
   `make check` does not. `tests/nginx/site.conf` mirrors the site in
   `docs/deploy.md`, and the test fails if the document loses a directive it exercises.
+- End-to-end tests are what the tool, and a review of this repository, turn around. A change
+  someone could see — a new view, key, button or behaviour — comes with an end-to-end test of
+  it, for both front ends: `tests/terminal.rs` drives the binary in a pseudo-terminal,
+  `tests/browser/phone.js` the page in a real browser. One behaviour per test, named as the
+  sentence it demonstrates, with `step` saying what a person would be doing, because each test
+  leaves a recording a reviewer watches with those steps beside it (`target/e2e/`).
 - `make browser-test` opens the page in a headless Chromium at 360x640 and taps things.
   **Run it after any change to `src/web/index.html`.** Everything else in the suite reads what
   the server sends, which is exactly the check that passes while the page is unusable: a menu
   clipped by its parent's `overflow`, a header that stopped sticking, buttons under the
-  keyboard. The checks live in `tests/browser/phone.js`; add one when you fix a layout bug,
+  keyboard. The tests live in `tests/browser/phone.js`; add a check when you fix a layout bug,
   and prove it by reintroducing the bug and watching it fail. Ask what a finger would hit
   (`elementFromPoint`) rather than where an element says it is: a rect is unmoved by a parent
   that clips it.

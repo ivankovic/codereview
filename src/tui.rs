@@ -22,13 +22,23 @@ use crossterm::event::{
 };
 use crossterm::execute;
 
-use crate::session::Session;
 use workspace::Workspace;
 
-/// Runs the terminal UI on one or more repositories, each with a file to open first.
-pub fn run(targets: Vec<(Session, Option<String>)>) -> Result<()> {
-    anyhow::ensure!(!targets.is_empty(), "no repository to open");
-    let mut ws = Workspace::new(targets);
+/// Runs the terminal UI on one or more repositories, each with a file to open first, and
+/// on whatever repository appears later in a directory of checkouts it was started on.
+pub fn run(opened: crate::session::Opened) -> Result<()> {
+    anyhow::ensure!(!opened.targets.is_empty(), "no repository to open");
+    // A repository opens on what it demonstrably does, its end-to-end tests, unless a file
+    // was named to open.
+    let plain: Vec<bool> = opened.targets.iter().map(|(_, o)| o.is_none()).collect();
+    let mut ws = Workspace::new(opened.targets);
+    for (app, plain) in ws.apps.iter_mut().zip(plain) {
+        if plain {
+            app.push_end_to_end();
+        }
+    }
+    ws.opens_on_tests = true;
+    ws.watch(opened.checkouts);
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = execute!(stdout(), DisableMouseCapture);
@@ -95,7 +105,11 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, ws: &mut Workspace) -> Re
             }
             continue;
         }
-        let wait = if ws.agent_active() { 40 } else { 250 };
+        let wait = if ws.agent_active() || ws.animating() {
+            40
+        } else {
+            250
+        };
         if !event::poll(Duration::from_millis(wait))? {
             ws.tick();
             continue;
@@ -670,6 +684,417 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    /// Ticks `app` until its symbol index is in, which is when the end-to-end screen reads
+    /// the tests it could not read before.
+    fn until_indexed(app: &mut App) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !app.session.has_index() && std::time::Instant::now() < deadline {
+            app.tick(true);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.session.has_index(), "the index never came");
+    }
+
+    #[test]
+    fn the_end_to_end_tests_play_their_recordings() {
+        let dir = scratch_repo();
+        let root = dir.path();
+        let write = |path: &str, text: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        // Two tests that drive the program in a terminal; the first left a recording.
+        write(
+            "tests/cli.rs",
+            "// drives it through portable_pty\n#[test]\nfn a_file_opens() {\n    assert!(true);\n}\n\n\
+             #[test]\nfn a_comment_is_saved() {\n    assert!(true);\n}\n",
+        );
+        write(
+            "target/e2e/terminal/a-file-opens/test.json",
+            r#"{"test": "a_file_opens", "file": "tests/cli.rs", "line": 3, "passed": true,
+                "duration_ms": 1200, "recording": "terminal.cast", "steps": [
+                {"at_ms": 0, "line": 4, "kind": "action", "text": "start the program"},
+                {"at_ms": 600, "line": 4, "kind": "check", "text": "shows the second screen",
+                 "passed": true}]}"#,
+        );
+        write(
+            "target/e2e/terminal/a-file-opens/terminal.cast",
+            "{\"version\": 2, \"width\": 30, \"height\": 4}\n[0.0, \"o\", \"first screen\"]\n\
+             [0.6, \"o\", \"\\u001b[2J\\u001b[Hsecond screen\"]\n",
+        );
+        let mut app = App::new(scratch_session(root), None);
+        let mut term = Terminal::new(TestBackend::new(140, 36)).unwrap();
+
+        press(&mut app, &[KeyCode::Char('E')]);
+        assert!(matches!(app.screen(), Screen::EndToEnd(_)));
+        until_indexed(&mut app);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("2 end-to-end tests of"), "{screen}");
+        assert!(screen.contains("1 without a recording"), "{screen}");
+        assert!(
+            screen.contains("tests/cli.rs 2"),
+            "the file heads its tests: {screen}"
+        );
+        assert!(screen.contains("✓ a file opens"), "{screen}");
+        assert!(screen.contains("○ a comment is saved"), "{screen}");
+        assert!(
+            screen.contains("tests/cli.rs:3 · it drives a terminal"),
+            "{screen}"
+        );
+        assert!(screen.contains("✓ passed in 1.2 s"), "{screen}");
+        // The recording, paused at its start, and its steps beside it.
+        assert!(screen.contains("first screen"), "{screen}");
+        assert!(screen.contains("0:00.0 / 0:01.2 paused"), "{screen}");
+        assert!(screen.contains("start the program"), "{screen}");
+
+        // `]` goes to the next step, and the screen as it was then.
+        press(&mut app, &[KeyCode::Char(']')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("second screen"), "{screen}");
+        assert!(!screen.contains("first screen"), "{screen}");
+        press(&mut app, &[KeyCode::Char('[')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("first screen"), "{screen}");
+
+        // Space plays it, and the loop is told to draw often until it ends.
+        press(&mut app, &[KeyCode::Char(' ')]);
+        assert!(app.animating());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while app.animating() && std::time::Instant::now() < deadline {
+            app.tick(true);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!app.animating(), "it stops at its end");
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("second screen"), "{screen}");
+
+        // The test without a recording says so.
+        press(&mut app, &[KeyCode::Char('j')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("No recording"), "{screen}");
+
+        // Enter is the test's source; q leaves the screen for the code.
+        press(&mut app, &[KeyCode::Char('k'), KeyCode::Enter]);
+        assert!(matches!(app.screen(), Screen::Explorer));
+        let viewer = app.viewer.as_ref().unwrap();
+        assert_eq!(viewer.path, "tests/cli.rs");
+        assert_eq!(viewer.current_line(), Some(2));
+        press(&mut app, &[KeyCode::Char('E')]);
+        assert!(matches!(app.screen(), Screen::EndToEnd(_)));
+        press(&mut app, &[KeyCode::Char('q')]);
+        assert!(matches!(app.screen(), Screen::Explorer));
+    }
+
+    #[test]
+    fn without_end_to_end_tests_the_agent_is_offered_the_first() {
+        let dir = scratch_repo();
+        let mut session = scratch_session(dir.path());
+        session.config.agent = crate::config::AgentConfig {
+            kind: "fake-acp".into(),
+            ..Default::default()
+        };
+        let mut app = App::new(session, None);
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        press(&mut app, &[KeyCode::Char('E')]);
+        until_indexed(&mut app);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("No end-to-end tests."), "{screen}");
+        assert!(
+            screen.contains("ask the agent to write the first ones"),
+            "{screen}"
+        );
+        press(&mut app, &[KeyCode::Char('a')]);
+        assert!(matches!(app.screen(), Screen::Agent));
+    }
+
+    #[test]
+    fn the_specification_screen() {
+        use super::app::SpecRow;
+        let dir = scratch_repo();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}");
+        };
+        std::fs::create_dir(dir.path().join("tests")).unwrap();
+        let login = dir.path().join("tests/login.rs");
+        std::fs::write(
+            &login,
+            "#[test]\nfn a_wrong_password_is_refused() {\n    assert!(true);\n    assert!(true);\n}\n",
+        )
+        .unwrap();
+        git(&["add", "tests"]);
+        git(&["commit", "-q", "-m", "a test of signing in"]);
+        // Uncommitted: it checks one thing fewer.
+        std::fs::write(
+            &login,
+            "#[test]\nfn a_wrong_password_is_refused() {\n    assert!(true);\n}\n",
+        )
+        .unwrap();
+        let mut app = App::new(scratch_session(dir.path()), None);
+        let mut term = Terminal::new(TestBackend::new(140, 30)).unwrap();
+
+        press(&mut app, &[KeyCode::Char('P')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("specification"), "{screen}");
+        assert!(screen.contains("last 7 days"), "{screen}");
+        assert!(screen.contains("Security 1"), "{screen}");
+        assert!(screen.contains("a wrong password is refused"), "{screen}");
+        assert!(
+            screen.contains("No test drives the whole system"),
+            "an empty end-to-end level is said: {screen}"
+        );
+
+        // s: the last commit, then uncommitted work, where the test asks less.
+        press(&mut app, &[KeyCode::Char('s')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("a test of signing in"), "{screen}");
+        assert!(screen.contains("added"), "{screen}");
+        press(&mut app, &[KeyCode::Char('s')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("Asks less than before: 1"), "{screen}");
+        assert!(screen.contains("weakened"), "{screen}");
+        assert!(screen.contains("2 → 1 assertions"), "{screen}");
+        assert_eq!(app.screens.len(), 2, "cycling replaces the screen");
+
+        // Enter on the change: its file's diff across the stretch.
+        let rows = |app: &App| match app.screen() {
+            Screen::Spec(s) => s.rows.items.clone(),
+            _ => panic!("not the specification"),
+        };
+        let at = rows(&app)
+            .iter()
+            .position(|r| matches!(r, SpecRow::Change(..)))
+            .unwrap();
+        press(&mut app, &vec![KeyCode::Char('j'); at]);
+        press(&mut app, &[KeyCode::Enter]);
+        assert!(matches!(app.screen(), Screen::Diff(_)));
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("assert!(true);"), "{screen}");
+        press(&mut app, &[KeyCode::Char('q')]);
+
+        // Enter on a test: the file, at the test.
+        let test = rows(&app)
+            .iter()
+            .position(|r| matches!(r, SpecRow::Test(..)))
+            .unwrap();
+        press(&mut app, &[KeyCode::Home]);
+        press(&mut app, &vec![KeyCode::Char('j'); test]);
+        press(&mut app, &[KeyCode::Enter]);
+        assert!(matches!(app.screen(), Screen::Explorer));
+        assert_eq!(app.viewer.as_ref().unwrap().path, "tests/login.rs");
+
+        // From the log, P is the commit under the cursor.
+        press(&mut app, &[KeyCode::Char('L'), KeyCode::Char('P')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("commit"), "{screen}");
+        assert!(screen.contains("a test of signing in"), "{screen}");
+        press(&mut app, &[KeyCode::Char('s')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("this is one commit"), "{screen}");
+    }
+
+    #[test]
+    fn tests_and_code_lead_to_each_other() {
+        use super::app::SpecRow;
+        let dir = scratch_repo();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/core.rs"),
+            "pub fn parse_review() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a_review_parses() {\n        super::parse_review();\n        assert!(true);\n    }\n}\n",
+        )
+        .unwrap();
+        let mut app = App::new(scratch_session(dir.path()), None);
+        let mut term = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        let rows = |app: &App| match app.screen() {
+            Screen::Spec(s) => s.rows.items.clone(),
+            _ => panic!("not the specification"),
+        };
+        let go_to = |app: &mut App, at: usize| {
+            press(app, &[KeyCode::Home]);
+            press(app, &vec![KeyCode::Char('j'); at]);
+        };
+
+        press(&mut app, &[KeyCode::Char('P')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("Tests by area"), "{screen}");
+        assert!(screen.contains("0 of 1 files named by no test"), "{screen}");
+
+        // An area narrows the list to the tests that count towards it; Esc widens it again.
+        let area = rows(&app)
+            .iter()
+            .position(|r| matches!(r, SpecRow::Area(a) if a.name == "src"))
+            .unwrap();
+        go_to(&mut app, area);
+        press(&mut app, &[KeyCode::Enter]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("Area src"), "{screen}");
+        assert!(!rows(&app).iter().any(|r| matches!(r, SpecRow::Area(_))));
+
+        // A test says what it names, and f lists it to jump to.
+        let test = rows(&app)
+            .iter()
+            .position(|r| matches!(r, SpecRow::Test(..)))
+            .unwrap();
+        go_to(&mut app, test);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("names core.rs (f)"), "{screen}");
+        press(&mut app, &[KeyCode::Char('f')]);
+        assert!(matches!(app.screen(), Screen::Locations(_)));
+        press(&mut app, &[KeyCode::Enter]);
+        assert!(matches!(app.screen(), Screen::Explorer));
+        assert_eq!(app.viewer.as_ref().unwrap().path, "src/core.rs");
+
+        // And back the other way: U on the file lists the tests that name it.
+        press(&mut app, &[KeyCode::Char('U')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("1 test names core.rs"), "{screen}");
+        assert!(screen.contains("a review parses"), "{screen}");
+
+        // Back on the specification, Esc first widens the area, then leaves.
+        press(&mut app, &[KeyCode::Char('q'), KeyCode::Char('P')]);
+        go_to(&mut app, area);
+        press(&mut app, &[KeyCode::Enter, KeyCode::Esc]);
+        assert!(matches!(app.screen(), Screen::Spec(_)));
+        assert!(rows(&app).iter().any(|r| matches!(r, SpecRow::Area(_))));
+        press(&mut app, &[KeyCode::Esc]);
+        assert!(matches!(app.screen(), Screen::Explorer));
+    }
+
+    /// Thirty tests in two files, all added by the last commit: enough that every list folds.
+    #[test]
+    fn long_lists_fold_and_search() {
+        use super::app::SpecRow;
+        let dir = scratch_repo();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}");
+        };
+        for file in ["one", "two"] {
+            let tests: String = (0..15)
+                .map(|i| format!("#[test]\nfn {file}_number_{i}() {{\n    assert!(true);\n}}\n\n"))
+                .collect();
+            std::fs::write(dir.path().join(format!("{file}.rs")), tests).unwrap();
+        }
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "thirty tests"]);
+        let mut app = App::new(scratch_session(dir.path()), None);
+        let mut term = Terminal::new(TestBackend::new(140, 50)).unwrap();
+        let rows = |app: &App| match app.screen() {
+            Screen::Spec(s) => s.rows.items.clone(),
+            _ => panic!("not the specification"),
+        };
+        let fold = |app: &App, label: &str| {
+            rows(app)
+                .iter()
+                .position(|r| matches!(r, SpecRow::Fold { label: l, .. } if l == label))
+                .unwrap_or_else(|| panic!("no fold {label}"))
+        };
+        let go_to = |app: &mut App, at: usize| {
+            press(app, &[KeyCode::Home]);
+            press(app, &vec![KeyCode::Char('j'); at]);
+        };
+        let tests = |app: &App| {
+            rows(app)
+                .iter()
+                .filter(|r| matches!(r, SpecRow::Test(..)))
+                .count()
+        };
+
+        // The last commit added thirty tests: one closed row says so, not thirty.
+        press(&mut app, &[KeyCode::Char('P'), KeyCode::Char('s')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("▸ added 30"), "{screen}");
+        assert!(!rows(&app).iter().any(|r| matches!(r, SpecRow::Change(..))));
+        // Opened, it is two files of fifteen, each folded.
+        let added = fold(&app, "added");
+        go_to(&mut app, added);
+        press(&mut app, &[KeyCode::Enter]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("▸ one.rs 15"), "{screen}");
+        assert!(!rows(&app).iter().any(|r| matches!(r, SpecRow::Change(..))));
+
+        // The tests as they are: the unit level is folded, and opens to files, then tests.
+        assert_eq!(tests(&app), 0, "thirty tests start folded");
+        let unit = fold(&app, "Unit");
+        go_to(&mut app, unit);
+        press(&mut app, &[KeyCode::Enter]);
+        let one = rows(&app)
+            .iter()
+            .rposition(|r| matches!(r, SpecRow::Fold { label, .. } if label == "one.rs"))
+            .unwrap();
+        go_to(&mut app, one);
+        press(&mut app, &[KeyCode::Enter]);
+        assert_eq!(tests(&app), 15);
+        // h, from a test inside, closes the file it is in and leaves the cursor on it.
+        press(&mut app, &[KeyCode::Char('j'), KeyCode::Char('h')]);
+        assert_eq!(tests(&app), 0);
+        match app.screen() {
+            Screen::Spec(s) => assert!(
+                matches!(&s.rows.items[s.rows.cursor], SpecRow::Fold { label, .. } if label == "one.rs")
+            ),
+            _ => panic!(),
+        }
+
+        // A search, as it is typed: every word must match; Esc clears it, then leaves.
+        press(&mut app, &[KeyCode::Char('/')]);
+        for ch in "two 1".chars() {
+            app.handle_key(key(ch));
+        }
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("6 tests match \"two 1\""), "{screen}");
+        assert_eq!(tests(&app), 6, "two_number_1 and 10 to 14");
+        press(&mut app, &[KeyCode::Enter, KeyCode::Esc]);
+        assert_eq!(tests(&app), 0);
+        assert!(matches!(app.screen(), Screen::Spec(_)));
+    }
+
+    #[test]
+    fn a_repository_that_appears_later_joins_the_workspace() {
+        use super::workspace::Workspace;
+        let parent = tempfile::tempdir().unwrap();
+        let init = |name: &str| {
+            let dir = parent.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+        };
+        init("first");
+        let config = parent.path().join("config.toml");
+        let opened =
+            crate::session::open_targets(parent.path(), &[], Some(config), |_| {}).unwrap();
+        let mut ws = Workspace::new(opened.targets);
+        ws.watch(opened.checkouts);
+        assert!(!ws.find_new());
+        init("second");
+        assert!(ws.find_new());
+        assert_eq!(ws.apps.len(), 2);
+        assert_eq!(ws.active, 0, "the reader stays where they were");
+        let message = &ws.app().message.as_ref().unwrap().0;
+        assert!(message.contains("new repository 2: second"), "{message}");
+        let mut term = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        let strip = draw_ws(&mut term, &mut ws)
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(strip.contains("2 second"), "{strip}");
+        assert!(!ws.find_new(), "found once");
     }
 
     #[test]

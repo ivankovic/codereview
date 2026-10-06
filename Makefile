@@ -1,4 +1,4 @@
-.PHONY: build build-web test integration-test browser-test check fmt clippy install deploy
+.PHONY: build build-web test integration-test browser-test e2e check fmt clippy install deploy
 
 build:
 	cargo build --release
@@ -25,6 +25,13 @@ perf:
 # else reads what the server sends, which a clipped menu does not change.
 browser-test:
 	cargo nextest run --features web --run-ignored all -E 'binary(browser)' --no-capture
+
+# The end-to-end tests, both halves: the terminal UI in a pseudo-terminal (also part of `make
+# test`) and the page in a real browser. Each test leaves its recording and its steps under
+# target/e2e/.
+e2e:
+	cargo nextest run -E 'binary(terminal)'
+	$(MAKE) browser-test
 
 fmt:
 	cargo fmt --check

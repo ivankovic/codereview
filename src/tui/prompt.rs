@@ -32,6 +32,11 @@ pub enum PromptKind {
         context: Vec<(String, String)>,
     },
     SymbolSearch,
+    /// The specification's search, which applies as it is typed. `was` is what it was
+    /// before, put back when the prompt is cancelled.
+    SpecSearch {
+        was: String,
+    },
 }
 
 #[derive(Debug, Clone)]

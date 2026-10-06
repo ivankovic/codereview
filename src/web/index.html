@@ -48,6 +48,56 @@ header #branch { max-width: 28vw; overflow: hidden; text-overflow: ellipsis; whi
 header .tabs button { border-radius: 0; border: none; border-bottom: 2px solid transparent; background: none; }
 header .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
 .spacer { flex: 1; }
+#back { font-size: 18px; line-height: 1; padding: 2px 10px; }
+/* The views inside a tab: Code is files, changes and history; Review is comments, notes and
+   the agent. One row under the header, the one shown lit. */
+#subnav { display: flex; gap: 4px; padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
+#subnav[hidden] { display: none; }
+#subnav button { border: none; background: none; border-radius: 14px; padding: 3px 12px; }
+#subnav button.active { background: var(--cursor); color: var(--accent); }
+/* The summary: a few cards that each answer a question and lead to the view that says more. */
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel); cursor: pointer; }
+.card:hover { border-color: var(--accent); }
+.card h3 { margin: 0 0 6px; font-size: 14px; }
+.card .big { font-size: 20px; font-weight: 600; }
+.card.bad { border-left: 4px solid var(--del-fg); }
+.card.bad h3, .card .bad { color: var(--del-fg); }
+.card.good h3, .card .good { color: var(--ins-fg); }
+.card.warn h3 { color: var(--moved); }
+.card .row { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
+.card .more { margin-top: 6px; color: var(--accent); font-size: 12px; }
+table.areas { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+table.areas th { font-weight: 600; font-size: 11px; color: var(--dim); text-align: right; padding: 2px 6px; }
+table.areas th:first-child, table.areas td:first-child { text-align: left; }
+table.areas td { text-align: right; padding: 4px 6px; border-top: 1px solid var(--border); }
+table.areas tr.area { cursor: pointer; }
+table.areas tr.area:hover td { background: var(--cursor); }
+table.areas td.zero { color: var(--dim); }
+table.areas td.gap { color: var(--moved); }
+/* The tests: chips to narrow them to one area, then each level folded, a test a card. */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 14px; }
+.chips button { border-radius: 14px; padding: 3px 12px; }
+.chips button.on { border-color: var(--accent); color: var(--accent); background: var(--cursor); }
+.spec details.fold > summary { cursor: pointer; padding: 6px; border-radius: 4px; list-style: none; display: flex; gap: 8px; align-items: baseline; }
+.spec details.fold > summary:hover { background: var(--cursor); }
+.spec details.fold > summary b { color: var(--accent); }
+.spec details.fold .fold { margin-left: 14px; }
+.spec .fold-empty { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; padding: 6px 6px 6px calc(6px + 1.1em); }
+.spec .fold-empty b { color: var(--accent); }
+.spec input.find { width: 100%; max-width: 40em; box-sizing: border-box; margin: 2px 0 8px; }
+.spec .chips.kinds { margin: 8px 0 4px; }
+.spec .chips.kinds .what { font-size: 12px; }
+button.more-rows { margin: 6px 0 6px 22px; }
+button.more-rows[hidden] { display: none; }
+.spec details > summary::-webkit-details-marker { display: none; }
+.spec details > summary::before { content: '▸'; display: inline-block; width: 1.1em; color: var(--dim); }
+.spec details[open] > summary::before { content: '▾'; }
+.spec .card-test { display: flex; gap: 10px; align-items: baseline; padding: 6px 8px 6px 22px; border-radius: 4px; cursor: pointer; }
+.spec .card-test:hover { background: var(--cursor); }
+.spec .card-test .sub { font-size: 12px; margin-top: 1px; }
+.spec .card-test .sub a { cursor: pointer; }
+.spec .card-test.ignored .label { color: var(--dim); }
 .dim { color: var(--dim); }
 main { flex: 1; display: flex; min-height: 0; }
 aside#tree { width: 280px; min-width: 180px; max-width: 50vw; overflow: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 6px 0; resize: horizontal; }
@@ -117,6 +167,41 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .list .item .mono { font-family: ui-monospace, monospace; }
 /* The overview: what a repository opens on. Sections of plain prose and short lists, since
    the point is to be read rather than operated. */
+.e2e { padding: 10px 14px 20px; overflow: auto; --term-bg: #101215; --term-fg: #d6d8de; }
+.e2e h3 { margin: 18px 0 8px; font-size: 13px; color: var(--accent); }
+.e2e .e2e-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.e2e .e2e-head .more { margin-left: auto; cursor: pointer; }
+.e2e .bad, .e2e-test.failed .mark { color: var(--del-fg); }
+.e2e .fresh, .e2e-test.passed .mark { color: var(--ins-fg); }
+.e2e .stale { color: var(--moved); }
+.e2e-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; align-items: start; }
+.e2e-test { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel); min-width: 0; }
+.e2e-test.failed { border-color: var(--del-fg); }
+.e2e-test .head { display: flex; gap: 8px; align-items: baseline; font-size: 14px; }
+.e2e-test .head .label { flex: 1; }
+.e2e-test .mark { font-weight: bold; }
+.e2e-test.norec .mark { color: var(--dim); }
+.e2e-test .meta { font-size: 12px; margin: 2px 0 8px; overflow-wrap: anywhere; }
+.e2e-test .meta a { cursor: pointer; }
+.e2e-test .badge.sec { color: var(--moved); border-color: var(--moved); }
+.e2e-test .media video { width: 100%; max-height: 70vh; background: #000; border-radius: 4px; display: block; }
+.e2e-test .media .none { padding: 18px 8px; text-align: center; border: 1px dashed var(--border); border-radius: 4px; }
+.e2e-test .cast pre.term { margin: 0; padding: 4px; background: var(--term-bg); color: var(--term-fg); border-radius: 4px; line-height: 1.2; overflow: hidden; white-space: pre; font-family: ui-monospace, Menlo, Consolas, monospace; max-width: 100%; box-sizing: content-box; }
+.e2e-test .controls { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.e2e-test .controls input { flex: 1; min-width: 0; }
+.e2e-test .fail { margin-top: 8px; color: var(--del-fg); font-size: 12px; }
+.e2e-test .fail pre { margin: 4px 0 0; max-height: 10em; overflow: auto; color: var(--fg); background: var(--code-bg); padding: 4px 6px; border-radius: 4px; white-space: pre-wrap; }
+.e2e-test details.steps { margin-top: 8px; font-size: 12px; }
+.e2e-test details.steps summary { cursor: pointer; color: var(--dim); }
+.e2e-test details.steps ol { list-style: none; margin: 4px 0 0; padding: 0; }
+.e2e-test details.steps li { padding: 2px 4px; border-radius: 3px; cursor: pointer; }
+.e2e-test details.steps li.check { color: var(--dim); }
+.e2e-test details.steps li.failed { color: var(--del-fg); }
+.e2e-test details.steps li.now { background: var(--cursor); color: var(--fg); }
+.e2e-test details.steps .at { color: var(--dim); margin-right: 4px; }
+.e2e .finding { max-width: 70ch; margin: 24px auto; border: 1px solid var(--moved); border-radius: 8px; padding: 14px 18px; background: var(--panel); }
+.e2e .finding h2 { margin: 0 0 8px; color: var(--moved); font-size: 17px; }
+.e2e .finding .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .overview { padding: 10px 14px 20px; overflow: auto; }
 .overview section { margin-bottom: 18px; }
 .overview h3 { margin: 0 0 6px; font-size: 13px; color: var(--accent); }
@@ -144,6 +229,24 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .overview .suite .item.ignored .grow { color: var(--dim); }
 .overview .suite .caveat { font-size: 12px; margin: 0 6px 4px; max-width: 80ch; }
 .overview .asof { font-size: 12px; margin: 4px 6px; font-style: italic; }
+/* The specification: the tests by level, and what a stretch of history did to them, the ones
+   that now ask less leading in the colour of a deletion. */
+.stretches { display: flex; gap: 4px; flex-wrap: wrap; }
+.stretches button.on { border-color: var(--accent); color: var(--accent); }
+.what { font-size: 11px; font-family: ui-monospace, monospace; min-width: 6.5em; text-transform: uppercase; letter-spacing: .03em; }
+.what.removed, .what.skipped, .what.weakened { color: var(--del-fg); font-weight: 600; }
+.what.added, .what.unskipped { color: var(--ins-fg); }
+.what.changed { color: var(--upd-fg); }
+.what.renamed { color: var(--mov-fg); }
+.card .stale { font-size: 12px; }
+.card .stale.fresh { color: var(--ins-fg); }
+.card .stale.old { color: var(--moved); }
+.spec .item .grow { flex: 1; }
+.spec .item .where { font-size: 12px; white-space: nowrap; }
+.spec .alarm h4 { color: var(--del-fg); }
+.spec .item .was { font-size: 12px; }
+.spec .empty { margin: 0 6px; max-width: 80ch; }
+.spec .empty.finding { color: var(--moved); }
 .checks .check { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; row-gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .checks .check .name { font-weight: 600; min-width: 6em; }
 .checks .check .verdict { font-size: 12px; }
@@ -243,7 +346,7 @@ body.zen.hasmsg footer { display: flex; }
    pane at a time. */
 @media (max-width: 700px), (max-height: 500px) {
   .phone { display: revert; }
-  body { padding-bottom: calc(46px + env(safe-area-inset-bottom)); }
+  body { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
   body.zen { padding-bottom: 0; }
   header { padding: 6px 10px; gap: 8px; }
   header #branch { max-width: 40vw; }
@@ -258,6 +361,8 @@ body.zen.hasmsg footer { display: flex; }
   /* One row, measured rather than hoped for: the path gives way before the buttons do, and
      the line count goes — the file it counts is directly underneath. */
   .panelhead .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* A file's header is one row whatever the file is called: its path gives way first. */
+  .panelhead.file .path { flex: 1 1 0; }
   .panelhead .lines { display: none; }
   /* The file's other buttons, as a menu under the one that opens it. `.panelhead` is sticky,
      which already positions the menu; saying `relative` here instead would unstick every
@@ -281,14 +386,49 @@ body.zen.hasmsg footer { display: flex; }
   footer { display: none; }
   body.hasmsg footer { display: flex; }
   body.hasmsg footer #hint { display: none; }
-  /* Log lives under Changes and Notes under Review here; both views keep their own address. */
-  header .tabs button[data-view=log], header .tabs button[data-view=notes] { display: none; }
+  /* Sized for a finger: text a phone can be read at, and nothing to tap under 44 pixels. */
+  body { font-size: 16px; }
+  button.small { font-size: 13px; padding: 6px 10px; }
+  header .tabs button { font-size: 14px; min-height: 56px; }
+  #back { font-size: 24px; min-width: 44px; min-height: 40px; }
+  #subnav { position: sticky; top: 0; z-index: 4; padding: 6px 10px; gap: 6px; overflow-x: auto; }
+  #subnav button { flex: 1; min-height: 40px; font-size: 15px; border: 1px solid var(--border); }
+  .overview { padding: 12px 12px 24px; }
+  .overview h3 { font-size: 16px; }
+  .overview h4 { font-size: 14px; }
+  .overview .item { min-height: 44px; padding: 10px 8px; align-items: center; }
+  .overview .suite summary, .spec details.fold > summary { min-height: 44px; display: flex; align-items: center; gap: 6px; font-size: 15px; }
+  .spec details.fold .fold { margin-left: 8px; }
+  .spec input.find { font-size: 16px; min-height: 44px; }
+  button.more-rows { min-height: 44px; margin-left: 8px; }
+  .overview .fig { font-size: 15px; } .overview .fig b { font-size: 19px; }
+  .overview .item .why, .overview .suite .caveat, .overview .asof { font-size: 14px; }
+  .summary { grid-template-columns: 1fr; }
+  .card { padding: 14px; }
+  .card h3 { font-size: 16px; }
+  .card .more { font-size: 14px; }
+  table.areas th { font-size: 13px; }
+  table.areas td { padding: 12px 6px; }
+  .chips button { min-height: 40px; font-size: 15px; padding: 6px 14px; }
+  .spec .card-test { min-height: 44px; padding: 10px 8px; }
+  .spec .card-test .sub { font-size: 14px; }
+  .what { font-size: 13px; }
+  .card .stale { font-size: 14px; }
+  .spec .item .where, .spec .item .was { font-size: 14px; }
+  .panelhead button { min-height: 40px; }
+  .wide { display: none; }
+  .list .item { min-height: 44px; padding: 10px 8px; }
   /* Explore is the tree, or the file, never both; the overview is neither and takes it all. */
   aside#tree { width: auto; min-width: 0; max-width: none; flex: 1; border-right: none; }
   body[data-view=explore]:not(.showfile) #content { display: none; }
   body[data-view=explore].showfile #tree { display: none; }
   body[data-view=overview] #tree { display: none; }
   .overview .item .why { flex-basis: 100%; text-align: left; }
+  /* A change is a card: what happened and the test on top, where it is underneath. */
+  .spec .item { flex-wrap: wrap; row-gap: 2px; }
+  .spec .item .grow { flex-basis: 50%; }
+  .spec .item .where { flex-basis: 100%; padding-left: calc(6.5em + 10px); white-space: normal; }
+  .panelhead .stretches button { padding: 6px 10px; font-size: 14px; }
   /* Log: the commits, or one commit. */
   .split > div:first-child { max-width: none; border-right: none; }
   .split:not(.detail) > div:last-child { display: none; }
@@ -298,7 +438,7 @@ body.zen.hasmsg footer { display: flex; }
   .list .item .grow:not(.mono) { flex-basis: 100%; order: 2; }
   .list .item .actions { flex-basis: 100%; order: 3; }
   .cmt .text { flex-basis: 100%; }
-  #drawer { position: fixed; left: 0; right: 0; bottom: calc(46px + env(safe-area-inset-bottom)); height: 50vh; width: auto; min-width: 0; max-width: none; border-left: none; border-top: 1px solid var(--accent); z-index: 4; box-shadow: 0 -8px 24px rgba(0,0,0,.3); }
+  #drawer { position: fixed; left: 0; right: 0; bottom: calc(56px + env(safe-area-inset-bottom)); height: 50vh; width: auto; min-width: 0; max-width: none; border-left: none; border-top: 1px solid var(--accent); z-index: 4; box-shadow: 0 -8px 24px rgba(0,0,0,.3); }
   .sbs { grid-template-columns: 1fr; }
   [data-act=layout] { display: none; }
   .hunknav { display: flex; flex-direction: column; gap: 6px; position: fixed; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 4; }
@@ -328,17 +468,15 @@ body.zen.hasmsg footer { display: flex; }
 </head>
 <body data-view="explore">
 <header>
+  <button id="back" title="back to where you were" hidden>‹</button>
   <span class="brand">codereview</span>
   <select id="repo" title="which repository the page shows" hidden></select>
   <span id="branch" class="dim"></span>
   <nav class="tabs">
-    <button data-view="overview">Overview</button>
-    <button data-view="explore" class="active">Explore</button>
-    <button data-view="changes">Changes</button>
-    <button data-view="log">Log</button>
-    <button data-view="review">Review <span id="pending" class="badge"></span></button>
-    <button data-view="notes">Notes</button>
-    <button data-view="agent">Agent <span id="agentdot" class="badge" hidden></span></button>
+    <button data-view="e2e" data-group="tests" title="what it does: the end-to-end tests and their recordings, then every test">Tests</button>
+    <button data-view="overview" data-group="overview" title="how the repository is doing">Summary</button>
+    <button data-view="explore" data-group="code" class="active" title="files, changes and history">Code</button>
+    <button data-view="review" data-group="review" title="comments, notes and the agent">Review <span id="pending" class="badge"></span><span id="agentdot" class="badge" hidden></span></button>
   </nav>
   <span class="spacer"></span>
   <button id="more" class="phone" title="search, colour scheme, and more">⋯</button>
@@ -351,6 +489,7 @@ body.zen.hasmsg footer { display: flex; }
     <button id="helpbtn">?</button>
   </div>
 </header>
+<nav id="subnav" hidden></nav>
 <main>
   <aside id="tree"></aside>
   <section id="content"><div class="center">Pick a file from the tree.</div></section>
@@ -912,14 +1051,16 @@ function renderFile() {
   setTabs('explore');
   const st = state.statusLetters[f.path] || '';
   const head = document.createElement('div');
-  head.className = 'panelhead';
+  head.className = 'panelhead file';
   head.innerHTML = `<button class="phone" data-act="up" title="back to the file tree">‹ files</button><span class="path">${esc(f.path)}</span>
     ${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
     <span class="dim lines">${f.total_lines > f.lines.length ? 'first ' + f.lines.length + ' of ' + f.total_lines : f.lines.length} lines</span>
     <span class="spacer"></span>
+    <button class="wide" data-act="tests" title="the tests that name something this file defines">Tests</button>
     <button data-act="comment" title="comment on the file as a whole">Comment</button>
     <button class="phone" data-act="menu" title="everything else this file can do">⋯</button>
     <span class="acts">
+      <button class="phone" data-act="tests" title="the tests that name something this file defines">Tests</button>
       <button data-act="symbols" title="definitions in this file (@)">Symbols</button>
       <button data-act="note">Note</button>
       <button data-act="history" ${state.hasCommits ? '' : 'disabled'}>History</button>
@@ -930,6 +1071,7 @@ function renderFile() {
     </span>`;
   content.appendChild(head);
   on(head, 'up', showTree);
+  head.querySelectorAll('[data-act=tests]').forEach(b => b.onclick = () => showTestsOf(f.path));
   on(head, 'note', () => addNote(f.path));
   on(head, 'comment', () => addPathComment(f.path));
   on(head, 'symbols', () => showFileSymbols(f.path));
@@ -1127,6 +1269,7 @@ function showDrawer(title, hits) {
   d.innerHTML = `<div class="panelhead"><span class="path">${esc(title)}</span><span class="spacer"></span><button class="small" data-act="close">✕</button></div><div class="list"></div>`;
   on(d, 'close', () => { d.hidden = true; });
   const list = d.querySelector('.list');
+  if (!hits.length) list.innerHTML = '<div class="center">Nothing to show.</div>';
   for (const h of hits) {
     const el = document.createElement('div');
     el.className = 'item';
@@ -1134,6 +1277,17 @@ function showDrawer(title, hits) {
     el.onclick = () => openFile(h.path, h.line);
     list.appendChild(el);
   }
+}
+
+// The tests that name something in `path`, in the drawer: the way from a file to what checks
+// it, as a test's card is the way back.
+async function showTestsOf(path) {
+  try {
+    const tests = await api('/tests_of?path=' + encodeURIComponent(path));
+    const name = path.split('/').pop();
+    showDrawer(tests.length ? `${tests.length} ${tests.length === 1 ? 'test names' : 'tests name'} ${name}` : `No test names ${name}`,
+      tests.map(t => ({ path: t.path, line: t.line, label: t.label, text: `${LEVEL_NAMES[t.level]}${t.ignored ? ', skipped' : ''}` })));
+  } catch (e) { fail(e); }
 }
 
 $('#symbol').onkeydown = e => { if (e.key === 'Enter') { searchSymbols(e.target.value); e.target.blur(); } if (e.key === 'Escape') e.target.blur(); };
@@ -1366,6 +1520,11 @@ async function showOverview() {
       <button data-act="files">Files</button>
       <button data-act="explain" title="have the agent write an orientation into OVERVIEW.md, under About">Explain this repository</button></div>
       <div class="overview">
+        <section class="summary">
+          <div class="card" data-card="changes"><h3>Tests this week</h3><div class="dim">reading the history…</div></div>
+          <div class="card" data-card="run"><h3>Last test run</h3><div class="dim">reading the checks…</div></div>
+          <div class="card" data-card="areas"><h3>Tests by area</h3><div class="dim">reading the tests…</div></div>
+        </section>
         <section class="state">
           <div class="figures">
             <span class="fig"><b>${st.files}</b> files</span>
@@ -1383,13 +1542,14 @@ async function showOverview() {
         <section><h3>What the rest of it leans on</h3><div class="leaning dim">reading the symbols…</div></section>
         <section class="testing"><h3>Tests</h3>
           <div class="checks dim">reading the checks…</div>
-          <h4>What they say</h4><div class="suite dim">reading the tests…</div>
+          <div class="suite dim">reading the tests…</div>
         </section>
         ${o.docs.length ? '<section><h3>Also written down</h3><div class="docs"></div></section>' : ''}
         ${st.biggest.length ? '<section><h3>Biggest files</h3><div class="biggest"></div></section>' : ''}
       </div>`;
     on(content, 'files', showTree);
     on(content, 'explain', explainRepository);
+    loadSummary(content);
     on(content, 'changed', () => showChanges());
     on(content, 'pending', showReview);
 
@@ -1450,6 +1610,109 @@ async function loadSymbolParts(content, link) {
   if (fromFile) setTimeout(() => { if (content.isConnected) loadSymbolParts(content, link); }, 2000);
 }
 
+// The cards the overview opens on. Each answers one question and leads to the view that says
+// more: what the week did to the tests, how the last run went, and what each area has.
+async function loadSummary(content) {
+  const card = name => content.querySelector(`[data-card=${name}]`);
+  api('/analysis').then(checks => { if (card('run')) renderRunCard(card('run'), checks); })
+    .catch(e => { if (card('run')) card('run').innerHTML = '<h3>Last test run</h3><div class="dim">could not read the checks: ' + esc(e.message) + '</div>'; });
+  try {
+    const spec = await api('/spec');
+    if (!card('changes')) return;
+    renderChangesCard(card('changes'), spec);
+    renderAreasCard(card('areas'), spec);
+    // Areas come from OVERVIEW.md while the index is built, by where tests are rather than
+    // what they name; ask again until they come from the index.
+    if (spec.as_of) setTimeout(() => { if (card('areas')) loadSummaryAgain(content); }, 2000);
+  } catch (e) {
+    if (card('changes')) card('changes').innerHTML = '<h3>Tests this week</h3><div class="dim">could not read them: ' + esc(e.message) + '</div>';
+  }
+}
+
+async function loadSummaryAgain(content) {
+  try {
+    const spec = await api('/spec');
+    const areas = content.querySelector('[data-card=areas]');
+    if (!areas) return;
+    renderAreasCard(areas, spec);
+    if (spec.as_of) setTimeout(() => loadSummaryAgain(content), 2000);
+  } catch (e) { console.error(e); }
+}
+
+const ALARMING = ['removed', 'skipped', 'weakened'];
+
+function renderChangesCard(card, spec) {
+  const alarming = spec.changes.filter(c => ALARMING.includes(c.what));
+  const counts = {};
+  for (const c of spec.changes) if (!ALARMING.includes(c.what)) counts[c.what] = (counts[c.what] || 0) + 1;
+  const said = Object.entries(counts).map(([w, n]) => `${n} ${w}`).join(', ');
+  if (alarming.length) {
+    card.className = 'card bad';
+    card.innerHTML = `<h3>${alarming.length} ${alarming.length === 1 ? 'test checks' : 'tests check'} less than a week ago</h3>`
+      + alarming.slice(0, 3).map(c => `<div class="row"><span class="what ${c.what}">${c.what}</span><span>${esc(c.label)}${c.checks && c.checks[0] !== c.checks[1] ? ` <span class="dim">${c.checks[0]} → ${c.checks[1]} assertions</span>` : ''}</span></div>`).join('')
+      + (alarming.length > 3 ? `<div class="dim">and ${alarming.length - 3} more</div>` : '')
+      + `<div class="more">${said ? 'Also ' + esc(said) + '. ' : ''}See them in Tests ›</div>`;
+  } else {
+    card.className = 'card good';
+    card.innerHTML = `<h3>No test lost ground this week</h3><div class="dim">${said ? esc(said) : 'No test was added, changed or removed.'}</div><div class="more">Tests ›</div>`;
+  }
+  card.onclick = () => showSpec({ stretch: 'week' });
+}
+
+// The check run most recently, or that left the newest result: what it said and whether the
+// code has moved since.
+function renderRunCard(card, checks) {
+  const time = c => (c.last && c.last.started) || (c.figures && c.figures.as_of) || '';
+  const ran = checks.filter(time).sort((a, b) => Date.parse(time(b)) - Date.parse(time(a)));
+  if (!ran.length) {
+    const first = checks[0];
+    card.className = 'card warn';
+    const how = first ? (first.name === first.run ? '' : ' runs ' + first.run) : '';
+    card.innerHTML = `<h3>No test run yet</h3><div class="dim">${first ? '<span class="mono">' + esc(first.name) + '</span>' + esc(how) + (first.suggested ? ', found in the repository' : '') : 'Nothing here says how to run the tests.'}</div>${first ? `<div class="more"><a data-act="run">Run ${esc(first.name)} ›</a></div>` : ''}`;
+    // Only the link runs it: a run executes the repository's own code, and a card is too easy
+    // a thing to brush on a phone.
+    card.onclick = () => document.querySelector('#content .testing')?.scrollIntoView({ behavior: 'smooth' });
+    on(card, 'run', e => {
+      e.stopPropagation();
+      api('/analysis/run', { body: { name: first.name } })
+        .then(() => { msg(first.name + ' started'); card.querySelector('h3').textContent = first.name + ': running'; })
+        .catch(fail);
+    });
+    return;
+  }
+  const c = ran[0], last = c.last, f = c.figures;
+  const running = last && last.running;
+  const failed = last && !running ? last.exit !== 0 : !!(f && f.failed);
+  card.className = 'card ' + (running ? '' : failed ? 'bad' : 'good');
+  const bits = [];
+  if (f && f.tests !== null && f.tests !== undefined) {
+    if (f.failed) bits.push(`${f.failed} failed`);
+    if (f.skipped) bits.push(`${f.skipped} skipped`);
+  }
+  if (f && f.coverage !== null && f.coverage !== undefined) bits.push(f.coverage.toFixed(1) + '% of lines covered');
+  bits.push(ago(time(c)));
+  const tests = f && f.tests !== null && f.tests !== undefined ? `<div class="big">${f.tests} ${f.tests === 1 ? 'test' : 'tests'}</div>` : '';
+  card.innerHTML = `<h3>${esc(c.name)}: ${running ? 'running' : failed ? 'failed' : 'passed'}</h3>${tests}<div class="dim">${esc(bits.join(' · '))}</div>${staleness(c.stale)}<div class="more">All checks ›</div>`;
+  card.onclick = () => document.querySelector('#content .testing')?.scrollIntoView({ behavior: 'smooth' });
+}
+
+const LEVEL_NAMES = { security: 'security', end_to_end: 'end to end', integration: 'integration', unit: 'unit' };
+
+// One row per part of the code: how many tests of each level count towards it, and how many
+// of its files no test names. A row opens the tests narrowed to that part.
+function renderAreasCard(card, spec) {
+  card.className = 'card';
+  const rows = spec.areas.map(a => `<tr class="area" data-area="${esc(a.name)}"><td>${esc(a.name)}</td>`
+    + a.levels.map(n => `<td class="${n ? '' : 'zero'}">${n}</td>`).join('')
+    + `<td class="${a.unreached ? 'gap' : 'zero'}">${a.files ? a.unreached + ' of ' + a.files : ''}</td></tr>`).join('');
+  card.innerHTML = `<h3>Tests by area</h3><table class="areas"><tr><th>area</th><th title="security">sec</th><th title="end to end">e2e</th><th title="integration">int</th><th>unit</th><th title="files of code that no test names">untested</th></tr>${rows}</table>`
+    + (spec.as_of ? '<div class="dim asof">From OVERVIEW.md, by where the tests are; reading the repository…</div>' : '');
+  card.onclick = e => {
+    const tr = e.target.closest('tr.area');
+    showSpec({ stretch: state.specStretch || 'week', area: tr ? tr.dataset.area : undefined });
+  };
+}
+
 // Where a list from OVERVIEW.md stands: the commit it was written at, how far behind that
 // is, and that the fresh one is on its way.
 function asOfNote(as_of) {
@@ -1472,22 +1735,12 @@ function renderSuite(into, inv, link) {
     into.innerHTML = `<div class="dim">No tests found. What counts as one: a <code>#[test]</code> function in Rust, a <code>test_</code> function where pytest looks, a <code>TestXxx</code> in a Go <code>_test.go</code> file, an <code>it()</code> or <code>test()</code> in a <code>.test</code> or <code>.spec</code> file.</div>`;
   } else {
     const files = inv.files.length;
-    into.innerHTML = `<div class="dim">${inv.total} ${inv.total === 1 ? 'test' : 'tests'} in ${files} ${files === 1 ? 'file' : 'files'}${inv.ignored ? ' · ' + inv.ignored + ' marked to skip' : ''}</div>`;
-    for (const f of inv.files) {
-      const d = document.createElement('details');
-      const skipped = f.tests.filter(t => t.ignored).length;
-      d.innerHTML = `<summary><span class="mono">${esc(f.path)}</span> <span class="dim">${f.tests.length}${skipped ? ', ' + skipped + ' skipped' : ''}</span></summary>`;
-      for (const t of f.tests) {
-        const el = document.createElement('div');
-        el.className = 'item test' + (t.ignored ? ' ignored' : '');
-        el.title = t.name + ' — line ' + t.line;
-        el.innerHTML = `<span class="grow">${esc(t.label)}</span>${t.ignored ? '<span class="dim why">skipped</span>' : ''}`;
-        // From OVERVIEW.md a test has no line; the file opens at the top.
-        el.onclick = () => t.line ? openFile(t.path, t.line) : openFile(t.path);
-        d.appendChild(el);
-      }
-      into.appendChild(d);
-    }
+    into.innerHTML = '';
+    const all = document.createElement('div');
+    all.className = 'item';
+    all.innerHTML = `<span class="grow">${inv.total} ${inv.total === 1 ? 'test' : 'tests'} in ${files} ${files === 1 ? 'file' : 'files'}${inv.ignored ? ', ' + inv.ignored + ' marked to skip' : ''}: what they say, by level and area</span><span class="dim">Tests ›</span>`;
+    all.onclick = () => showSpec();
+    into.appendChild(all);
   }
   if (inv.untested.length) {
     const head = document.createElement('h4');
@@ -1501,6 +1754,550 @@ function renderSuite(into, inv, link) {
     for (const u of inv.untested) link(list, u.path, u.names.join(', '));
     into.appendChild(list);
   }
+}
+
+// ----- specification --------------------------------------------------------------------------
+
+// What the tests say the system does, by level, and what a stretch of history did to them.
+// The repository is what is reviewed: the stretch is only what is marked in it, the last week
+// unless another is picked, or one commit when the log sent us here.
+const STRETCHES = [['week', 'last 7 days'], ['last', 'last commit'], ['uncommitted', 'uncommitted']];
+const LEVEL_SAYS = {
+  security: ['Tests whose name or path is about signing in, secrets, permissions or attacks.',
+    'No test is named for security: nothing here says what an attacker cannot do.'],
+  end_to_end: ['Tests that drive the whole system the way a person would: through a browser, or a real server.',
+    'No test drives the whole system: nothing here shows it working the way someone would use it.'],
+  integration: ['Tests that reach the system through its public interface.', 'None found.'],
+  unit: ['Everything else: one piece at a time.', 'None found.'],
+};
+
+// ----- end to end ---------------------------------------------------------------------------
+
+// What a repository opens on: its end-to-end tests, the ones that drive it the way a person
+// does, each with the recording its last run left. Everything else is reached from here.
+async function showEndToEnd() {
+  setZen(false);
+  setTabs('e2e');
+  const route = routes.e2e();
+  navigate(route);
+  document.body.classList.remove('showfile');
+  const content = $('#content');
+  if (!content.querySelector('.e2e')) content.innerHTML = '<div class="center">reading the tests…</div>';
+  try {
+    const o = await api('/e2e');
+    if (state.view !== 'e2e' || currentRoute !== route) return;
+    renderEndToEnd(content, o);
+    // The tests came from OVERVIEW.md while the index is built; ask again until they have not.
+    if (o.as_of) setTimeout(() => { if (state.view === 'e2e' && currentRoute === route) showEndToEnd(); }, 2000);
+  } catch (e) {
+    content.innerHTML = '';
+    fail(e);
+  }
+}
+
+// What an end-to-end test of each kind of software does, for a repository that has none.
+const E2E_LOOKS_LIKE = {
+  'a web page': 'For a web page, that is a real browser opening it, tapping and typing, and checking what is on the screen, recorded as a video.',
+  'a terminal program': 'For a terminal program, that is the built program run in a pseudo-terminal, keys pressed, and the screen checked, recorded as an asciicast.',
+  'a command': 'For a command, that is the built program run with the arguments and input a person would give it, checking what it prints and what it leaves behind.',
+};
+
+function renderEndToEnd(content, o) {
+  const repo = state.repos[state.repo];
+  const num = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
+  const keep = content.querySelector('.e2e') ? content.querySelector('.e2e').scrollTop : 0;
+  const bits = [];
+  if (o.failed) bits.push(`<span class="bad">${o.failed} failed</span>`);
+  if (o.unrecorded) bits.push(`${o.unrecorded} without a recording`);
+  content.innerHTML = `<div class="panelhead"><span class="path">${esc(repo ? repo.name : 'repository')}</span>
+      <span class="spacer"></span>
+      <button data-act="summary">Summary</button>
+      <button data-act="files">Files</button></div>
+    <div class="e2e"></div>`;
+  on(content, 'summary', showOverview);
+  on(content, 'files', showTree);
+  const root = content.querySelector('.e2e');
+  if (!o.tests.length) {
+    const looks = E2E_LOOKS_LIKE[o.kind] || 'That is the software driven from outside, the way the person or program using it would, and what comes back checked.';
+    root.innerHTML = `<section class="finding">
+        <h2>No end-to-end tests</h2>
+        <p>Nothing here drives ${esc(o.kind || 'the software')} the way a person does and checks what comes back, so nothing shows that it works. That comes before reading any of its code.</p>
+        <p class="dim">${esc(looks)}</p>
+        <div class="row"><button class="primary" data-act="ask">Ask the agent to write the first ones</button>
+        ${o.total ? `<button data-act="spec">The ${num(o.total, 'test')} it has</button>` : ''}</div>
+      </section>`;
+    on(root, 'ask', () => askAgent(o.ask));
+    on(root, 'spec', () => showSpec({}));
+  } else {
+    root.innerHTML = `<div class="e2e-head"><b>${num(o.tests.length, 'end-to-end test')}</b>
+        <span class="dim">of ${num(o.total, 'test')}</span>${bits.length ? ' · ' + bits.join(' · ') : ''}
+        <a href="${routes.spec({})}" class="more">all tests ›</a></div>`;
+    if (o.as_of) root.appendChild(asOfNote(o.as_of));
+    for (const [path, tests] of groupBy(o.tests, t => t.path)) {
+      const h = document.createElement('h3');
+      h.className = 'mono';
+      h.textContent = path;
+      root.appendChild(h);
+      const grid = document.createElement('div');
+      grid.className = 'e2e-grid';
+      for (const t of tests) grid.appendChild(e2eCard(t, t.recording));
+      root.appendChild(grid);
+    }
+  }
+  if (o.orphans.length) {
+    const h = document.createElement('h3');
+    h.textContent = 'Recordings of tests no longer here';
+    root.appendChild(h);
+    const grid = document.createElement('div');
+    grid.className = 'e2e-grid';
+    for (const r of o.orphans) grid.appendChild(e2eCard(null, r));
+    root.appendChild(grid);
+  }
+  root.scrollTop = keep;
+}
+
+// How long ago a recording was made, and how far the code has moved on since.
+function recordingAge(t, r) {
+  if (!r) return '';
+  const when = r.started ? 'ran ' + ago(r.started) : 'ran';
+  const s = t && t.stale;
+  if (!s) return when;
+  if (!s.commits && !s.files) return when + ' · <span class="fresh">matches the tree</span>';
+  const parts = [];
+  if (s.commits) parts.push(`${s.commits} commit${s.commits === 1 ? '' : 's'}`);
+  if (s.files) parts.push(`${s.files} changed file${s.files === 1 ? '' : 's'}`);
+  return when + ` · <span class="stale">${parts.join(' and ')} since</span>`;
+}
+
+// One test as a card: what it says it shows, how its last run went, and the recording of it.
+// `t` is the test, `r` its recording; an orphaned recording has no test.
+function e2eCard(t, r) {
+  const card = document.createElement('div');
+  const status = !r ? 'norec' : r.passed ? 'passed' : 'failed';
+  card.className = 'e2e-test ' + status;
+  const label = t ? t.label : r.test;
+  const mark = { passed: '✓', failed: '✗', norec: '○' }[status];
+  const file = t ? t.path : r.file;
+  const line = t ? t.line : r.line;
+  card.innerHTML = `<div class="head"><span class="mark">${mark}</span><span class="label">${esc(label)}</span>
+      ${t && t.security ? '<span class="badge sec" title="its name or path is about security">security</span>' : ''}
+      ${t && t.ignored ? '<span class="badge">skipped</span>' : ''}</div>
+    <div class="meta dim">${t ? `<a data-act="source" class="mono">${esc(file)}${line ? ':' + line : ''}</a> · ${esc(t.why)}` : esc(file) + ' · its test is not there any more'}${r ? ' · ' + recordingAge(t, r) : ''}</div>
+    <div class="media"></div>
+    <div class="failures"></div>
+    <details class="steps" hidden><summary></summary><ol></ol></details>`;
+  if (t) on(card, 'source', () => openFile(t.path, t.line || undefined));
+  const media = card.querySelector('.media');
+  if (!r) {
+    media.innerHTML = '<div class="none dim">No recording yet: this test has not left one where the tool looks.</div>';
+    return card;
+  }
+  const fails = card.querySelector('.failures');
+  for (const s of r.steps.filter(s => s.kind === 'check' && s.passed === false)) {
+    const div = document.createElement('div');
+    div.className = 'fail';
+    div.innerHTML = `<b>✗ ${esc(s.text)}</b>${s.detail ? `<pre>${esc(s.detail)}</pre>` : ''}`;
+    fails.appendChild(div);
+  }
+  const player = r.kind === 'terminal' ? castPlayer(media, r) : r.kind === 'video' ? videoPlayer(media, r) : null;
+  if (!player) media.innerHTML = '<div class="none dim">The test ran, but left no recording this page can play.</div>';
+  if (r.steps.length) {
+    const details = card.querySelector('.steps');
+    details.hidden = false;
+    details.querySelector('summary').textContent = `${r.steps.length} step${r.steps.length === 1 ? '' : 's'}`;
+    const list = details.querySelector('ol');
+    r.steps.forEach((s, i) => {
+      const li = document.createElement('li');
+      li.className = s.kind + (s.passed === false ? ' failed' : '');
+      li.innerHTML = `<span class="at mono">${clock(s.at_ms)}</span> ${s.kind === 'check' ? (s.passed === false ? '✗' : '✓') + ' ' : ''}${esc(s.text)}`;
+      li.onclick = () => { if (player) player.seek(s.at_ms); };
+      list.appendChild(li);
+    });
+    if (player) player.onTime = ms => {
+      let current = -1;
+      r.steps.forEach((s, i) => { if (s.at_ms <= ms) current = i; });
+      list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('now', i === current));
+    };
+  }
+  return card;
+}
+
+const clock = ms => { const s = ms / 1000; return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`; };
+
+// Calls `load` once `el` first comes near the screen: a page of twenty videos fetches the
+// ones someone scrolls to.
+function whenVisible(el, load) {
+  if (!('IntersectionObserver' in window)) return load();
+  const seen = new IntersectionObserver(entries => {
+    if (entries.some(e => e.isIntersecting)) { seen.disconnect(); load(); }
+  }, { rootMargin: '200px' });
+  seen.observe(el);
+}
+
+// A recording's bytes, fetched with the API token like every request: a <video> pointing at
+// the API could not send it, so it plays from memory.
+async function recordingBlob(path) {
+  const res = await fetch('/api/recording?path=' + encodeURIComponent(path) + '&repo=' + state.repo,
+    { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  return res.blob();
+}
+
+// A browser test's video. The player is the browser's own; `seek` and `onTime` tie it to
+// the steps.
+function videoPlayer(into, r) {
+  const video = document.createElement('video');
+  video.controls = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'metadata';
+  into.appendChild(video);
+  const player = { onTime: null, seek: ms => { video.currentTime = ms / 1000; } };
+  video.ontimeupdate = () => player.onTime && player.onTime(video.currentTime * 1000);
+  whenVisible(into, async () => {
+    try {
+      video.src = URL.createObjectURL(await recordingBlob(r.dir + '/' + r.recording));
+    } catch (e) {
+      into.innerHTML = `<div class="none dim">could not load the video: ${esc(e.message)}</div>`;
+    }
+  });
+  return player;
+}
+
+// The 256 colours of a terminal's palette, the first sixteen as a dark terminal draws them.
+const ANSI16 = ['#1d1f21', '#cc6666', '#8abe7a', '#e0c56e', '#6f9fd1', '#b294bb', '#73c0c0', '#c5c8c6',
+  '#666a70', '#e57e7e', '#a8d68f', '#f0d98a', '#89b4e6', '#c9a9d1', '#8fd6d6', '#ffffff'];
+function xterm(i) {
+  if (i < 16) return ANSI16[i];
+  if (i < 232) {
+    const c = [0, 95, 135, 175, 215, 255], n = i - 16;
+    return `rgb(${c[Math.floor(n / 36)]},${c[Math.floor(n / 6) % 6]},${c[n % 6]})`;
+  }
+  const g = 8 + (i - 232) * 10;
+  return `rgb(${g},${g},${g})`;
+}
+const termColour = c => Array.isArray(c) ? `rgb(${c[0]},${c[1]},${c[2]})` : xterm(c);
+
+// One row of a terminal recording, as the server played it: runs of text of one look.
+function termRow(runs) {
+  return runs.map(r => {
+    let fg = r.fg !== undefined ? termColour(r.fg) : null, bg = r.bg !== undefined ? termColour(r.bg) : null;
+    if (r.inverse) [fg, bg] = [bg || 'var(--term-bg)', fg || 'var(--term-fg)'];
+    let style = '';
+    if (fg) style += `color:${fg};`;
+    if (bg) style += `background:${bg};`;
+    if (r.bold) style += 'font-weight:bold;';
+    if (r.italic) style += 'font-style:italic;';
+    if (r.underline) style += 'text-decoration:underline;';
+    return style ? `<span style="${style}">${esc(r.text)}</span>` : esc(r.text);
+  }).join('');
+}
+
+// A terminal test's recording, played as text: the server has run it through a terminal
+// emulator into frames, each the rows that changed. A play button, a scrubber, and the time.
+function castPlayer(into, r) {
+  into.innerHTML = '<div class="cast"><pre class="term"></pre><div class="controls"><button data-act="play" title="play or pause">▶</button><input type="range" min="0" value="0" step="10"><span class="time mono dim">0:00.0</span></div></div>';
+  const pre = into.querySelector('pre.term'), button = into.querySelector('[data-act=play]');
+  const slider = into.querySelector('input'), time = into.querySelector('.time');
+  let cast = null, at = 0, playing = false, started = 0, from = 0;
+  const player = { onTime: null, seek: ms => { at = ms; if (playing) { started = performance.now(); from = ms; } draw(); } };
+  const draw = () => {
+    if (!cast) return;
+    const rows = new Array(cast.height).fill(null).map(() => []);
+    for (const f of cast.frames) {
+      if (f.at_ms > at) break;
+      for (const [row, runs] of f.rows) rows[row] = runs;
+    }
+    pre.innerHTML = rows.map(termRow).join('\n');
+    slider.value = at;
+    time.textContent = `${clock(at)} / ${clock(cast.duration_ms)}`;
+    if (player.onTime) player.onTime(at);
+  };
+  // Sized so that the whole terminal fits the card: a recording with its right half cut
+  // off is not a recording of the screen.
+  const fit = () => {
+    if (!cast || !pre.isConnected) return;
+    const width = into.clientWidth - 2;
+    pre.style.fontSize = Math.max(4, Math.min(13, width / (cast.width * 0.6))) + 'px';
+  };
+  const tick = () => {
+    if (!playing || !pre.isConnected) return;
+    at = Math.min(cast.duration_ms, from + (performance.now() - started));
+    draw();
+    if (at >= cast.duration_ms) { playing = false; button.textContent = '▶'; return; }
+    requestAnimationFrame(tick);
+  };
+  button.onclick = () => {
+    if (!cast) return;
+    playing = !playing;
+    button.textContent = playing ? '❚❚' : '▶';
+    if (playing) {
+      if (at >= cast.duration_ms) at = 0;
+      started = performance.now();
+      from = at;
+      requestAnimationFrame(tick);
+    }
+  };
+  slider.oninput = () => player.seek(Number(slider.value));
+  whenVisible(into, async () => {
+    try {
+      cast = await api('/cast?' + qs({ path: r.dir + '/' + r.recording }));
+      slider.max = cast.duration_ms;
+      pre.style.width = cast.width + 'ch';
+      // The first frame with something on it: a full-screen program starts by clearing it.
+      const shown = cast.frames.find(f => f.rows.some(([, runs]) => runs.some(r => r.text.trim())));
+      at = shown ? shown.at_ms : 0;
+      fit();
+      draw();
+      new ResizeObserver(fit).observe(into);
+    } catch (e) {
+      into.innerHTML = `<div class="none dim">could not play the recording: ${esc(e.message)}</div>`;
+    }
+  });
+  return player;
+}
+
+async function showSpec(params = {}) {
+  setTabs('spec');
+  const p = params.commit ? { commit: params.commit } : { stretch: params.stretch || state.specStretch || 'week' };
+  if (!p.commit) state.specStretch = p.stretch;
+  if (params.area) p.area = params.area;
+  state.specParams = p;
+  const route = routes.spec(p);
+  navigate(route);
+  const content = $('#content');
+  if (!content.querySelector('.spec')) content.innerHTML = '<div class="center">reading the tests…</div>';
+  try {
+    const spec = await api('/spec?' + qs({ stretch: p.stretch, commit: p.commit }));
+    if (state.view !== 'spec' || currentRoute !== route) return;
+    renderSpec(content, spec, p);
+    // The list came from OVERVIEW.md while the index is built; ask again until it has not.
+    if (spec.as_of) setTimeout(() => { if (state.view === 'spec' && currentRoute === route) showSpec(p); }, 2000);
+  } catch (e) {
+    content.innerHTML = '';
+    fail(e);
+  }
+}
+
+function renderSpec(content, spec, p) {
+  const top = content.scrollTop;
+  const same = content.dataset.spec === JSON.stringify(p);
+  content.dataset.spec = JSON.stringify(p);
+  const choices = p.commit
+    ? '<button data-act="log" title="back to the log, at this commit">‹ log</button>'
+    : '<span class="stretches">' + STRETCHES.map(([k, name]) => `<button data-stretch="${k}" class="${p.stretch === k ? 'on' : ''}">${name}</button>`).join('') + '</span>';
+  content.innerHTML = `<div class="panelhead"><span class="path">Tests</span><span class="dim lines">${spec.total}${spec.ignored ? ', ' + spec.ignored + ' skipped' : ''}</span><span class="spacer"></span>${choices}</div>
+    <div class="overview spec"></div>`;
+  content.querySelectorAll('[data-stretch]').forEach(b => b.onclick = () => showSpec({ stretch: b.dataset.stretch, area: p.area }));
+  on(content, 'log', () => showLog(null, true, p.commit));
+  const body = content.querySelector('.spec');
+  body.appendChild(changesCard(spec));
+
+  // The tests as they are: narrowed to an area by a chip, searched by their words, and
+  // otherwise folded by level, area and file, so that the first screen is a dozen rows
+  // however many thousand tests there are.
+  const all = spec.groups.flatMap(g => g.files.flatMap(f => f.tests));
+  const pool = all.filter(t => !p.area || (t.areas || []).includes(p.area));
+  const count = {};
+  for (const t of all) for (const a of t.areas || []) count[a] = (count[a] || 0) + 1;
+  const names = spec.areas.length ? spec.areas.map(a => a.name) : Object.keys(count).sort();
+  const tools = document.createElement('section');
+  tools.innerHTML = `<h3>The tests as they are</h3>
+    <input type="search" class="find" placeholder="search ${pool.length} ${pool.length === 1 ? 'test' : 'tests'} by their words" value="${esc(state.specQuery || '')}">
+    <div class="chips"><button data-area="" class="${p.area ? '' : 'on'}">All ${all.length}</button>${names.map(a => `<button data-area="${esc(a)}" class="${p.area === a ? 'on' : ''}">${esc(a)} ${count[a] || 0}</button>`).join('')}</div>`;
+  tools.querySelectorAll('[data-area]').forEach(b => b.onclick = () => showSpec({ ...p, area: b.dataset.area || undefined }));
+  const found = document.createElement('div');
+  const levels = document.createElement('div');
+  tools.append(found, levels);
+  body.appendChild(tools);
+
+  for (const g of spec.groups) {
+    const [what, none] = LEVEL_SAYS[g.level];
+    const tests = pool.filter(t => t.level === g.level);
+    if (!tests.length) {
+      const finding = !p.area && (g.level === 'security' || g.level === 'end_to_end');
+      levels.insertAdjacentHTML('beforeend', `<div class="fold-empty"><b>${esc(g.title)}</b><span class="empty ${finding ? 'finding' : 'dim'}">${esc(p.area ? 'None counts towards ' + p.area + '.' : none)}</span></div>`);
+      continue;
+    }
+    levels.appendChild(fold('level:' + g.level, `<b>${esc(g.title)}</b>`, tests, d => {
+      d.insertAdjacentHTML('beforeend', `<div class="dim caveat">${esc(what)}</div>`);
+      if (p.area) byFile(d, tests, 'level:' + g.level); else byArea(d, tests, 'level:' + g.level);
+    }, 'level'));
+  }
+
+  // Searching shows what matches instead of the folds, a level at a time; every word typed
+  // must be in the test's sentence, its name or its file.
+  const search = tools.querySelector('.find');
+  const draw = () => {
+    const words = (state.specQuery || '').toLowerCase().split(/\s+/).filter(Boolean);
+    levels.hidden = words.length > 0;
+    found.innerHTML = '';
+    if (!words.length) return;
+    const hits = pool.filter(t => {
+      const text = (t.label + ' ' + t.name + ' ' + t.path).toLowerCase();
+      return words.every(w => text.includes(w));
+    });
+    found.insertAdjacentHTML('beforeend', `<div class="dim caveat">${hits.length} ${hits.length === 1 ? 'test matches' : 'tests match'}</div>`);
+    for (const g of spec.groups) {
+      const these = hits.filter(t => t.level === g.level);
+      if (these.length) found.appendChild(fold('found:' + g.level, `<b>${esc(g.title)}</b>`, these, d => paged(d, these, testCard), '', true));
+    }
+  };
+  search.oninput = () => { state.specQuery = search.value; draw(); };
+  draw();
+
+  if (spec.as_of) body.prepend(asOfNote(spec.as_of));
+  if (same) content.scrollTop = top;
+  hint('Click a change to see its diff, a test to open it, a file it names to open that.', 'Tap a change to see its diff, a test to open it.');
+}
+
+// What the stretch did, as a card. The tests that now ask less are listed, since there are
+// rarely many and each is worth a look; everything else is a count per kind of change, which
+// opens to that kind, by file.
+function changesCard(spec) {
+  const section = document.createElement('section');
+  section.className = 'state changes';
+  section.innerHTML = `<h3>In ${esc(spec.span.label)}</h3>`;
+  if (!spec.changes.length) {
+    section.insertAdjacentHTML('beforeend', '<div class="dim empty">Nothing: no test was added, changed or removed.</div>');
+    return section;
+  }
+  const alarming = spec.changes.filter(c => ALARMING.includes(c.what));
+  if (alarming.length) {
+    const box = document.createElement('div');
+    box.className = 'alarm';
+    box.innerHTML = `<h4>Asks less than before: ${alarming.length}</h4>`;
+    paged(box, alarming, c => changeRow(c, spec.span));
+    section.appendChild(box);
+  }
+  const rest = spec.changes.filter(c => !ALARMING.includes(c.what));
+  if (!rest.length) return section;
+  const kinds = groupBy(rest, c => c.what);
+  const chips = document.createElement('div');
+  chips.className = 'chips kinds';
+  chips.innerHTML = kinds.map(([kind, cs]) => `<button data-kind="${kind}" class="${state.specKind === kind ? 'on' : ''}"><span class="what ${kind}">${cs.length} ${kind}</span></button>`).join('');
+  const list = document.createElement('div');
+  const show = () => {
+    chips.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.kind === state.specKind));
+    list.innerHTML = '';
+    const open = kinds.find(([kind]) => kind === state.specKind);
+    if (!open) return;
+    const [kind, cs] = open;
+    const files = groupBy(cs, c => c.path);
+    if (files.length === 1) { paged(list, cs, c => changeRow(c, spec.span)); return; }
+    paged(list, files, ([path, these]) => fold(`changes:${kind}:${path}`, `<span class="mono">${esc(path)}</span>`, these,
+      d => paged(d, these, c => changeRow(c, spec.span)), '', false));
+  };
+  chips.querySelectorAll('button').forEach(b => b.onclick = () => {
+    state.specKind = state.specKind === b.dataset.kind ? null : b.dataset.kind;
+    show();
+  });
+  section.append(chips, list);
+  show();
+  return section;
+}
+
+// A group small enough to be read at a glance is opened rather than folded.
+const SMALL = 12;
+// How many rows any one list shows before it offers more.
+const PAGE = 50;
+
+function groupBy(items, key) {
+  const groups = new Map();
+  for (const it of items) {
+    const k = key(it);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(it);
+  }
+  return [...groups.entries()];
+}
+
+// Appends `items` to `into` a page at a time: the first PAGE of them, then a button for the
+// next. A phone draws a thousand cards slowly and nobody reads past the first screen of them.
+function paged(into, items, make, page = PAGE) {
+  let shown = 0;
+  const more = document.createElement('button');
+  more.className = 'more-rows';
+  const next = () => {
+    const frag = document.createDocumentFragment();
+    for (const it of items.slice(shown, shown + page)) frag.appendChild(make(it));
+    into.insertBefore(frag, more);
+    shown = Math.min(items.length, shown + page);
+    more.hidden = shown >= items.length;
+    more.textContent = `Show ${Math.min(page, items.length - shown)} more, of ${items.length - shown} left`;
+  };
+  more.onclick = e => { e.stopPropagation(); next(); };
+  into.appendChild(more);
+  next();
+}
+
+// A fold that builds what is inside it the first time it is opened, so that a level of a
+// thousand tests costs nothing until someone looks into it. Which folds are open is kept,
+// by `key`, across the redraws the watcher makes when the repository moves.
+function fold(key, title, items, build, cls = '', openByDefault = items.length <= SMALL) {
+  state.specOpen = state.specOpen || {};
+  const d = document.createElement('details');
+  d.className = 'fold ' + cls;
+  const skipped = items.filter(t => t.ignored).length;
+  d.innerHTML = `<summary><span class="grow">${title}</span><span class="dim count">${items.length}${skipped ? ', ' + skipped + ' skipped' : ''}</span></summary>`;
+  let built = false;
+  const fill = () => { if (d.open && !built) { built = true; build(d); } };
+  d.addEventListener('toggle', () => { state.specOpen[key] = d.open; fill(); });
+  d.open = key in state.specOpen ? state.specOpen[key] : openByDefault;
+  fill();
+  return d;
+}
+
+// The tests of one level by the area each is filed in, then by file; a step with one group
+// in it is skipped. These folds start closed: they are only there because the level was too
+// long to show whole, and opening it should show a short list, not every small file open.
+function byArea(into, tests, key) {
+  // Few enough to read whole: the cards say their files, and folds would only hide them.
+  if (tests.length <= SMALL) { paged(into, tests, testCard); return; }
+  const areas = groupBy(tests, t => t.home || 'top level').sort((a, b) => a[0].localeCompare(b[0]));
+  if (areas.length === 1) { byFile(into, tests, key); return; }
+  paged(into, areas, ([area, these]) => fold(`${key}:${area}`, esc(area), these, d => byFile(d, these, `${key}:${area}`), '', false));
+}
+
+function byFile(into, tests, key) {
+  if (tests.length <= SMALL) { paged(into, tests, testCard); return; }
+  const files = groupBy(tests, t => t.path).sort((a, b) => a[0].localeCompare(b[0]));
+  if (files.length === 1) { paged(into, tests, testCard); return; }
+  paged(into, files, ([path, these]) => fold(`${key}:${path}`, `<span class="mono">${esc(path)}</span>`, these,
+    d => paged(d, these, testCard), '', false));
+}
+
+// A test as a card: what it says, where it is, and the files of code it names, each of which
+// opens. A test that names none drives the system from outside, or checks nothing of it.
+function testCard(t) {
+  const el = document.createElement('div');
+  el.className = 'card-test' + (t.ignored ? ' ignored' : '');
+  const base = path => path.split('/').pop();
+  const reaches = t.reaches || [];
+  const names = reaches.length
+    ? 'names ' + reaches.slice(0, 3).map(r => `<a data-path="${esc(r)}">${esc(base(r))}</a>`).join(', ') + (reaches.length > 3 ? ` and ${reaches.length - 3} more` : '')
+    : t.line ? 'names no code directly' : '';
+  el.innerHTML = `<div class="grow"><div class="label">${esc(t.label)}</div><div class="sub dim"><span class="mono">${esc(t.path)}${t.line ? ':' + t.line : ''}</span>${names ? ' · ' + names : ''}</div></div>${t.ignored ? '<span class="dim">skipped</span>' : ''}`;
+  el.title = `${t.name}. ${LEVEL_NAMES[t.level] || ''}: ${t.why}.`;
+  // From OVERVIEW.md a test has no line; the file opens at the top.
+  el.onclick = () => t.line ? openFile(t.path, t.line) : openFile(t.path);
+  el.querySelectorAll('a[data-path]').forEach(a => a.onclick = e => { e.stopPropagation(); openFile(a.dataset.path); });
+  return el;
+}
+
+// One test a stretch did something to. It opens on the diff of its file across the stretch,
+// which is where what happened to it is shown.
+function changeRow(c, span) {
+  const el = document.createElement('div');
+  el.className = 'item';
+  const checks = c.checks && c.checks[0] !== c.checks[1] ? `${c.checks[0]} → ${c.checks[1]} assertions` : '';
+  const was = c.was ? `was ${c.was}` : '';
+  const levelName = { security: 'security', end_to_end: 'end to end', integration: 'integration', unit: 'unit' }[c.level];
+  el.innerHTML = `<span class="what ${c.what}">${c.what}</span><span class="grow">${esc(c.label)}${was || checks ? `<div class="dim was">${esc([was, checks].filter(Boolean).join(' · '))}</div>` : ''}</span>
+    <span class="dim where">${levelName} · <span class="mono">${esc(c.path)}${c.line ? ':' + c.line : ''}</span></span>`;
+  el.title = 'the diff of ' + c.path + ' across ' + span.label;
+  el.onclick = () => showDiff({ kind: 'revisions', from: span.base, to: span.to || '', path: c.path, status: 'M' }, [], 0);
+  return el;
 }
 
 // Prose beats any ranking, and the agent can write it. It goes into OVERVIEW.md under About,
@@ -1694,6 +2491,11 @@ async function selectCommit(i, chosen = false) {
   const c = log.commits[i];
   const details = $('#content #commit .details');
   details.innerHTML = `<span style="color:var(--upd-fg)">${esc(c.hash)}</span>\n${esc(c.author)} &lt;${esc(c.email)}&gt;  ${esc(c.date)}\n\n<b>${esc(c.subject)}</b>${c.body ? '\n' + esc(c.body) : ''}`;
+  const tests = document.createElement('div');
+  tests.innerHTML = '<button class="small" title="what this commit did to the tests">Tests in this commit</button>';
+  tests.style.marginTop = '6px';
+  tests.querySelector('button').onclick = () => showSpec({ commit: c.hash });
+  details.appendChild(tests);
   try {
     let files = await api('/commit_files?hash=' + c.hash);
     if (log.path) files.sort((a, b) => (a.path === log.path ? 0 : 1) - (b.path === log.path ? 0 : 1));
@@ -1964,14 +2766,24 @@ async function showNotes() {
 
 // ----- chrome ---------------------------------------------------------------------------------
 
-// Where a view sits when its own tab is not shown: the phone puts Log under Changes and
-// Notes under Review, and the tab that leads there is the one to light up.
-const TAB_UNDER = { log: 'changes', notes: 'review' };
+// Four tabs, one per question: how is it doing, what does it do, what is the code, and what
+// is to be done about it. Two of them hold several views, picked from a row under the header;
+// a tab remembers which of its views was last open and goes back to it.
+const GROUPS = {
+  tests: [['e2e', 'End to end'], ['spec', 'All tests']],
+  code: [['explore', 'Files'], ['changes', 'Changes'], ['log', 'Log']],
+  review: [['review', 'Comments'], ['notes', 'Notes'], ['agent', 'Agent']],
+};
+const GROUP_OF = { overview: 'overview', e2e: 'tests', spec: 'tests', explore: 'code', changes: 'code', log: 'code', diff: 'code',
+  review: 'review', notes: 'review', agent: 'review' };
+const lastInGroup = {};
 
 function setTabs(view) {
   state.view = view;
-  const lit = (phone() && TAB_UNDER[view]) || view;
-  document.querySelectorAll('header .tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === lit));
+  const group = GROUP_OF[view] || view;
+  if (GROUPS[group] && GROUPS[group].some(([v]) => v === view)) lastInGroup[group] = view;
+  document.querySelectorAll('header .tabs button').forEach(b => b.classList.toggle('active', b.dataset.group === group));
+  renderSubnav(group, view);
   // The stylesheet shows the tree for the explorer only, and on a phone either it or the file.
   document.body.dataset.view = view;
   if (view !== 'explore') setZen(false);
@@ -1984,7 +2796,9 @@ function setTabs(view) {
 // have their own list, which drifted.
 function rerenderCurrentView() {
   switch (state.view) {
+    case 'e2e': return showEndToEnd();
     case 'overview': return showOverview();
+    case 'spec': return showSpec(state.specParams || {});
     case 'changes': return showChanges(!!state.changesStaged);
     case 'log': return showLog(state.log && state.log.path, true);
     case 'review': return showReview();
@@ -1997,24 +2811,47 @@ function rerenderCurrentView() {
   }
 }
 
+function renderSubnav(group, view) {
+  const nav = $('#subnav');
+  const items = GROUPS[group];
+  nav.hidden = !items;
+  if (!items) return;
+  if (nav.dataset.group !== group) {
+    nav.dataset.group = group;
+    nav.innerHTML = items.map(([v, name]) => `<button data-sub="${v}">${name}</button>`).join('');
+    nav.querySelectorAll('button').forEach(b => b.onclick = () => openView(b.dataset.sub, true));
+  }
+  nav.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.sub === view));
+}
+
 document.querySelectorAll('header .tabs button').forEach(b => b.onclick = () => {
-  const v = b.dataset.view;
+  const group = b.dataset.group;
+  // Another tab: the view it was last on. The tab already lit: its first view, as a way home.
+  const here = GROUP_OF[state.view] === group;
+  const v = GROUPS[group] && !here ? (lastInGroup[group] || b.dataset.view) : b.dataset.view;
+  openView(v, here);
+});
+
+// Opens one of the views a tab or a sub-tab names. `again` is a tap on what is already lit.
+function openView(v, again = false) {
   // A tab always starts its view afresh, rather than redrawing what was there. Explore
   // goes back to the open file, or, tapped again on a phone while a file is up, to the tree.
   if (v === 'explore') {
     // Nothing open: the tree, since the overview has a tab of its own. A file open: that file.
     // On a phone, tapped again while the file is up: the tree, which is how you get to the next.
-    if (phone() && state.view === 'explore' && document.body.classList.contains('showfile')) showTree();
+    if ((again || phone()) && state.view === 'explore' && document.body.classList.contains('showfile')) showTree();
     else if (!state.file) showTree();
     else { setTabs('explore'); navigate(routes.file(state.file.path)); renderFile(); }
   }
+  if (v === 'e2e') showEndToEnd();
   if (v === 'overview') showOverview();
+  if (v === 'spec') showSpec(again ? {} : (state.specParams || {}));
   if (v === 'changes') showChanges();
   if (v === 'log') showLog(null, true);
   if (v === 'review') showReview();
   if (v === 'notes') showNotes();
   if (v === 'agent') showAgent();
-});
+}
 $('#signout').onclick = async () => {
   try { await api('/logout', { post: true }); } catch (e) { /* the session may already be gone */ }
   location.href = '/';
@@ -2062,6 +2899,9 @@ async function watchPoll() {
     const moved = !first && r.version !== watch.version;
     watch.version = r.version;
     if (moved) await doRefresh({ quiet: true });
+    // A repository that appeared in a directory of checkouts the server reads: only the list
+    // is read again, since nothing the page shows has changed.
+    else if (r.repos !== undefined && r.repos !== state.repos.length) await loadRepos();
   } catch (e) {
     // Nothing is said about a poll that fails: the agent's own poll already reports a server
     // that has gone away, and a review that cannot reach it is obvious soon enough.
@@ -2092,6 +2932,13 @@ const HELP = `
 <tr><td><kbd>Blame</kbd></td><td>last commit per line</td></tr>
 <tr><td><kbd>Zen</kbd> or <kbd>z</kbd></td><td>the file, its line numbers and its comments, and nothing else; <kbd>z</kbd> or <kbd>Esc</kbd> comes back</td></tr>
 <tr><td><kbd>Wrap lines</kbd> or <kbd>w</kbd></td><td>wrap long lines instead of scrolling sideways, with the continuation indented; remembered in this browser</td></tr></table>
+<h3>Tests</h3><table>
+<tr><td><kbd>End to end</kbd></td><td>what the repository opens on: every test that drives it the way a person does, each with the recording its last run left, whether it passed, and how far the code has moved since. Tap a step to go to that moment of the recording; the file name opens the test</td></tr>
+<tr><td><kbd>Ask the agent to write the first ones</kbd></td><td>where there are none: the agent writes them, each leaving a recording</td></tr></table>
+<h3>Spec</h3><table>
+<tr><td><kbd>Spec</kbd></td><td>every test as a sentence, by level: security, end to end, integration, unit; hover a test for why it is at its level</td></tr>
+<tr><td><kbd>last 7 days</kbd> <kbd>last commit</kbd> <kbd>uncommitted</kbd></td><td>what that stretch did to the tests, the ones that now ask less first: removed, skipped, fewer assertions</td></tr>
+<tr><td><kbd>Tests in this commit</kbd></td><td>in the log: the same for one commit</td></tr></table>
 <h3>Changes</h3><table>
 <tr><td><kbd>Commit</kbd></td><td>in the working tree view, stages everything listed and commits it; in the staged view, commits what is staged. The sheet names the files and any comment still pending on them, and hooks run as they do on the command line</td></tr></table>
 <h3>Symbols</h3><table>
@@ -2165,22 +3012,32 @@ $('#theme').onchange = async e => {
 // never reaches the server. With several repositories, `/r<N>` leads.
 const routes = {
   prefix: () => state.repo ? `#/r${state.repo}` : '#',
-  overview: () => routes.prefix() + '/',
+  e2e: () => routes.prefix() + '/',
+  overview: () => routes.prefix() + '/summary',
   tree: () => routes.prefix() + '/tree',
   file: (path, line) => routes.prefix() + '/file/' + encodeURIComponent(path).replace(/%2F/g, '/') + (line ? '?line=' + line : ''),
   changes: staged => routes.prefix() + '/changes' + (staged ? '?staged=1' : ''),
   log: (path, commit) => routes.prefix() + '/log' + (path || commit ? '?' + qs({ path, commit }) : ''),
   diff: params => routes.prefix() + '/diff?' + qs(params),
   view: name => routes.prefix() + '/' + name,
+  spec: params => routes.prefix() + '/spec' + (qs(params) ? '?' + qs(params) : ''),
 };
 let currentRoute = null, navigated = 0;
+// How many of this page's own steps the browser's history holds behind the current one: the
+// back button in the header is there when there is one to go back to. A page put on a phone's
+// home screen opens without the browser's own buttons, and this is then the only way back.
+let depth = (history.state && history.state.depth) || 0;
 function navigate(hash, { replace = false } = {}) {
   if (currentRoute === hash) return;
   currentRoute = hash;
   navigated++;
   if (location.hash === hash) return;
-  if (replace) location.replace(hash); else location.hash = hash;
+  if (replace) history.replaceState({ depth }, '', hash);
+  else { depth++; history.pushState({ depth }, '', hash); }
+  $('#back').hidden = depth === 0;
 }
+window.addEventListener('popstate', e => { depth = (e.state && e.state.depth) || 0; $('#back').hidden = depth === 0; });
+$('#back').onclick = () => history.back();
 
 // Shows the view the address names. Each view records its own address, which is the one
 // being shown, so nothing here loops.
@@ -2208,9 +3065,11 @@ async function route() {
   if (path === '/review') return showReview();
   if (path === '/notes') return showNotes();
   if (path === '/agent') return showAgent();
-  // What is left is the repository itself, which opens on what it is and how it is doing
-  // rather than on a file tree that says neither.
-  return showOverview();
+  if (path === '/spec') return showSpec(params);
+  if (path === '/summary') return showOverview();
+  // What is left is the repository itself, which opens on what it demonstrably does: its
+  // end-to-end tests, each with the recording of its last run.
+  return showEndToEnd();
 }
 window.addEventListener('hashchange', () => { if (location.hash !== currentRoute) route().catch(fail); });
 

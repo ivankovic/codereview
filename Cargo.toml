@@ -29,6 +29,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "1"
 unicode-width = "0.2"
+# A terminal emulator, to play a terminal recording into frames both front ends can draw.
+vt100 = "0.16"
 # Syntax highlighting. two-face adds the syntaxes syntect's own bundle lacks (Makefile among
 # them), which is why it is here and not plain `load_defaults_newlines`.
 syntect = { version = "5.2", default-features = false, features = ["parsing", "regex-onig", "dump-load"] }
@@ -65,6 +67,9 @@ libc = "0.2"
 tempfile = "3.10"
 # The integration test reads JSON answers from the API.
 serde_json = "1"
+# The terminal end-to-end tests run the binary in a pseudo-terminal; vt100, a dependency of
+# the tool itself, reads the screen the way a terminal would draw it.
+portable-pty = "0.9"
 
 [features]
 default = ["tui"]
@@ -74,3 +79,8 @@ web = ["dep:axum", "dep:tokio", "dep:rand", "dep:open", "dep:argon2", "dep:rpass
 [[bin]]
 name = "codereview"
 path = "src/main.rs"
+
+# The terminal UI end to end, in a pseudo-terminal: there is no terminal UI to drive without it.
+[[test]]
+name = "terminal"
+required-features = ["tui"]

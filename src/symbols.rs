@@ -10,7 +10,7 @@
 //! (or a `type` field, for a Rust `impl`). Occurrences are every leaf node whose kind contains
 //! `identifier`. Files without a grammar (Makefiles) get a small regex fallback.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -420,6 +420,60 @@ impl Index {
         out
     }
 
+    /// The files each test names, by the test's path and first line: whatever its body
+    /// mentions that is defined outside test code, by the same rules [`Self::untested`]
+    /// uses. A test that drives the system from outside — a browser, a command line — names
+    /// nothing, and is not credited with what it reaches that way.
+    pub fn test_reach(&self) -> HashMap<(String, usize), Vec<String>> {
+        let paths: Vec<&String> = {
+            let mut p: Vec<&String> = self.files.keys().collect();
+            p.sort();
+            p
+        };
+        let defined = self.defined(&paths, true);
+        let mut out = HashMap::new();
+        for path in &paths {
+            let entry = &self.files[*path];
+            for test in &entry.tests {
+                let from = test.line.saturating_sub(1) as u32;
+                let to = test.end.max(test.line).saturating_sub(1) as u32;
+                let mut files: BTreeSet<&str> = BTreeSet::new();
+                for occurrence in entry
+                    .idents
+                    .iter()
+                    .filter(|o| (from..=to).contains(&o.line))
+                {
+                    let Some(definers) = defined.get(&occurrence.name) else {
+                        continue;
+                    };
+                    if definers.len() > SHARED_NAME {
+                        continue;
+                    }
+                    files.extend(definers.iter().map(|&d| paths[d].as_str()));
+                }
+                out.insert(
+                    ((*path).clone(), test.line),
+                    files.into_iter().map(str::to_string).collect(),
+                );
+            }
+        }
+        out
+    }
+
+    /// The files whose code a test could reach: in a language whose tests are found here,
+    /// and not test code throughout.
+    pub fn code_files(&self) -> Vec<String> {
+        let tests = self.test_files();
+        let mut out: Vec<String> = self
+            .files
+            .keys()
+            .filter(|p| crate::testsuite::testable(p) && !tests.contains(p.as_str()))
+            .cloned()
+            .collect();
+        out.sort();
+        out
+    }
+
     /// Every test the repository defines, by path then line.
     pub fn tests(&self) -> Vec<TestCase> {
         let mut out: Vec<TestCase> = self
@@ -665,6 +719,17 @@ fn parse(path: &str, text: &str) -> Option<(Language, tree_sitter::Tree)> {
     parser.set_language(&ts).ok()?;
     let tree = parser.parse(text, None)?;
     Some((language, tree))
+}
+
+/// The tests one file defines, parsed on its own: for a file as it stood at some commit,
+/// which the index, holding only the working tree, cannot say.
+pub fn tests_of(path: &str, text: &str) -> Vec<TestCase> {
+    match parse(path, text) {
+        Some((language, tree)) => {
+            crate::testsuite::find(path, language, tree.root_node(), text.as_bytes()).tests
+        }
+        None => Vec::new(),
+    }
 }
 
 /// What one file defines, parsed on its own, in source order.
