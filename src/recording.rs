@@ -269,8 +269,26 @@ pub fn lines_run(
     Some(parse_lcov(root, &text))
 }
 
+/// Every line of each file `recording`'s coverage counts at all, run or not: the lines a
+/// coverage tool sees as code. A blank line, a comment or a stretch of HTML is none of them.
+pub fn lines_counted(
+    root: &Path,
+    recording: &Recording,
+) -> Option<std::collections::BTreeMap<String, Vec<u32>>> {
+    if !recording.covered {
+        return None;
+    }
+    let text = std::fs::read_to_string(root.join(&recording.dir).join(COVERAGE)).ok()?;
+    Some(lcov_lines(root, &text, true))
+}
+
 /// [`lines_run`] from the text of an lcov file.
 pub fn parse_lcov(root: &Path, text: &str) -> std::collections::BTreeMap<String, Vec<u32>> {
+    lcov_lines(root, text, false)
+}
+
+/// The lines of an lcov file, by path: those that ran, or with `all` every one it counts.
+fn lcov_lines(root: &Path, text: &str, all: bool) -> std::collections::BTreeMap<String, Vec<u32>> {
     let mut out: std::collections::BTreeMap<String, Vec<u32>> = std::collections::BTreeMap::new();
     let mut file: Option<String> = None;
     for line in text.lines() {
@@ -298,7 +316,7 @@ pub fn parse_lcov(root: &Path, text: &str) -> std::collections::BTreeMap<String,
             let (Ok(n), Ok(count)) = (n.trim().parse::<u32>(), count.trim().parse::<f64>()) else {
                 continue;
             };
-            if count > 0.0 {
+            if all || count > 0.0 {
                 out.entry(path.clone()).or_default().push(n);
             }
         } else if line.starts_with("end_of_record") {

@@ -227,6 +227,33 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .e2e-test .head a.label { color: inherit; cursor: pointer; }
 .e2e-test .head a.label:hover { color: var(--accent); }
 table.code tr.ran td.n { box-shadow: inset 3px 0 var(--ins-fg); }
+table.code tr.unran td.n { box-shadow: inset 3px 0 var(--moved); }
+.e2e .stretch-card { cursor: default; margin: 10px 0 4px; }
+.e2e .stretch-card:hover { border-color: var(--border); }
+.e2e .stretch-card h3 { margin: 0 0 6px; }
+.e2e .stretch-card .chips { margin: 0 0 8px; }
+.e2e .stretch-card .warn { color: var(--moved); }
+.e2e .stretch-card .unran-head { margin-top: 8px; }
+.e2e .stretch-card .item, .e2e .stretch-card .change { display: flex; gap: 10px; align-items: center; padding: 4px 6px; border-radius: 4px; cursor: pointer; min-height: 32px; }
+.e2e .stretch-card .item:hover { background: var(--cursor); }
+.e2e .stretch-card .item .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.e2e .stretch-card .alarming { color: var(--del-fg); }
+.e2e .stretch-card .note { margin-top: 6px; font-size: 12px; }
+.e2e .stretch-card .base { margin-top: 10px; }
+.e2e .stretch-card .base .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.e2e .stretch-card .progress { margin: 6px 0 0; max-height: 8em; overflow: auto; background: var(--code-bg); padding: 4px 6px; border-radius: 4px; font-size: 12px; white-space: pre-wrap; }
+.e2e-test .badges { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 0; }
+.e2e-test .badges:empty { display: none; }
+.e2e-test .badge.delta { color: var(--accent); border-color: var(--accent); }
+.e2e-test .badge.turned { color: var(--moved); border-color: var(--moved); }
+.e2e.testview .compare .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 800px) { .e2e.testview .compare .pair { grid-template-columns: minmax(0, 1fr); } }
+.e2e.testview .compare h4 { margin: 0 0 4px; font-size: 12px; font-weight: 600; }
+.e2e.testview .compare ol.pairs { list-style: none; margin: 10px 0 0; padding: 0; }
+.e2e.testview .compare ol.pairs li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 7em; gap: 8px; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.e2e.testview .compare ol.pairs li:hover { background: var(--cursor); }
+.e2e.testview .compare ol.pairs li.changed .what, .e2e.testview .compare ol.pairs li.added .what, .e2e.testview .compare ol.pairs li.removed .what { color: var(--moved); }
+.e2e.testview .compare ol.pairs .what { color: var(--dim); text-align: right; }
 .ranbanner { padding: 4px 10px; font-size: 12px; background: var(--cursor); display: flex; gap: 8px; align-items: center; }
 .e2e .finding { max-width: 70ch; margin: 24px auto; border: 1px solid var(--moved); border-radius: 8px; padding: 14px 18px; background: var(--panel); }
 .e2e .finding h2 { margin: 0 0 8px; color: var(--moved); font-size: 17px; }
@@ -1107,7 +1134,9 @@ function renderFile() {
     const banner = document.createElement('div');
     banner.className = 'ranbanner';
     const lines = ran.ranges.reduce((n, [a, b]) => n + b - a + 1, 0);
-    banner.innerHTML = `<span class="grow">The ${lines} lines marked are what <a data-act="test">${esc(ran.label)}</a> ran.</span><button data-act="unran" title="stop marking them">✕</button>`;
+    banner.innerHTML = ran.kind === 'unran'
+      ? `<span class="grow">The ${lines} lines marked changed in ${esc(ran.label)}, and no end-to-end test ran them.</span><button data-act="unran" title="stop marking them">✕</button>`
+      : `<span class="grow">The ${lines} lines marked are what <a data-act="test">${esc(ran.label)}</a> ran.</span><button data-act="unran" title="stop marking them">✕</button>`;
     on(banner, 'test', () => showTestView(ran.file, ran.name));
     on(banner, 'unran', () => { state.ran = null; renderFile(); });
     content.appendChild(banner);
@@ -1190,7 +1219,7 @@ function renderFile() {
     const op = f.line_ops ? f.line_ops[i] : 'none';
     const tr = document.createElement('tr');
     tr.dataset.line = n;
-    tr.className = 'op-' + op + (ran && ran.some(([a, b]) => a <= n && n <= b) ? ' ran' : '');
+    tr.className = 'op-' + op + (ran && ran.some(([a, b]) => a <= n && n <= b) ? ' ' + (state.ran.kind || 'ran') : '');
     const marker = f.comments.find(c => c.line && c.line <= n && n <= c.end_line);
     const mk = marker ? `<span style="color:var(--${marker.state})">●</span>` : (op !== 'none' ? {insert:'+',delete:'-',update:'~',move:'>'}[op] : '');
     const ranges = searchRangesFor(lines[i] || '');
@@ -1853,6 +1882,7 @@ function renderEndToEnd(content, o) {
   const bits = [];
   if (o.failed) bits.push(`<span class="bad">${o.failed} failed</span>`);
   if (o.unrecorded) bits.push(`${o.unrecorded} without a recording`);
+  const stretch = state.specStretch || 'week';
   content.innerHTML = `<div class="panelhead"><span class="path">${esc(repo ? repo.name : 'repository')}</span>
       <span class="spacer"></span>
       <button data-act="summary">Summary</button>
@@ -1860,6 +1890,7 @@ function renderEndToEnd(content, o) {
     <div class="e2e"></div>`;
   on(content, 'summary', showOverview);
   on(content, 'files', showTree);
+
   const root = content.querySelector('.e2e');
   if (!o.tests.length) {
     const looks = E2E_LOOKS_LIKE[o.kind] || 'That is the software driven from outside, the way the person or program using it would, and what comes back checked.';
@@ -1877,6 +1908,8 @@ function renderEndToEnd(content, o) {
         <span class="dim">of ${num(o.total, 'test')}</span>${bits.length ? ' · ' + bits.join(' · ') : ''}
         <a href="${routes.spec({})}" class="more">all tests ›</a></div>`;
     if (o.as_of) root.appendChild(asOfNote(o.as_of));
+    root.insertAdjacentHTML('beforeend', `<section class="card stretch-card">${stretchChips(stretch)}<div class="dim">working out what ${esc((STRETCHES.find(([k]) => k === stretch) || [, stretch])[1])} did…</div></section>`);
+    bindStretchChips(root);
     for (const [path, tests] of groupBy(o.tests, t => t.path)) {
       const h = document.createElement('h3');
       h.className = 'mono';
@@ -1888,6 +1921,7 @@ function renderEndToEnd(content, o) {
       root.appendChild(grid);
     }
   }
+  if (o.tests.length) loadStretch(root, stretch);
   if (o.orphans.length) {
     const h = document.createElement('h3');
     h.textContent = 'Recordings of tests no longer here';
@@ -1933,6 +1967,7 @@ async function showTestView(file, name) {
       <div class="meta dim"><span class="mark">${{ passed: '✓', failed: '✗', norec: '○' }[status]}</span>
         <a data-act="source" class="mono">${esc(d.path)}:${d.line}</a> · ${esc(d.why)}${r ? ' · ' + recordingAge(d, r) : ''}${r && r.commit ? ` · at <span class="mono">${esc(r.commit.slice(0, 7))}</span>${r.dirty ? ' with uncommitted changes' : ''}` : ''}</div>
       <div class="watch"><div class="media"></div><div class="side"><div class="failures"></div><h3>Steps</h3><ol class="steps"></ol></div></div>
+      <section><h3>Before and after ${esc((STRETCHES.find(([k]) => k === (state.specStretch || 'week')) || [, ''])[1])}</h3><div class="compare"></div></section>
       <section><h3>Code it ran</h3><div class="ran"></div></section>
       <section><h3>Documentation</h3><div class="docs"></div></section>
       <section><h3>Smaller tests that reach the same code</h3><div class="smaller"></div></section>
@@ -1969,6 +2004,7 @@ async function showTestView(file, name) {
   }
   if (!r || !r.steps.length) steps.innerHTML = '<li class="dim">The run listed no steps.</li>';
 
+  loadComparison(view.querySelector('.compare'), d);
   const ran = view.querySelector('.ran');
   if (!d.ran) {
     ran.innerHTML = `<div class="dim">${r ? 'The run left no coverage, so what it ran is not known. A <span class="mono">coverage.lcov</span> beside its <span class="mono">test.json</span> says.' : 'It has not run.'}</div>`;
@@ -2013,6 +2049,162 @@ async function showTestView(file, name) {
   }
 }
 
+// The stretches the opening's card can be about, as chips at its head.
+const stretchChips = stretch => `<div class="chips stretches">${STRETCHES.map(([k, name]) =>
+  `<button data-stretch="${k}" class="${stretch === k ? 'on' : ''}">${name}</button>`).join('')}</div>`;
+function bindStretchChips(root) {
+  root.querySelectorAll('.stretch-card [data-stretch]').forEach(b => b.onclick = () => {
+    state.specStretch = b.dataset.stretch;
+    showEndToEnd();
+  });
+}
+
+// What a stretch of history did, through the end-to-end tests: what happened to the tests,
+// the changed code none of them ran, and how each test went before and after. Drawn into the
+// opening's card for it, and onto each test's card, once the server has worked it out.
+async function loadStretch(root, stretch) {
+  const card = root.querySelector('.stretch-card');
+  if (!card) return;
+  let r;
+  try {
+    r = await api('/stretch?' + qs({ stretch }));
+  } catch (e) {
+    if (/still reading/.test(e.message)) {
+      setTimeout(() => { if (card.isConnected) loadStretch(root, stretch); }, 2000);
+      return;
+    }
+    card.innerHTML = `<div class="dim">could not work out what it did: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (!card.isConnected) return;
+  const alarming = r.changes.filter(c => ALARMING.includes(c.what));
+  const counts = {};
+  for (const c of r.changes) if (!ALARMING.includes(c.what)) counts[c.what] = (counts[c.what] || 0) + 1;
+  const rest = Object.entries(counts).map(([what, n]) => `${n} ${what}`).join(', ');
+  card.innerHTML = `${stretchChips(stretch)}<h3>What ${esc(r.span.label)} did</h3>
+    <div class="tests-did">${alarming.length ? '' : `<div class="fresh">No test asks less than it did${rest ? ` · ${esc(rest)}` : ''}.</div>`}</div>
+    <div class="unran-head">${r.changed ? (r.unran_lines
+      ? `<b class="warn">${r.unran_lines} of ${r.changed} changed lines</b> no end-to-end test ran`
+      : `<span class="fresh">Every one of the ${r.changed} changed lines</span> ran in an end-to-end test`)
+      : '<span class="dim">No code changed.</span>'}</div>
+    <div class="unran"></div>
+    ${r.without_coverage ? `<div class="dim note">${r.without_coverage} end-to-end test${r.without_coverage === 1 ? '' : 's'} left no coverage, so what ${r.without_coverage === 1 ? 'it' : 'they'} ran is not counted.</div>` : ''}
+    <div class="base"></div>`;
+  const did = card.querySelector('.tests-did');
+  for (const c of alarming) {
+    const el = changeRow(c, r.span);
+    el.classList.add('alarming');
+    did.appendChild(el);
+  }
+  if (alarming.length && rest) did.insertAdjacentHTML('beforeend', `<div class="dim">and ${esc(rest)}</div>`);
+  const unran = card.querySelector('.unran');
+  for (const u of r.unran) {
+    const row = document.createElement('div');
+    row.className = 'item';
+    row.innerHTML = `<span class="mono grow">${esc(u.path)}</span><span class="dim count">${u.lines} of ${u.changed} lines</span>`;
+    row.onclick = () => {
+      state.ran = { kind: 'unran', path: u.path, ranges: u.ranges, label: r.span.label };
+      openFile(u.path, u.ranges[0][0]);
+    };
+    unran.appendChild(row);
+  }
+  bindStretchChips(root);
+  renderBase(card.querySelector('.base'), r, root, stretch);
+
+  // Each test's card says what the stretch has to do with it, afresh each time it is said.
+  root.querySelectorAll('.e2e-test .badges').forEach(b => { b.innerHTML = ''; });
+  for (const t of r.touched) {
+    const el = root.querySelector(`.e2e-test[data-test="${CSS.escape(t.path + ' › ' + t.name)}"] .badges`);
+    if (el) el.insertAdjacentHTML('beforeend', `<span class="badge delta" title="it ran ${t.lines} of the lines this stretch changed, in ${esc(t.files.join(', '))}">ran ${t.lines} changed line${t.lines === 1 ? '' : 's'}</span>`);
+  }
+  for (const o of r.outcomes) {
+    const el = root.querySelector(`.e2e-test[data-test="${CSS.escape(o.path + ' › ' + o.name)}"] .badges`);
+    if (!el) continue;
+    const mark = v => v === null || v === undefined ? '–' : v ? '✓' : '✗';
+    const turned = o.before !== o.after;
+    const bits = [`${mark(o.before)} → ${mark(o.after)}`];
+    if (o.screens_changed) bits.push(`screen changed at ${o.screens_changed} step${o.screens_changed === 1 ? '' : 's'}`);
+    if (o.steps_changed) bits.push(`${o.steps_changed} step${o.steps_changed === 1 ? '' : 's'} differ`);
+    el.insertAdjacentHTML('beforeend', `<span class="badge ${turned || o.screens_changed || o.steps_changed ? 'turned' : ''}" title="before the stretch, and now">${esc(bits.join(' · '))}</span>`);
+  }
+}
+
+// The commit the stretch starts from: recorded there or not, and the button that records it.
+// Recording runs the repository's own end-to-end command in a worktree of that commit, which
+// takes as long as the tests do; the row shows how it is going until it is done.
+function renderBase(into, r, root, stretch) {
+  const b = r.base;
+  if (!b) { into.innerHTML = '<div class="dim">There is no commit before this stretch to compare with.</div>'; return; }
+  if (b.recorded) {
+    into.innerHTML = `<div>Before: the tests as they ran at <span class="mono">${esc(b.short)}</span>, ${b.recorded} recording${b.recorded === 1 ? '' : 's'}; each test's card says how it differs.</div>`;
+    return;
+  }
+  if (!b.command) {
+    into.innerHTML = `<div class="dim">Not recorded at <span class="mono">${esc(b.short)}</span>, and nothing here says how to: a Makefile <span class="mono">e2e</span> target or a check named for end-to-end tests would.</div>`;
+    return;
+  }
+  into.innerHTML = `<div class="row"><button data-act="record" class="primary">Record the tests at ${esc(b.short)}</button>
+    <span class="dim">runs <span class="mono">${esc(b.command)}</span> in a worktree of <span class="mono">${esc(b.short)}</span>, to compare each test with how it ran before</span></div>
+    <pre class="progress" hidden></pre>`;
+  const progress = into.querySelector('.progress');
+  const watch = async () => {
+    if (!into.isConnected) return;
+    let run;
+    try { run = await api('/stretch/record?' + qs({ commit: b.commit })); } catch (e) { return fail(e); }
+    if (!run) return;
+    progress.hidden = false;
+    progress.textContent = (run.running ? `recording at ${b.short}… ${Math.round((Date.now() - Date.parse(run.started)) / 1000)} s\n` : `${run.exit === 0 ? 'recorded' : 'the command failed'} in ${run.seconds.toFixed(0)} s\n`) + run.output.split('\n').slice(-6).join('\n');
+    into.querySelector('[data-act=record]').disabled = run.running;
+    if (run.running) setTimeout(watch, 2000);
+    else loadStretch(root, stretch);
+  };
+  on(into, 'record', async () => {
+    try { await api('/stretch/record', { body: { commit: b.commit } }); } catch (e) { return fail(e); }
+    watch();
+  });
+  watch();
+}
+
+// One test before and after the stretch, in its own view: both recordings side by side, and
+// the steps in pairs, each saying whether the screen at that step is the one it was.
+async function loadComparison(into, d) {
+  const stretch = state.specStretch || 'week';
+  let c;
+  try { c = await api('/stretch/test?' + qs({ stretch, file: d.path, name: d.name })); } catch (e) {
+    into.innerHTML = `<div class="dim">could not compare: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (!into.isConnected) return;
+  if (!c.base) { into.innerHTML = '<div class="dim">There is no commit before this stretch to compare with.</div>'; return; }
+  if (!c.before) {
+    into.innerHTML = `<div class="dim">${c.base.recorded ? `It did not run at <span class="mono">${esc(c.base.short)}</span>: it is new since.` : `The tests are not recorded at <span class="mono">${esc(c.base.short)}</span>; the opening records them.`}</div>`;
+    return;
+  }
+  const mark = r => !r ? '–' : r.passed ? '✓ passed' : '✗ failed';
+  into.innerHTML = `<div class="pair"><div><h4>At <span class="mono">${esc(c.base.short)}</span> · ${mark(c.before)}</h4><div class="media before"></div></div>
+      <div><h4>Now · ${mark(c.after)}</h4><div class="media after"></div></div></div>
+    <ol class="pairs"></ol>`;
+  const play = (el, r, at) => {
+    if (!r) { el.innerHTML = '<div class="none dim">No recording.</div>'; return null; }
+    const rec = { ...r, at };
+    return r.kind === 'terminal' ? castPlayer(el, rec) : r.kind === 'video' ? videoPlayer(el, rec) : null;
+  };
+  const before = play(into.querySelector('.media.before'), c.before, c.base.commit);
+  const after = play(into.querySelector('.media.after'), c.after, undefined);
+  const list = into.querySelector('ol.pairs');
+  for (const p of c.steps) {
+    const li = document.createElement('li');
+    const side = s => s ? `${s.kind === 'check' ? (s.passed === false ? '✗ ' : '✓ ') : ''}${esc(s.text)}` : '<span class="dim">—</span>';
+    li.className = !p.before ? 'added' : !p.after ? 'removed' : p.same_screen === false ? 'changed' : '';
+    li.innerHTML = `<span>${side(p.before)}</span><span>${side(p.after)}</span><span class="what">${!p.before ? 'new' : !p.after ? 'gone' : p.same_screen === false ? 'screen changed' : p.same_screen ? 'same screen' : ''}</span>`;
+    li.onclick = () => {
+      if (p.before && before) before.seek(p.before.at_ms);
+      if (p.after && after) after.seek(p.after.at_ms);
+    };
+    list.appendChild(li);
+  }
+}
+
 // How long ago a recording was made, and how far the code has moved on since.
 function recordingAge(t, r) {
   if (!r) return '';
@@ -2032,6 +2224,7 @@ function e2eCard(t, r) {
   const card = document.createElement('div');
   const status = !r ? 'norec' : r.passed ? 'passed' : 'failed';
   card.className = 'e2e-test ' + status;
+  if (t) card.dataset.test = t.path + ' › ' + t.name;
   const label = t ? t.label : r.test;
   const mark = { passed: '✓', failed: '✗', norec: '○' }[status];
   const file = t ? t.path : r.file;
@@ -2039,6 +2232,7 @@ function e2eCard(t, r) {
   card.innerHTML = `<div class="head"><span class="mark">${mark}</span><a class="label" data-act="detail" title="the test on its own: what it ran, what documents it, the tests below it">${esc(label)}</a>
       ${t && t.security ? '<span class="badge sec" title="its name or path is about security">security</span>' : ''}
       ${t && t.ignored ? '<span class="badge">skipped</span>' : ''}</div>
+    <div class="badges"></div>
     <div class="meta dim">${t ? `<a data-act="source" class="mono">${esc(file)}${line ? ':' + line : ''}</a> · ${esc(t.why)}` : esc(file) + ' · its test is not there any more'}${r ? ' · ' + recordingAge(t, r) : ''}</div>
     <div class="media"></div>
     <div class="failures"></div>
@@ -2094,8 +2288,8 @@ function whenVisible(el, load) {
 
 // A recording's bytes, fetched with the API token like every request: a <video> pointing at
 // the API could not send it, so it plays from memory.
-async function recordingBlob(path) {
-  const res = await fetch('/api/recording?path=' + encodeURIComponent(path) + '&repo=' + state.repo,
+async function recordingBlob(path, at) {
+  const res = await fetch('/api/recording?' + qs({ path, at, repo: state.repo }),
     { headers: { 'Authorization': 'Bearer ' + TOKEN } });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
   return res.blob();
@@ -2110,11 +2304,14 @@ function videoPlayer(into, r) {
   video.playsInline = true;
   video.preload = 'metadata';
   into.appendChild(video);
-  const player = { onTime: null, seek: ms => { video.currentTime = ms / 1000; } };
+  // A seek before the video has loaded waits for it to have.
+  let pending = null;
+  const player = { onTime: null, seek: ms => { if (video.readyState >= 1) video.currentTime = ms / 1000; else pending = ms; } };
+  video.onloadedmetadata = () => { if (pending !== null) { video.currentTime = pending / 1000; pending = null; } };
   video.ontimeupdate = () => player.onTime && player.onTime(video.currentTime * 1000);
   whenVisible(into, async () => {
     try {
-      video.src = URL.createObjectURL(await recordingBlob(r.dir + '/' + r.recording));
+      video.src = URL.createObjectURL(await recordingBlob(r.dir + '/' + r.recording, r.at));
     } catch (e) {
       into.innerHTML = `<div class="none dim">could not load the video: ${esc(e.message)}</div>`;
     }
@@ -2157,8 +2354,10 @@ function castPlayer(into, r) {
   into.innerHTML = '<div class="cast"><pre class="term"></pre><div class="controls"><button data-act="play" title="play or pause">▶</button><input type="range" min="0" value="0" step="10"><span class="time mono dim">0:00.0</span></div></div>';
   const pre = into.querySelector('pre.term'), button = into.querySelector('[data-act=play]');
   const slider = into.querySelector('input'), time = into.querySelector('.time');
-  let cast = null, at = 0, playing = false, started = 0, from = 0;
-  const player = { onTime: null, seek: ms => { at = ms; if (playing) { started = performance.now(); from = ms; } draw(); } };
+  // A seek can come before the recording has loaded, from a step tapped while it was still
+  // off screen; it is kept, rather than replaced by the opening frame when the frames come.
+  let cast = null, at = 0, playing = false, started = 0, from = 0, sought = false;
+  const player = { onTime: null, seek: ms => { at = ms; sought = true; if (playing) { started = performance.now(); from = ms; } draw(); } };
   const draw = () => {
     if (!cast) return;
     const rows = new Array(cast.height).fill(null).map(() => []);
@@ -2199,12 +2398,12 @@ function castPlayer(into, r) {
   slider.oninput = () => player.seek(Number(slider.value));
   whenVisible(into, async () => {
     try {
-      cast = await api('/cast?' + qs({ path: r.dir + '/' + r.recording }));
+      cast = await api('/cast?' + qs({ path: r.dir + '/' + r.recording, at: r.at }));
       slider.max = cast.duration_ms;
       pre.style.width = cast.width + 'ch';
       // The first frame with something on it: a full-screen program starts by clearing it.
       const shown = cast.frames.find(f => f.rows.some(([, runs]) => runs.some(r => r.text.trim())));
-      at = shown ? shown.at_ms : 0;
+      if (!sought) at = shown ? shown.at_ms : 0;
       fit();
       draw();
       new ResizeObserver(fit).observe(into);

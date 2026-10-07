@@ -62,11 +62,14 @@ macro_rules! term {
     () => {
         term!(|_: &std::path::Path| {})
     };
-    ($setup:expr) => {{
+    ($setup:expr) => {
+        term!($setup, &[])
+    };
+    ($setup:expr, $args:expr) => {{
         fn here() {}
         let path = std::any::type_name_of_val(&here);
         let name = path.trim_end_matches("::here").rsplit("::").next().unwrap();
-        $crate::harness::Term::start_with(name, file!(), $setup)
+        $crate::harness::Term::start_with(name, file!(), $setup, $args)
     }};
 }
 
@@ -129,8 +132,14 @@ impl Term {
     ///
     /// `name` is the test's function name as written and `file` the file it is in; `term!`
     /// fills both in.
-    /// `setup` changes the scratch repository before the program is started in it.
-    pub fn start_with(name: &str, file: &'static str, setup: impl FnOnce(&Path)) -> Term {
+    /// `setup` changes the scratch repository before the program is started in it, and `args`
+    /// are its command line: none for the terminal UI.
+    pub fn start_with(
+        name: &str,
+        file: &'static str,
+        setup: impl FnOnce(&Path),
+        args: &[&str],
+    ) -> Term {
         let repo = scratch_repo();
         setup(repo.path());
         let home = tempfile::tempdir().unwrap();
@@ -143,6 +152,7 @@ impl Term {
             })
             .expect("a pseudo-terminal");
         let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_codereview"));
+        cmd.args(args);
         cmd.cwd(repo.path());
         cmd.env("TERM", "xterm-256color");
         cmd.env("HOME", home.path());
@@ -390,9 +400,18 @@ impl Term {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target/e2e/terminal")
             .join(slug(&self.name));
+        // A run that does not count keeps what the last one that did said this test ran.
+        let kept = if self.profiles.is_none() {
+            crate::common::keep_coverage(&dir)
+        } else {
+            None
+        };
         // This test's directory only: the others run at the same time in other processes.
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        if let Some(kept) = kept {
+            crate::common::restore_coverage(&dir, kept);
+        }
 
         let unix = self
             .started_at

@@ -1427,3 +1427,108 @@ fn the_end_to_end_tests_and_their_recordings() {
         assert!(status == 404 || status == 415, "{path} answered {status}");
     }
 }
+
+/// A stretch of history through the end-to-end tests: the changed code no test ran, and the
+/// tests recorded at the base by the repository's own command, in a worktree, and compared.
+#[test]
+fn a_stretch_is_recorded_at_its_base_and_compared() {
+    let dir = scratch_repo();
+    let root = dir.path();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+    };
+    let put = |path: &str, text: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    // The end-to-end command: it leaves a recording of a test that, at the base, failed.
+    put(
+        "Makefile",
+        "e2e:\n\tmkdir -p target/e2e/t/saves\n\
+         \tprintf '%s' '{\"test\": \"a_review_is_saved\", \"file\": \"tests/cli.rs\", \
+         \"passed\": false, \"steps\": [{\"at_ms\": 0, \"kind\": \"action\", \"text\": \"save\"}]}' \
+         > target/e2e/t/saves/test.json\n",
+    );
+    put(
+        "tests/cli.rs",
+        "// CARGO_BIN_EXE_tool\n#[test]\nfn a_review_is_saved() {}\n",
+    );
+    put(
+        "src/lib.rs",
+        "pub fn save_review_file() {\n    write();\n}\n",
+    );
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "base"]);
+    put(
+        "src/lib.rs",
+        "pub fn save_review_file() {\n    write();\n    write();\n}\n",
+    );
+    put(
+        "target/e2e/t/saves/test.json",
+        r#"{"test": "a_review_is_saved", "file": "tests/cli.rs", "passed": true,
+            "steps": [{"at_ms": 0, "kind": "action", "text": "save"}]}"#,
+    );
+    let (addr, token, _rt) = serve(&[root]);
+    let t = Some(token.as_str());
+    let get = |path: &str| {
+        // The server builds the symbol index first, and says so until it has.
+        for _ in 0..100 {
+            let (status, body) = request(addr, "GET", path, t, None);
+            if status != 503 {
+                assert_eq!(status, 200, "{path}: {body}");
+                return serde_json::from_str::<serde_json::Value>(&body).unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("{path} never came");
+    };
+
+    let v = get("/api/stretch?stretch=uncommitted");
+    assert_eq!(v["changed"], 1, "{v}");
+    assert_eq!(v["unran"][0]["path"], "src/lib.rs", "{v}");
+    assert_eq!(v["base"]["recorded"], 0);
+    assert_eq!(v["base"]["command"], "make e2e");
+    let commit = v["base"]["commit"].as_str().unwrap().to_string();
+
+    let body = format!("{{\"commit\": \"{commit}\"}}");
+    let (status, run) = request(addr, "POST", "/api/stretch/record", t, Some(&body));
+    assert_eq!(status, 200, "{run}");
+    let mut done = false;
+    for _ in 0..100 {
+        let run = get(&format!("/api/stretch/record?commit={commit}"));
+        if run["running"] == false {
+            assert_eq!(run["exit"], 0, "{run}");
+            done = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(done, "the recording never finished");
+
+    let v = get("/api/stretch?stretch=uncommitted");
+    assert_eq!(v["base"]["recorded"], 1, "{v}");
+    assert_eq!(v["outcomes"][0]["before"], false, "{v}");
+    assert_eq!(v["outcomes"][0]["after"], true);
+    let c = get("/api/stretch/test?stretch=uncommitted&file=tests/cli.rs&name=a_review_is_saved");
+    assert_eq!(c["before"]["passed"], false, "{c}");
+    assert_eq!(c["steps"][0]["before"]["text"], "save");
+    // A recording at a commit is found in its worktree, and only by its full hash.
+    let (status, _) = request(
+        addr,
+        "GET",
+        &format!(
+            "/api/recording?path=target/e2e/t/saves/video.webm&at={}",
+            &commit[..7]
+        ),
+        t,
+        None,
+    );
+    assert_ne!(status, 200);
+}

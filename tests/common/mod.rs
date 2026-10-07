@@ -126,3 +126,25 @@ pub fn lcov_of(profiles: &[std::path::PathBuf], binary: &str) -> Option<Vec<u8>>
         .ok()?;
     out.status.success().then_some(out.stdout)
 }
+
+/// A test's `coverage.lcov`, and when it was made.
+pub struct Kept(Vec<u8>, std::time::SystemTime);
+
+/// The coverage the last counting run left in `dir`, to keep across a run that does not
+/// count: without it every plain run of the tests would forget what each one runs.
+pub fn keep_coverage(dir: &Path) -> Option<Kept> {
+    let file = dir.join("coverage.lcov");
+    let made = std::fs::metadata(&file).and_then(|m| m.modified()).ok()?;
+    Some(Kept(std::fs::read(&file).ok()?, made))
+}
+
+/// Puts kept coverage back in `dir` as it was, made when it was made: a reader judges by that
+/// whether it knows the code as it is now.
+pub fn restore_coverage(dir: &Path, kept: Kept) {
+    let file = dir.join("coverage.lcov");
+    if std::fs::write(&file, kept.0).is_ok() {
+        if let Ok(f) = std::fs::File::options().write(true).open(&file) {
+            let _ = f.set_modified(kept.1);
+        }
+    }
+}

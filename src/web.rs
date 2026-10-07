@@ -706,6 +706,12 @@ fn router(state: AppState) -> Router {
         .route("/spec", get(api::get_spec))
         .route("/e2e", get(api::get_e2e))
         .route("/e2e/test", get(api::get_e2e_test))
+        .route("/stretch", get(api::get_stretch))
+        .route("/stretch/test", get(api::get_stretch_test))
+        .route(
+            "/stretch/record",
+            get(api::get_stretch_record).post(api::post_stretch_record),
+        )
         .route("/recording", get(api::get_recording))
         .route("/cast", get(api::get_cast))
         .route("/tests_of", get(api::get_tests_of))

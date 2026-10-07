@@ -170,6 +170,13 @@ test('a test command is found, and one tap runs it', async t => {
     const row = document.querySelector('.overview .checks .check');
     return row.textContent.includes('make test') && row.textContent.includes('found') ? true : row.textContent;
   }));
+  // The parts that need the symbols arrive later and move everything below them: a tap
+  // aimed before then lands on whatever moved under the finger — once, the next check's Run.
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.overview .leaning');
+    return el && !el.textContent.includes('reading the symbols')
+      && document.querySelector('.overview .suite .item') && !document.querySelector('.overview .suite .asof');
+  }, { timeout: 30000 });
   t.ok('and its Run button can be tapped', await t.inView('.overview .checks .check [data-act=run]'));
   t.step('tap Run');
   await page.click('.overview .checks .check [data-act=run]');
@@ -425,6 +432,56 @@ test('a test opens on its own, with the code it ran and what documents it', asyn
   await page.waitForSelector('table.code td.n');
   t.ok('the documentation opens at its heading', await page.evaluate(() => /README\.md\?line=\d+/.test(location.hash)), await page.evaluate(() => location.hash));
 }, { docs: ['SPECS.md#What a repository opens on'] });
+
+test('a stretch says what no end-to-end test ran, and how each test ran before it', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('.e2e-test.failed');
+  t.step('look at the uncommitted work');
+  await page.click('.stretch-card [data-stretch=uncommitted]');
+  await page.waitForSelector('.stretch-card .unran .item', { timeout: 30000 });
+  t.ok('it says how much changed code no end-to-end test ran', await page.evaluate(() => {
+    const head = document.querySelector('.stretch-card .unran-head').textContent.replace(/\s+/g, ' ').trim();
+    const row = document.querySelector('.stretch-card .unran .item').textContent.replace(/\s+/g, ' ').trim();
+    return /^1 of 2 changed lines no end-to-end test ran/.test(head) && /src\/core\.rs\s*1 of 2 lines/.test(row) ? true : head + ' | ' + row;
+  }));
+  t.ok('and which test ran the rest', await page.evaluate(() =>
+    /ran 1 changed line/.test(document.querySelector('.e2e-test.failed .badges').textContent)));
+  t.ok('recording the tests before it is a tap', await t.inView('.stretch-card .base [data-act=record]'));
+  t.ok('which says what it will run', await page.evaluate(() =>
+    /runs make e2e in a worktree of [0-9a-f]{7}/.test(document.querySelector('.stretch-card .base').textContent.replace(/\s+/g, ' '))));
+  t.step('record the tests at the base');
+  await page.click('.stretch-card .base [data-act=record]');
+  await page.waitForFunction(() => /Before: the tests as they ran at/.test(document.querySelector('.stretch-card .base')?.textContent || ''), { timeout: 30000 });
+  t.ok('each test says how it ran before and how it runs now', await page.evaluate(() => {
+    const badges = sel => document.querySelector(sel + ' .badges').textContent.replace(/\s+/g, ' ');
+    const listed = badges('.e2e-test.passed'), saved = badges('.e2e-test.failed');
+    return /✓ → ✓ · screen changed at 1 step/.test(listed) && /✓ → ✗/.test(saved) ? true : listed + ' | ' + saved;
+  }));
+  t.step('open the test whose screen changed');
+  await page.click('.e2e-test.passed a.label');
+  await page.waitForSelector('.testview .compare ol.pairs li');
+  t.ok('its steps pair up, before and now', await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.testview .compare ol.pairs li')].map(li => li.querySelector('.what').textContent);
+    return rows.join(',') === 'same screen,screen changed' ? true : rows.join(',');
+  }));
+  await page.waitForFunction(() => document.querySelectorAll('.testview .compare pre.term').length === 2
+    && /none yet/.test(document.querySelector('.testview .compare .media.before pre.term').textContent || '') === false, { timeout: 10000 });
+  t.step('go to the step whose screen changed');
+  await page.click('.testview .compare ol.pairs li.changed');
+  await page.waitForFunction(() => /none yet/.test(document.querySelector('.testview .compare .media.before pre.term').textContent)
+    && /why is this pub/.test(document.querySelector('.testview .compare .media.after pre.term').textContent), { timeout: 5000 });
+  t.ok('both recordings go to it', true);
+  t.step('go back, and open the code nothing ran');
+  await page.click('#back');
+  await page.waitForSelector('.stretch-card .unran .item', { timeout: 30000 });
+  await t.inView('.stretch-card .unran .item');
+  await page.click('.stretch-card .unran .item');
+  await page.waitForSelector('table.code tr.unran');
+  t.ok('the file marks the changed lines no test ran', await page.evaluate(() =>
+    [...document.querySelectorAll('table.code tr.unran')].map(r => r.dataset.line).join(',') === '4'
+    && /no end-to-end test ran them/.test(document.querySelector('.ranbanner').textContent)));
+}, { docs: ['SPECS.md#What a stretch of history did'] });
 
 // ---------------------------------------------------------------------------------------------
 

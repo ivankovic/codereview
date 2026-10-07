@@ -10,9 +10,10 @@ line they were left on and finding it again after edits.
   terminal played back — with whether it passed and how far the code has moved since. Navigation
   into the code starts from a test: its own view lines its steps up with the recording and the
   test's source, lists the code its run executed, what only it ran first, links the documentation it
-  demonstrates, and the smaller tests that reach the same code. A repository with none opens on
-  saying so, and the agent is offered the job of writing the first ones, each leaving a recording to
-  watch.
+  demonstrates, and the smaller tests that reach the same code. For uncommitted work, the last
+  commit or the last week, it says which changed code no end-to-end test ran, and, recorded at the
+  base in a worktree, how each test ran before and runs now. A repository with none opens on saying
+  so, and the agent is offered the job of writing the first ones, each leaving a recording to watch.
 - **Summarise a repository** rather than show a file tree: what its README says, where
   to start reading, which files the rest of the tree leans on — computed from the symbols, not
   declared anywhere — how it is doing, down to how many review comments have lost the lines
@@ -81,6 +82,8 @@ codereview reanchor           # rewrite line numbers of comments whose lines mov
 codereview overview           # write OVERVIEW.md: what it is, where to start, what its tests check
 codereview e2e                # the end-to-end tests and how their last recorded runs went
 codereview e2e --test NAME    # one of them: its steps, the code it ran, its docs, tests below
+codereview e2e --stretch uncommitted   # the changed code no end-to-end test ran
+codereview e2e --stretch last --record # ... and every test before the last commit and after
 codereview def total          # where `total` is defined
 codereview refs total         # every place `total` occurs
 codereview symbols pars       # definitions whose name contains "pars"
@@ -107,6 +110,7 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 | `D` | diff the file against HEAD |
 | `L` `S` `R` `T` | repository log, working tree changes, review list, notes list |
 | `E` | end-to-end tests, what it opens on: `Space` plays, `Enter` a test on its own, `s` source |
+| `w` `b` | end-to-end screens: the stretch marked; record the tests at its base to compare |
 | `U` | the tests that name the open file |
 | `B` | blame column |
 | `t` | colour scheme picker, previewed live and saved |

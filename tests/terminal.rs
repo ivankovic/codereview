@@ -112,6 +112,45 @@ fn a_test_leads_to_the_code_it_ran_and_what_documents_it() {
 }
 
 #[test]
+fn changed_code_no_end_to_end_test_ran_is_marked() {
+    let mut t = term!(|root: &Path| {
+        // The last run of tests/e2e.rs, with what it ran of src/main.rs: everything but the
+        // line the uncommitted edit added.
+        let dir = root.join("target/e2e/terminal/a-review-survives-a-restart");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("test.json"),
+            r#"{"test": "a_review_survives_a_restart", "file": "tests/e2e.rs", "line": 2,
+                "passed": true, "duration_ms": 1000, "steps": []}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("coverage.lcov"),
+            "SF:src/main.rs\nDA:3,1\nDA:4,1\nDA:5,1\nDA:6,0\nDA:7,1\nend_of_record\n",
+        )
+        .unwrap();
+    });
+    t.documents("SPECS.md#What a repository opens on");
+    t.wait_for("✓ a review survives a restart");
+    t.step("mark the uncommitted work instead of the last 7 days");
+    t.keys("w");
+    t.wait_for("marking the last commit");
+    t.keys("w");
+    t.wait_for("In uncommitted work");
+    t.wait_for("No end-to-end test ran 1 of 1 changed lines");
+    t.wait_for("▌src/main.rs  1 of 1");
+    t.wait_for(": no command records the tests");
+    t.step("open the changed code nothing ran");
+    t.keys("k");
+    t.keys("k");
+    t.wait_for("ran in no end-to-end test.");
+    t.keys(ENTER);
+    t.wait_for("src/main.rs 6/7");
+    t.wait_for("6 ▌    println!");
+    t.wait_for("changed in uncommitted work, run by no end-to-end test");
+}
+
+#[test]
 fn a_repository_without_end_to_end_tests_says_so_first() {
     let mut t = term!(|root: &Path| {
         std::fs::remove_file(root.join("tests/e2e.rs")).unwrap();
@@ -246,4 +285,43 @@ fn q_steps_back_and_then_gives_the_terminal_back() {
     t.check("the terminal is back on its own screen", !alternate, || {
         "still on the alternate screen".into()
     });
+}
+
+/// What the last run of tests/e2e.rs left in `root`: its recording, and the lines of
+/// src/main.rs it ran, made after the scratch repository's uncommitted change to that file.
+fn recorded_with_coverage(root: &Path) {
+    let dir = root.join("target/e2e/terminal/a-review-survives-a-restart");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("test.json"),
+        r#"{"test": "a_review_survives_a_restart", "file": "tests/e2e.rs", "line": 2,
+            "passed": true, "duration_ms": 900, "steps": [
+              {"at_ms": 0, "line": 3, "kind": "action", "text": "write a review"}]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("coverage.lcov"),
+        "SF:src/main.rs\nDA:3,1\nDA:4,1\nDA:5,1\nDA:6,0\nend_of_record\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn the_e2e_command_lists_the_tests_and_how_they_ran() {
+    let mut t = term!(recorded_with_coverage, &["e2e"]);
+    t.documents("SPECS.md#Command line");
+    t.wait_for("✓ tests/e2e.rs:2 a review survives a restart");
+    t.wait_for("1 end-to-end tests of 2, 0 failed, 0 without a recording");
+    t.exits();
+}
+
+#[test]
+fn the_e2e_command_says_what_uncommitted_work_left_untested() {
+    let mut t = term!(recorded_with_coverage, &["e2e", "--stretch", "uncommitted"]);
+    t.documents("SPECS.md#What a stretch of history did");
+    t.wait_for("uncommitted work");
+    t.wait_for("1 of 1 changed lines no end-to-end test ran");
+    t.wait_for("src/main.rs — 1 of 1 lines");
+    t.wait_for("not recorded at");
+    t.exits();
 }

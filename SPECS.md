@@ -403,6 +403,37 @@ terminal UI library), or a command (an entry point) — and the agent is offered
 the first ones, with a request that spells out the recording format above so that each new test
 leaves a recording to watch. The request is the same in both front ends.
 
+## What a stretch of history did
+
+A stretch — the last seven days, the last commit, uncommitted work, or one commit from the log —
+is seen through the end-to-end tests, in three parts, in the order a reviewer needs them.
+
+What happened to the tests comes first: removed, skipped and weakened, as in the specification.
+
+Then the changed code no end-to-end test ran. The lines the stretch added or changed are read from
+one `git diff -U0` against its base, with every line of an untracked file when it ends at the
+working tree; lines only removed leave nothing. Of those, only code counts: not files of nothing
+but tests, not the test code inside a file of code, and only files the tool reads as code or some
+test's coverage names. In a file coverage knows, and only when that coverage is newer than the
+file, a line counts if any test's coverage lists it at all, run or not, which leaves out blank
+lines, comments and markup; anywhere else, any line with something on it counts. A line no test's
+last run executed is one no end-to-end test ran. The files with such lines are listed, most
+first, at most a hundred, with how many of their changed lines no test ran; each end-to-end test
+that ran some of the changed lines says how many, and the tests whose runs left no coverage are
+counted, since what they ran is not. How the lines a test ran line up with the lines changed is
+git's alignment of the hunks, so a brace may count with the line beside it.
+
+Last, each test before and after. The before is the tests run at the stretch's base commit, in a
+worktree of it kept under the git directory (`codereview/before/<commit>`), by the repository's
+end-to-end command: a configured check, or a found one, whose name or command says end to end —
+a Makefile's `e2e` target is found like its `test` and `check`. It is never run unasked: the page
+offers a button that says what it will run and where, the terminal UI a key, and the command line
+`--record`. At most three such worktrees are kept, the oldest removed when another is made. Once
+there are recordings at the base, each test says whether it passed then and now, how many of its
+steps are on one side only — steps are matched by kind and text, as the longest common run — and,
+for two terminal recordings, at how many matched steps the screen's text differs. A test's own
+view shows both recordings side by side and the steps in pairs; choosing a pair moves both.
+
 ## Highlighting
 
 syntect on the oniguruma regex engine with two-face's syntax set, chosen by extension, then
@@ -499,6 +530,28 @@ at its source. A screen opened while the symbols are still being read says so an
 they are. `q` goes back to the list. The terminal end-to-end tests name the section they
 demonstrate (`documents`), and under `cargo llvm-cov` each writes the coverage of its own run.
 
+Both screens mark a stretch of history, the last 7 days to begin with; `w` moves on to the last
+commit, then the uncommitted work, then back, and the list's title names it. Above the tests the
+list says what the stretch did: under `In <stretch>`, the tests it removed, skipped or made to
+check less, each opening on the diff of its file across the stretch, or that it did none of
+that; then `No end-to-end test ran N of M changed lines` and a row per file of such lines, the
+first eight with the rest folded under `… N more files` until `Enter` unfolds them, each opening
+on the file at the first of them with every one marked by a bar of the colour of a moved
+line and the status line saying it was changed in the stretch and run by no end-to-end test, or
+that it changed no code, or that every changed line ran; a warning when some end-to-end tests
+left no coverage, whose runs are then not counted; and the stretch's base commit, when it has
+one: recorded, with how many tests, or not, with `b` to record it, or that no command records
+the tests. Beside the list, a row of the stretch explains itself. `b` makes the worktree of the
+base and runs the end-to-end command there in the background; the row says it is recording, for
+how long and the last line it printed, and when it ends the status line says how it went and
+both screens read the stretch again. Each test in the list carries `Δn` for the changed lines it
+ran, its result before and now when they differ (`✗→✓`), and `screen changed`, or `steps
+changed`, when its run differs from the one at the base. On a test's own screen, once the base is
+recorded, its recording at the base is played beside the one now (one above the other when both
+do not fit across), and its steps are paired: both times, both marks, the step, and `only now`,
+`only before` or `screen changed`; `Enter` on a pair takes both recordings to it, and `Space`,
+`]`, `[` and `0` move both.
+
 ## Browser UI
 
 One embedded page served by an axum server on a loopback address (by default) with a random port.
@@ -594,6 +647,12 @@ test there, and tapping a step goes to its moment; then the code it ran, each fi
 what ran and what only it ran, the documentation marked as named or as a guess with the words it
 shares, and the smaller tests. A file opened from the code it ran marks those lines in its gutter,
 under a line naming the test that leads back to it; another file opened later is not marked.
+The opening has the stretch buttons of the specification, and a card saying what the chosen
+stretch did, between the counts and the tests; each test's card carries what the stretch has to do
+with it: the changed lines it ran, and how it went before and now. A file opened from the changed
+code no test ran marks those lines in another colour, under a line saying so. Recording the base
+shows the command's progress and the end of its output, and the card is worked out again when it
+is done.
 
 The overview is not on the file tree either. It is what the project says it is —
 the prose its README opens with, as plain text, up to the first heading after it — then where to
@@ -692,7 +751,9 @@ files (`add` takes `N` or `N-M` lines, or none at all for a comment on a whole f
 directory), `toggle` moves a comment between sections by its number in `list --all`, `reanchor`
 rewrites line numbers, `def`, `refs` and `symbols` query the index, `e2e` lists the end-to-end
 tests with how their last recorded runs went (`--json` for all of it; `--test NAME` for one of
-them, with its steps, the code it ran, its documentation and the tests below it), and `agent`
+them, with its steps, the code it ran, its documentation and the tests below it; `--stretch`
+for what a stretch did, with `--record` to record the tests at its base first, and with `--test`
+for one test before and after), and `agent`
 sends one
 prompt and streams the answer to stdout (permission requests are asked on the terminal, or
 auto-allowed with `--yes`). `-C DIR` selects the repository.

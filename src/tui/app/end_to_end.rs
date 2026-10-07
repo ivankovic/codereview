@@ -15,10 +15,27 @@ use std::time::Instant;
 
 use crate::e2e::{EndToEnd, Opening};
 use crate::recording::{Cast, Kind, Recording};
+use crate::stretch::{Outcome, Report, Touched};
+use crate::tui::viewer::RanBy;
 
-/// One row of the list: a file's heading, a test, or a recording whose test is gone.
+/// One row of the list: what the stretch did, then a file's heading, a test, or a recording
+/// whose test is gone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum E2eRow {
+    /// The heading over what the stretch of history did.
+    Stretch,
+    /// Something said that leads nowhere; `true` when it is a warning.
+    Note(String, bool),
+    /// An index into the report's changes to tests: one that now asks less than it did.
+    Change(usize),
+    /// The heading over the changed code no end-to-end test ran.
+    UnranHead,
+    /// An index into the report's files of changed code no end-to-end test ran.
+    Unran(usize),
+    /// How many more such files there are, folded away.
+    MoreUnran(usize),
+    /// The stretch's base commit, and whether the tests are recorded there.
+    Base,
     /// A test file, and how many end-to-end tests it holds.
     File(String, usize),
     /// An index into the opening's tests.
@@ -31,7 +48,15 @@ pub enum E2eRow {
 
 impl E2eRow {
     fn selectable(&self) -> bool {
-        matches!(self, E2eRow::Test(_) | E2eRow::Orphan(_))
+        matches!(
+            self,
+            E2eRow::Test(_)
+                | E2eRow::Orphan(_)
+                | E2eRow::Change(_)
+                | E2eRow::Unran(_)
+                | E2eRow::MoreUnran(_)
+                | E2eRow::Base
+        )
     }
 }
 
@@ -43,12 +68,17 @@ pub struct EndToEndState {
     /// it is.
     pub from_overview: bool,
     pub rows: ListState<E2eRow>,
+    /// What the stretch did, through the end-to-end tests; `None` while the symbols are
+    /// read, and why not when it cannot be said.
+    pub report: Option<std::result::Result<Report, String>>,
     /// Terminal recordings played into frames, by their path, or why one could not be.
     pub casts: HashMap<String, Played>,
     /// The selected recording, and where playback is in it.
     pub player: Player,
     /// The recording takes the whole screen.
     pub full: bool,
+    /// Every file of changed code no end-to-end test ran is listed, not only the first few.
+    pub all_unran: bool,
 }
 
 /// A terminal recording played into frames, or why it could not be; shared between the list
@@ -158,18 +188,56 @@ impl Player {
 }
 
 impl EndToEndState {
-    pub fn new(opening: Option<Opening>, from_overview: bool) -> Self {
-        let rows = opening.as_ref().map(rows_of).unwrap_or_default();
+    pub fn new(
+        opening: Option<Opening>,
+        from_overview: bool,
+        report: Option<std::result::Result<Report, String>>,
+        all_unran: bool,
+    ) -> Self {
+        let rows = opening
+            .as_ref()
+            .map(|o| rows_of(o, report.as_ref(), all_unran))
+            .unwrap_or_default();
         let mut state = Self {
             opening,
             from_overview,
             rows: ListState::new(rows),
+            report,
             casts: HashMap::new(),
             player: Player::default(),
             full: false,
+            all_unran,
         };
+        // On the first test, whatever the stretch has to say above it: the tests are what a
+        // repository opens on.
+        if let Some(first) = state
+            .rows
+            .items
+            .iter()
+            .position(|r| matches!(r, E2eRow::Test(_)))
+        {
+            state.rows.cursor = first;
+        }
         state.settle(1);
         state
+    }
+
+    /// The report, when there is one to show.
+    pub fn report(&self) -> Option<&Report> {
+        self.report.as_ref()?.as_ref().ok()
+    }
+
+    /// What the stretch's report says of `test`: the changed lines it ran, and how it went
+    /// before and after.
+    pub fn stretch_of(&self, test: &EndToEnd) -> (Option<&Touched>, Option<&Outcome>) {
+        let Some(report) = self.report() else {
+            return (None, None);
+        };
+        let same = |path: &str, name: &str| path == test.test.path && name == test.test.name;
+        (
+            report.touched.iter().find(|t| same(&t.path, &t.name)),
+            report.outcomes.iter().find(|o| same(&o.path, &o.name)),
+        )
     }
 
     /// The test under the cursor, if it is one.
@@ -284,9 +352,24 @@ pub(super) fn played(
     )
 }
 
-/// The list: each file's tests under its name, then the recordings of tests no longer here.
-fn rows_of(opening: &Opening) -> Vec<E2eRow> {
+/// The list: what the stretch did, each file's tests under its name, then the recordings of
+/// tests no longer here.
+fn rows_of(
+    opening: &Opening,
+    report: Option<&std::result::Result<Report, String>>,
+    all_unran: bool,
+) -> Vec<E2eRow> {
     let mut rows = Vec::new();
+    if !opening.missing() {
+        match report {
+            Some(Ok(report)) => stretch_rows(report, all_unran, &mut rows),
+            Some(Err(e)) => {
+                rows.push(E2eRow::Stretch);
+                rows.push(E2eRow::Note(e.clone(), true));
+            }
+            None => {}
+        }
+    }
     let counts = crate::e2e::by_file(&opening.tests);
     let mut last: Option<&str> = None;
     for (i, t) in opening.tests.iter().enumerate() {
@@ -306,12 +389,89 @@ fn rows_of(opening: &Opening) -> Vec<E2eRow> {
     rows
 }
 
+/// What the stretch did: the tests that ask less than they did, the changed code no
+/// end-to-end test ran, and the base the tests can be recorded at to compare with.
+fn stretch_rows(report: &Report, all_unran: bool, rows: &mut Vec<E2eRow>) {
+    rows.push(E2eRow::Stretch);
+    let alarming: Vec<usize> = (0..report.changes.len())
+        .filter(|i| report.changes[*i].what.alarming())
+        .collect();
+    if alarming.is_empty() {
+        rows.push(E2eRow::Note(
+            "No test was removed, skipped or made to check less.".into(),
+            false,
+        ));
+    }
+    rows.extend(alarming.into_iter().map(E2eRow::Change));
+    if report.changed == 0 {
+        rows.push(E2eRow::Note("It changed no code.".into(), false));
+    } else {
+        rows.push(E2eRow::UnranHead);
+        if report.unran.is_empty() {
+            rows.push(E2eRow::Note(
+                "Every changed line of code ran in an end-to-end test.".into(),
+                false,
+            ));
+        }
+        // A week of changes can be a hundred files; the tests are what the screen is for.
+        let shown = if all_unran {
+            report.unran.len()
+        } else {
+            report.unran.len().min(UNRAN_FOLDED)
+        };
+        rows.extend((0..shown).map(E2eRow::Unran));
+        if shown < report.unran.len() {
+            rows.push(E2eRow::MoreUnran(report.unran.len() - shown));
+        }
+        if report.without_coverage > 0 {
+            rows.push(E2eRow::Note(
+                format!(
+                    "{} end-to-end {} left no coverage; what {} ran is not counted.",
+                    report.without_coverage,
+                    if report.without_coverage == 1 {
+                        "test"
+                    } else {
+                        "tests"
+                    },
+                    if report.without_coverage == 1 {
+                        "it"
+                    } else {
+                        "they"
+                    },
+                ),
+                true,
+            ));
+        }
+    }
+    if report.base.is_some() {
+        rows.push(E2eRow::Base);
+    }
+}
+
+/// How many files of changed code no end-to-end test ran are listed before the rest fold.
+const UNRAN_FOLDED: usize = 8;
+
 impl App {
+    /// What the stretch did, as it can be said now: not while another thread builds the
+    /// symbol index, which a second build here would only race.
+    fn read_report(&mut self) -> Option<std::result::Result<Report, String>> {
+        if !self.session.has_index() && self.warming.is_some() {
+            return None;
+        }
+        let stretch = self.stretch.clone();
+        Some(crate::stretch::report(&mut self.session, &stretch).map_err(|e| format!("{e:#}")))
+    }
+
     /// The end-to-end tests, on top of the stack; the screen already there is replaced, on
     /// the same test.
     pub fn push_end_to_end(&mut self) {
         let (opening, from_overview) = self.read_opening();
-        let mut state = EndToEndState::new(opening, from_overview);
+        let report = self.read_report();
+        let all_unran = match self.screens.last() {
+            Some(Screen::EndToEnd(old)) => old.all_unran,
+            _ => false,
+        };
+        let mut state = EndToEndState::new(opening, from_overview, report, all_unran);
         if let Some(Screen::EndToEnd(old)) = self.screens.last() {
             if let Some(key) = old.key() {
                 state.find(&key);
@@ -346,7 +506,10 @@ impl App {
     pub(super) fn refresh_end_to_end(&mut self, only_provisional: bool) {
         let stale = self.screens.iter().any(|s| match s {
             Screen::EndToEnd(state) => {
-                !only_provisional || state.opening.is_none() || state.from_overview
+                !only_provisional
+                    || state.opening.is_none()
+                    || state.from_overview
+                    || state.report.is_none()
             }
             _ => false,
         });
@@ -355,12 +518,18 @@ impl App {
             return;
         }
         let (opening, from_overview) = self.read_opening();
+        let report = self.read_report();
         for screen in &mut self.screens {
             let Screen::EndToEnd(state) = screen else {
                 continue;
             };
             let key = state.key();
-            let mut fresh = EndToEndState::new(opening.clone(), from_overview);
+            let mut fresh = EndToEndState::new(
+                opening.clone(),
+                from_overview,
+                report.clone(),
+                state.all_unran,
+            );
             if let Some(key) = key {
                 fresh.find(&key);
             }
@@ -390,7 +559,7 @@ impl App {
     pub fn animating(&self) -> bool {
         match self.screen() {
             Screen::EndToEnd(s) => s.player.playing.is_some(),
-            Screen::EndToEndTest(s) => s.player.playing.is_some(),
+            Screen::EndToEndTest(s) => s.player.playing.is_some() || s.before.playing.is_some(),
             _ => false,
         }
     }
@@ -399,7 +568,10 @@ impl App {
     pub(super) fn advance_playback(&mut self) -> bool {
         match self.screens.last_mut() {
             Some(Screen::EndToEnd(state)) => state.player.advance(Instant::now()),
-            Some(Screen::EndToEndTest(state)) => state.player.advance(Instant::now()),
+            Some(Screen::EndToEndTest(state)) => {
+                let now = Instant::now();
+                state.player.advance(now) | state.before.advance(now)
+            }
             _ => false,
         }
     }
@@ -463,6 +635,37 @@ impl App {
                 let recording = state.recording().cloned();
                 self.open_recording(recording.as_ref());
             }
+            KeyCode::Char('w') => self.next_stretch(),
+            KeyCode::Char('b') => self.record_base(),
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right
+                if matches!(
+                    state.rows.current(),
+                    Some(
+                        E2eRow::Change(_) | E2eRow::Unran(_) | E2eRow::MoreUnran(_) | E2eRow::Base
+                    )
+                ) =>
+            {
+                if matches!(state.rows.current(), Some(E2eRow::MoreUnran(_))) {
+                    let cursor = state.rows.cursor;
+                    let opening = state.opening.clone();
+                    let report = state.report.clone();
+                    state.all_unran = true;
+                    state.rows = ListState::new(
+                        opening
+                            .as_ref()
+                            .map(|o| rows_of(o, report.as_ref(), true))
+                            .unwrap_or_default(),
+                    );
+                    state.rows.cursor = cursor;
+                    state.settle(1);
+                    return;
+                }
+                let row = state.rows.current().cloned();
+                let report = state.report().cloned();
+                if let (Some(row), Some(report)) = (row, report) {
+                    self.open_stretch_row(&row, &report);
+                }
+            }
             // A test opens on its own screen; an orphan, whose test is gone, has nothing
             // more to show than the list does.
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right if state.test().is_some() => {
@@ -482,6 +685,163 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// The next stretch to mark, as the spec screen cycles them: the last 7 days, the last
+    /// commit, uncommitted work.
+    pub(super) fn next_stretch(&mut self) {
+        let at = Stretch::CHOICES
+            .iter()
+            .position(|c| *c == self.stretch)
+            .unwrap_or(0);
+        self.stretch = Stretch::CHOICES[(at + 1) % Stretch::CHOICES.len()].clone();
+        match self.screen() {
+            Screen::EndToEnd(_) => self.push_end_to_end(),
+            // The test's screen, and the list under it, which marks the same stretch.
+            Screen::EndToEndTest(_) => self.refresh_end_to_end(false),
+            _ => {}
+        }
+        self.info(format!("marking {}", self.stretch.name()));
+    }
+
+    /// What a row of the stretch leads to: a test's change to the diff of its file across
+    /// the stretch, a file of changed code to that code with what nothing ran marked, the
+    /// base to recording the tests there.
+    fn open_stretch_row(&mut self, row: &E2eRow, report: &Report) {
+        match row {
+            E2eRow::Change(i) => {
+                let Some(c) = report.changes.get(*i) else {
+                    return;
+                };
+                if c.what == What::Removed {
+                    self.info(format!(
+                        "{} is gone; the diff of {} shows it go",
+                        c.label, c.path
+                    ));
+                }
+                let target = DiffTarget::Revisions {
+                    from: report.span.base.clone(),
+                    to: report.span.to.clone().unwrap_or_default(),
+                };
+                let file = ChangedFile {
+                    status: FileStatus::Modified,
+                    path: c.path.clone(),
+                    old_path: None,
+                };
+                self.push_diff(target, vec![file], 0);
+            }
+            E2eRow::Unran(i) => {
+                let Some(u) = report.unran.get(*i) else {
+                    return;
+                };
+                let first = u.ranges.first().map_or(1, |r| r.0 as usize);
+                self.go_to_source(&u.path, first);
+                let marked = RanBy {
+                    test: report.span.label.clone(),
+                    ranges: u.ranges.clone(),
+                    unran: true,
+                };
+                if let Some(v) = self.viewer.as_mut().filter(|v| v.path == u.path) {
+                    v.ran = Some(marked);
+                }
+            }
+            E2eRow::Base => self.record_base(),
+            _ => {}
+        }
+    }
+
+    /// Records the end-to-end tests at the stretch's base commit: a worktree of it, and the
+    /// repository's own end-to-end command run there, in the background. Asked for, never
+    /// started unasked: it runs the code as it was, and can take minutes.
+    pub(super) fn record_base(&mut self) {
+        let base = match self.screens.iter().rev().find_map(|s| match s {
+            Screen::EndToEnd(state) => Some(state.report().and_then(|r| r.base.clone())),
+            _ => None,
+        }) {
+            Some(Some(base)) => base,
+            _ => {
+                self.info("this stretch starts before the first commit: there is nothing to record it against");
+                return;
+            }
+        };
+        if let Some((commit, run)) = &self.base_run {
+            if run.lock().unwrap_or_else(|e| e.into_inner()).running {
+                let short: String = commit.chars().take(7).collect();
+                self.info(format!("the tests are already being recorded at {short}"));
+                return;
+            }
+        }
+        if base.command.is_none() {
+            self.info(
+                "no command records the end-to-end tests here: a Makefile e2e target, or a \
+                 configured check named for them",
+            );
+            return;
+        }
+        let started =
+            crate::stretch::prepare(&self.session, &base.commit).and_then(|(worktree, check)| {
+                crate::analysis::start(&check, &worktree).map(|run| (check.run, run))
+            });
+        match started {
+            Ok((command, run)) => {
+                self.info(format!(
+                    "recording the tests at {}: {command}, in a worktree of it",
+                    base.short
+                ));
+                self.base_run = Some((base.commit, run));
+            }
+            Err(e) => self.error(format!("cannot record the tests at {}: {e:#}", base.short)),
+        }
+    }
+
+    /// Says how a recording of the base went once it is over, and reads the stretch again
+    /// with it. True when it ended.
+    pub(super) fn watch_base_run(&mut self) -> bool {
+        let Some((commit, run)) = &self.base_run else {
+            return false;
+        };
+        let run = run.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if run.running {
+            return false;
+        }
+        let short: String = commit.chars().take(7).collect();
+        self.base_run = None;
+        self.refresh_end_to_end(false);
+        if run.exit == Some(0) {
+            self.info(format!("the tests are recorded at {short}"));
+        } else {
+            let last = run.output.lines().last().unwrap_or("").to_string();
+            self.error(format!(
+                "recording the tests at {short} failed ({}): {last}",
+                run.exit
+                    .map_or("killed".to_string(), |c| format!("exit {c}"))
+            ));
+        }
+        true
+    }
+
+    /// What the recording of the base is doing, for the row that offers it.
+    pub fn base_run_status(&self) -> Option<String> {
+        let (commit, run) = self.base_run.as_ref()?;
+        let run = run.lock().unwrap_or_else(|e| e.into_inner());
+        let started = chrono::DateTime::parse_from_rfc3339(&run.started).ok()?;
+        let secs = (chrono::Utc::now() - started.with_timezone(&chrono::Utc))
+            .num_seconds()
+            .max(0);
+        let short: String = commit.chars().take(7).collect();
+        let last = run
+            .output
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        Some(format!(
+            "recording the tests at {short}: {}:{:02}  {last}",
+            secs / 60,
+            secs % 60
+        ))
     }
 
     /// The test's source at `line`, when its file is still there.
@@ -560,4 +920,64 @@ pub(super) fn open_externally(path: &std::path::Path) -> Result<()> {
         .spawn()
         .map(|_| ())
         .map_err(|e| anyhow::anyhow!("{program}: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::spec::Span;
+    use crate::stretch::Unran;
+
+    #[test]
+    fn a_long_list_of_changed_code_folds_after_the_first_few() {
+        let opening = Opening {
+            tests: Vec::new(),
+            orphans: Vec::new(),
+            total: 0,
+            failed: 0,
+            unrecorded: 0,
+            kind: None,
+            ask: String::new(),
+        };
+        let unran = |i: usize| Unran {
+            path: format!("src/{i}.rs"),
+            changed: 1,
+            lines: 1,
+            ranges: vec![(1, 1)],
+        };
+        let report = Report {
+            span: Span {
+                stretch: Stretch::Uncommitted,
+                label: "uncommitted work".into(),
+                from: Some("HEAD".into()),
+                to: None,
+                base: "HEAD".into(),
+            },
+            changes: Vec::new(),
+            changed: 12,
+            unran_lines: 12,
+            unran: (0..12).map(unran).collect(),
+            touched: Vec::new(),
+            without_coverage: 0,
+            base: None,
+            outcomes: Vec::new(),
+        };
+        // No tests at all is its own finding, and says nothing of the stretch.
+        assert!(rows_of(&opening, Some(&Ok(report.clone())), false).is_empty());
+        let mut stretch = Vec::new();
+        stretch_rows(&report, false, &mut stretch);
+        let files = stretch
+            .iter()
+            .filter(|r| matches!(r, E2eRow::Unran(_)))
+            .count();
+        assert_eq!(files, UNRAN_FOLDED);
+        assert!(stretch.contains(&E2eRow::MoreUnran(12 - UNRAN_FOLDED)));
+        let mut all = Vec::new();
+        stretch_rows(&report, true, &mut all);
+        assert_eq!(
+            all.iter().filter(|r| matches!(r, E2eRow::Unran(_))).count(),
+            12
+        );
+        assert!(!all.iter().any(|r| matches!(r, E2eRow::MoreUnran(_))));
+    }
 }

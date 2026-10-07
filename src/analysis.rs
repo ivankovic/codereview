@@ -157,7 +157,7 @@ pub fn detect(root: &Path) -> Vec<Check> {
         .find(|m| has(m))
         .map(read)
         .unwrap_or_default();
-    for target in ["test", "check"] {
+    for target in ["test", "check", "e2e"] {
         let defines = makefile.lines().any(|line| {
             line.strip_prefix(target).is_some_and(|rest| {
                 let rest = rest.trim_start();

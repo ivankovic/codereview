@@ -10,6 +10,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::e2e::Opening;
 use crate::recording::{Colour, Kind, Recording, Run};
+use crate::stretch::{Outcome, Touched};
 use crate::theme::Theme;
 use crate::tui::app::{App, E2eRow, EndToEndState, EndToEndTestState, Player, Screen, TestRow};
 use crate::tui::style;
@@ -18,6 +19,7 @@ use super::{list_lines, title_block, wrap_text};
 
 pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.theme.clone();
+    let base_status = app.base_run_status();
     let Screen::EndToEnd(state) = app.screens.last_mut().expect("screen") else {
         return;
     };
@@ -35,11 +37,14 @@ pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
             if o.unrecorded > 0 {
                 parts.push(format!("{} without a recording", o.unrecorded));
             }
-            vec![
+            let mut title: Vec<Span> = vec![
                 " end to end ".into(),
                 format!("{} ", parts.join(" · ")).dim(),
-            ]
-            .into()
+            ];
+            if let Some(r) = state.report() {
+                title.push(format!("· marking {} (w) ", r.span.label).dim());
+            }
+            title.into()
         }
         _ => " end to end ".into(),
     };
@@ -62,10 +67,12 @@ pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     if state.full {
-        draw_recording(frame, &theme, &state.player, inner, true);
+        draw_recording(frame, &theme, &state.player, inner, true, "");
         return;
     }
-    let list_width = (inner.width / 3).clamp(24.min(inner.width), 56);
+    // Wider while the stretch has something to say, since its rows are sentences.
+    let share = if state.report().is_some() { 2 } else { 1 };
+    let list_width = (inner.width * share / (share + 2)).clamp(24.min(inner.width), 64);
     let [list, gap, detail] = Layout::horizontal([
         Constraint::Length(list_width),
         Constraint::Length(1),
@@ -74,7 +81,7 @@ pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
     .areas(inner);
     let _ = gap;
     app.measured.list_height = list.height as usize;
-    draw_list(frame, &theme, state, list);
+    draw_list(frame, &theme, state, base_status.as_deref(), list);
     draw_detail(frame, &theme, state, detail);
 }
 
@@ -149,11 +156,19 @@ fn draw_missing(frame: &mut Frame, theme: &Theme, opening: &Opening, area: Rect)
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn draw_list(frame: &mut Frame, theme: &Theme, state: &mut EndToEndState, area: Rect) {
+fn draw_list(
+    frame: &mut Frame,
+    theme: &Theme,
+    state: &mut EndToEndState,
+    base_status: Option<&str>,
+    area: Rect,
+) {
     let Some(opening) = &state.opening else {
         return;
     };
     state.rows.ensure_visible(area.height as usize);
+    let state = &*state;
+    let report = state.report();
     let width = area.width as usize;
     let dim = style::dim(theme);
     let lines = list_lines(
@@ -164,6 +179,83 @@ fn draw_list(frame: &mut Frame, theme: &Theme, state: &mut EndToEndState, area: 
         area.height as usize,
         true,
         |row| match row {
+            E2eRow::Stretch => Line::from(Span::styled(
+                clip(
+                    &format!(
+                        "In {}",
+                        report.map_or("the stretch", |r| r.span.label.as_str())
+                    ),
+                    width,
+                ),
+                style::accent(theme).bold(),
+            )),
+            E2eRow::Note(text, warn) => Line::from(Span::styled(
+                clip(&format!(" {text}"), width),
+                if *warn { style::fg(theme.moved) } else { dim },
+            )),
+            E2eRow::Change(i) => {
+                let Some(c) = report.and_then(|r| r.changes.get(*i)) else {
+                    return Line::default();
+                };
+                let what = format!(" ✗ {} ", c.what.word());
+                Line::from(vec![
+                    Span::styled(what.clone(), style::fg(theme.delete_fg).bold()),
+                    Span::raw(clip(&c.label, width.saturating_sub(what.chars().count()))),
+                ])
+            }
+            E2eRow::UnranHead => {
+                let (n, of) = report.map_or((0, 0), |r| (r.unran_lines, r.changed));
+                Line::from(Span::styled(
+                    clip(
+                        &format!("No end-to-end test ran {n} of {of} changed lines"),
+                        width,
+                    ),
+                    style::accent(theme).bold(),
+                ))
+            }
+            E2eRow::Unran(i) => {
+                let Some(u) = report.and_then(|r| r.unran.get(*i)) else {
+                    return Line::default();
+                };
+                let said = format!("  {} of {}", u.lines, u.changed);
+                Line::from(vec![
+                    Span::styled(" ▌", style::fg(theme.moved)),
+                    Span::raw(clip(&u.path, width.saturating_sub(said.len() + 2))),
+                    Span::styled(said, dim),
+                ])
+            }
+            E2eRow::MoreUnran(n) => Line::from(Span::styled(
+                clip(
+                    &format!(" … {n} more {}", if *n == 1 { "file" } else { "files" }),
+                    width,
+                ),
+                dim,
+            )),
+            E2eRow::Base => {
+                let Some(b) = report.and_then(|r| r.base.as_ref()) else {
+                    return Line::default();
+                };
+                let (text, look) = match (base_status, b.recorded, &b.command) {
+                    (Some(status), _, _) => (format!(" ⟳ {status}"), style::accent(theme)),
+                    (None, n, _) if n > 0 => (
+                        format!(
+                            " Before {}: recorded, {n} {}",
+                            b.short,
+                            if n == 1 { "test" } else { "tests" }
+                        ),
+                        dim,
+                    ),
+                    (None, _, Some(_)) => (
+                        format!(" Before {}: not recorded, b records it", b.short),
+                        style::fg(theme.moved),
+                    ),
+                    (None, _, None) => (
+                        format!(" Before {}: no command records the tests", b.short),
+                        dim,
+                    ),
+                };
+                Line::from(Span::styled(clip(&text, width), look))
+            }
             E2eRow::File(path, n) => Line::from(vec![
                 Span::styled(
                     clip(path, width.saturating_sub(4)),
@@ -181,16 +273,20 @@ fn draw_list(frame: &mut Frame, theme: &Theme, state: &mut EndToEndState, area: 
                 let lock = if t.security { "⚿ " } else { "" };
                 let label_style = if t.test.ignored { dim } else { Style::new() };
                 let skipped = if t.test.ignored { " (skipped)" } else { "" };
-                Line::from(vec![
+                let badges = badges(theme, state.stretch_of(t));
+                let used: usize = badges.iter().map(|b| b.width()).sum();
+                let mut spans = vec![
                     Span::styled(format!(" {mark} "), colour),
                     Span::styled(
                         clip(
                             &format!("{lock}{}{skipped}", t.test.label),
-                            width.saturating_sub(3),
+                            width.saturating_sub(3 + used),
                         ),
                         label_style,
                     ),
-                ])
+                ];
+                spans.extend(badges);
+                Line::from(spans)
             }
             E2eRow::Orphans(n) => Line::from(Span::styled(
                 clip(&format!("recordings of tests no longer here {n}"), width),
@@ -205,7 +301,162 @@ fn draw_list(frame: &mut Frame, theme: &Theme, state: &mut EndToEndState, area: 
     frame.render_widget(Paragraph::new(lines), area);
 }
 
+/// What the stretch says of a test, after its sentence: `Δ12` for the changed lines it ran,
+/// and how it went before against now, with what changed in its run.
+fn badges(
+    theme: &Theme,
+    (touched, outcome): (Option<&Touched>, Option<&Outcome>),
+) -> Vec<Span<'static>> {
+    let mut out = Vec::new();
+    if let Some(t) = touched {
+        out.push(Span::styled(format!(" Δ{}", t.lines), style::accent(theme)));
+    }
+    if let Some(o) = outcome {
+        let mark = |passed: Option<bool>| match passed {
+            Some(true) => "✓",
+            Some(false) => "✗",
+            None => "○",
+        };
+        if o.before != o.after {
+            let look = if o.after == Some(false) {
+                style::fg(theme.delete_fg).bold()
+            } else {
+                style::fg(theme.insert_fg)
+            };
+            out.push(Span::styled(
+                format!(" {}→{}", mark(o.before), mark(o.after)),
+                look,
+            ));
+        }
+        if o.screens_changed.is_some_and(|n| n > 0) {
+            out.push(Span::styled(" screen changed", style::fg(theme.moved)));
+        } else if o.steps_changed > 0 {
+            out.push(Span::styled(" steps changed", style::fg(theme.moved)));
+        }
+    }
+    out
+}
+
+/// What a row of the stretch says, beside the list.
+fn draw_stretch_detail(frame: &mut Frame, theme: &Theme, state: &EndToEndState, area: Rect) {
+    let (Some(report), Some(row)) = (state.report(), state.rows.current()) else {
+        return;
+    };
+    let width = area.width as usize;
+    let dim = style::dim(theme);
+    let mut lines: Vec<Line> = Vec::new();
+    let para = |lines: &mut Vec<Line>, text: &str, look: Style| {
+        lines.extend(
+            wrap_text(text, width)
+                .into_iter()
+                .map(|l| Line::from(Span::styled(l, look))),
+        );
+    };
+    match row {
+        E2eRow::Change(i) => {
+            let Some(c) = report.changes.get(*i) else {
+                return;
+            };
+            lines.push(Line::from(Span::styled(
+                clip(&c.label, width),
+                Style::new().bold(),
+            )));
+            lines.push(Line::from(Span::styled(
+                clip(
+                    &format!("{}:{} · {}", c.path, c.line, c.level_title()),
+                    width,
+                ),
+                dim,
+            )));
+            let mut said = format!("In {}, this test was {}", report.span.label, c.what.word());
+            if let Some((was, is)) = c.checks {
+                said.push_str(&format!(": {was} checks, now {is}"));
+            }
+            if let Some(was) = &c.was {
+                said.push_str(&format!("; it was {was}"));
+            }
+            said.push('.');
+            lines.push(Line::default());
+            para(&mut lines, &said, Style::new());
+            lines.push(Line::default());
+            para(
+                &mut lines,
+                "A test that asks less than it did is the first thing to read: an agent that cannot make a test pass is tempted to make it stop asking. Enter shows the diff of its file across the stretch.",
+                dim,
+            );
+        }
+        E2eRow::Unran(i) => {
+            let Some(u) = report.unran.get(*i) else {
+                return;
+            };
+            lines.push(Line::from(Span::styled(
+                clip(&u.path, width),
+                Style::new().bold(),
+            )));
+            para(
+                &mut lines,
+                &format!(
+                    "{} of the {} lines of code changed here in {} ran in no end-to-end test.",
+                    u.lines, u.changed, report.span.label
+                ),
+                Style::new(),
+            );
+            let runs: Vec<String> = u
+                .ranges
+                .iter()
+                .map(|(a, b)| {
+                    if a == b {
+                        a.to_string()
+                    } else {
+                        format!("{a}-{b}")
+                    }
+                })
+                .collect();
+            para(&mut lines, &format!("lines {}", runs.join(", ")), dim);
+            lines.push(Line::default());
+            para(
+                &mut lines,
+                "Nothing the software was seen doing went through them: this is code a person still has to read. Enter opens the file with them marked ▌.",
+                dim,
+            );
+        }
+        E2eRow::Base => {
+            let Some(b) = &report.base else {
+                return;
+            };
+            lines.push(Line::from(Span::styled(
+                format!("Before: {}", b.short),
+                Style::new().bold(),
+            )));
+            let said = if b.recorded > 0 {
+                format!(
+                    "The tests are recorded as they ran at {}, where {} starts. Each test shows how it went then against now; a test's own screen plays both.",
+                    b.short, report.span.label
+                )
+            } else {
+                match &b.command {
+                    Some(command) => format!(
+                        "To see each test as it ran before {}, the tests are recorded at {}: b makes a worktree of that commit inside the git directory and runs {command} there. It runs the code as it was, and can take minutes.",
+                        report.span.label, b.short
+                    ),
+                    None => "There is no command here that records the end-to-end tests: a Makefile target called e2e, or a configured check named for them, would be.".to_string(),
+                }
+            };
+            para(&mut lines, &said, Style::new());
+        }
+        _ => {}
+    }
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
 fn draw_detail(frame: &mut Frame, theme: &Theme, state: &EndToEndState, area: Rect) {
+    if matches!(
+        state.rows.current(),
+        Some(E2eRow::Change(_) | E2eRow::Unran(_) | E2eRow::Base)
+    ) {
+        draw_stretch_detail(frame, theme, state, area);
+        return;
+    }
     let width = area.width as usize;
     let dim = style::dim(theme);
     let mut lines: Vec<Line> = Vec::new();
@@ -297,7 +548,7 @@ fn draw_detail(frame: &mut Frame, theme: &Theme, state: &EndToEndState, area: Re
             Constraint::Fill(1),
         ])
         .areas(rest);
-        draw_recording(frame, theme, &state.player, player, false);
+        draw_recording(frame, theme, &state.player, player, false, "");
         draw_steps(frame, theme, &state.player, r, steps);
     } else {
         let mut said = vec![Line::default()];
@@ -306,10 +557,15 @@ fn draw_detail(frame: &mut Frame, theme: &Theme, state: &EndToEndState, area: Re
                 Span::styled(media, Style::new().bold()),
                 Span::styled(" — o opens it in the system's player", dim),
             ]));
-        } else {
+        } else if r.recording.is_some() {
             said.push(Line::from(Span::styled(
                 "Its recording is not there any more.",
                 style::fg(theme.moved),
+            )));
+        } else {
+            said.push(Line::from(Span::styled(
+                "Its run left no recording.",
+                style::dim(theme),
             )));
         }
         said.push(Line::default());
@@ -398,7 +654,14 @@ pub(crate) fn clock(ms: u64) -> String {
 }
 
 /// The selected terminal recording at the playback position, in a box that says where it is.
-fn draw_recording(frame: &mut Frame, theme: &Theme, state: &Player, area: Rect, full: bool) {
+fn draw_recording(
+    frame: &mut Frame,
+    theme: &Theme,
+    state: &Player,
+    area: Rect,
+    full: bool,
+    label: &str,
+) {
     let position = clock(state.position_ms);
     let total = clock(state.duration_ms());
     let playing = if state.playing.is_some() {
@@ -407,7 +670,7 @@ fn draw_recording(frame: &mut Frame, theme: &Theme, state: &Player, area: Rect, 
         "paused"
     };
     let cast = state.cast();
-    let mut title = format!(" {position} / {total} {playing} ");
+    let mut title = format!(" {label}{position} / {total} {playing} ");
     if let Some(Ok(cast)) = cast {
         let inner_w = area.width.saturating_sub(2);
         let inner_h = area.height.saturating_sub(2);
@@ -551,8 +814,29 @@ pub(super) fn draw_end_to_end_test(frame: &mut Frame, app: &mut App, area: Rect)
     let block = title_block(&theme, title, true);
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    let short = state
+        .comparison
+        .as_ref()
+        .and_then(|c| c.base.as_ref())
+        .map(|b| b.short.clone())
+        .unwrap_or_default();
+    let two = state.before.recording.is_some();
     if state.full {
-        draw_recording(frame, &theme, &state.player, inner, true);
+        if two {
+            let [left, right] =
+                Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(inner);
+            draw_recording(
+                frame,
+                &theme,
+                &state.before,
+                left,
+                true,
+                &format!("at {short} · "),
+            );
+            draw_recording(frame, &theme, &state.player, right, true, "now · ");
+        } else {
+            draw_recording(frame, &theme, &state.player, inner, true, "");
+        }
         return;
     }
     let width = inner.width as usize;
@@ -584,13 +868,26 @@ pub(super) fn draw_end_to_end_test(frame: &mut Frame, app: &mut App, area: Rect)
         }
     }
     let recording = state.player.recording.clone();
-    let player_height = match (&recording, state.player.cast()) {
+    let height_of = |player: &Player| match (&player.recording, player.cast()) {
         (Some(r), Some(Ok(cast))) if r.kind == Some(Kind::Terminal) => {
             (cast.height + 2).min(inner.height / 2).max(3)
         }
         (Some(r), _) if r.kind == Some(Kind::Terminal) => 3,
         (Some(r), _) if r.media().is_some() => 1,
         _ => 0,
+    };
+    // Before and after side by side when both fit whole, and one above the other when not.
+    let cast_width = |player: &Player| match player.cast() {
+        Some(Ok(cast)) => cast.width + 2,
+        _ => 0,
+    };
+    let side_by_side = two && cast_width(&state.before) + cast_width(&state.player) <= inner.width;
+    let player_height = match (two, side_by_side) {
+        (true, true) => height_of(&state.player).max(height_of(&state.before)),
+        (true, false) => {
+            (height_of(&state.player) + height_of(&state.before)).min(inner.height * 2 / 3)
+        }
+        _ => height_of(&state.player),
     };
     let [top, player, gap, list] = Layout::vertical([
         Constraint::Length(head.len() as u16),
@@ -602,8 +899,24 @@ pub(super) fn draw_end_to_end_test(frame: &mut Frame, app: &mut App, area: Rect)
     let _ = gap;
     frame.render_widget(Paragraph::new(head), top);
     match &recording {
+        Some(r) if r.kind == Some(Kind::Terminal) && two => {
+            let [was, is] = if side_by_side {
+                Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(player)
+            } else {
+                Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(player)
+            };
+            draw_recording(
+                frame,
+                &theme,
+                &state.before,
+                was,
+                false,
+                &format!("at {short} · "),
+            );
+            draw_recording(frame, &theme, &state.player, is, false, "now · ");
+        }
         Some(r) if r.kind == Some(Kind::Terminal) => {
-            draw_recording(frame, &theme, &state.player, player, false);
+            draw_recording(frame, &theme, &state.player, player, false, "");
         }
         Some(r) => {
             if let Some(media) = r.media() {
@@ -628,6 +941,21 @@ fn draw_test_rows(frame: &mut Frame, theme: &Theme, state: &mut EndToEndTestStat
     let dim = style::dim(theme);
     let current = state.player.current_step();
     let detail = state.detail.as_ref();
+    let comparison = state.comparison.as_ref();
+    // The pair playback is at: the one holding the after side's current step.
+    let current_pair = comparison
+        .and_then(|c| {
+            let at = current?;
+            let mut seen = 0;
+            c.steps.iter().position(|p| {
+                if p.after.is_none() {
+                    return false;
+                }
+                seen += 1;
+                seen - 1 == at
+            })
+        })
+        .unwrap_or(usize::MAX);
     let lines = list_lines(
         style::cursor(theme),
         state.rows.items.iter(),
@@ -674,6 +1002,12 @@ fn draw_test_rows(frame: &mut Frame, theme: &Theme, state: &mut EndToEndTestStat
                         Span::styled(format!("{mark} "), mark_style),
                         Span::styled(clip(&s.text, width.saturating_sub(11)), text_style),
                     ])
+                }
+                TestRow::Pair(i) => {
+                    let Some(pair) = comparison.and_then(|c| c.steps.get(*i)) else {
+                        return Line::default();
+                    };
+                    pair_line(theme, pair, *i == current_pair, width)
                 }
                 TestRow::Source(i) => {
                     let line = steps.get(*i).map_or(0, |s| s.line);
@@ -740,4 +1074,57 @@ fn draw_test_rows(frame: &mut Frame, theme: &Theme, state: &mut EndToEndTestStat
         },
     );
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// A step as it ran before and as it runs now: both times, both marks, its text, and what
+/// differs — the screen at that step, or that it is there on one side only.
+fn pair_line(
+    theme: &Theme,
+    pair: &crate::stretch::StepPair,
+    now: bool,
+    width: usize,
+) -> Line<'static> {
+    let dim = style::dim(theme);
+    let mark = |s: Option<&crate::recording::Step>| match s {
+        None => ("·", dim),
+        Some(s) => match (s.kind.as_str(), s.passed) {
+            ("check", Some(false)) => ("✗", style::fg(theme.delete_fg).bold()),
+            ("check", _) => ("✓", style::fg(theme.insert_fg)),
+            _ => ("›", dim),
+        },
+    };
+    let time =
+        |s: Option<&crate::recording::Step>| s.map_or("   —  ".to_string(), |s| clock(s.at_ms));
+    let (was, was_look) = mark(pair.before.as_ref());
+    let (is, is_look) = mark(pair.after.as_ref());
+    let step = pair.after.as_ref().or(pair.before.as_ref());
+    let text = step.map_or(String::new(), |s| s.text.clone());
+    let (note, note_look) = match (&pair.before, &pair.after, pair.same_screen) {
+        (None, Some(_), _) => ("  only now", style::fg(theme.insert_fg)),
+        (Some(_), None, _) => ("  only before", style::fg(theme.delete_fg)),
+        (_, _, Some(false)) => ("  screen changed", style::fg(theme.moved)),
+        _ => ("", dim),
+    };
+    let lead = format!(
+        "{}→{} ",
+        time(pair.before.as_ref()),
+        time(pair.after.as_ref())
+    );
+    let room = width.saturating_sub(lead.chars().count() + 6 + note.chars().count());
+    let text_look = if now {
+        style::accent(theme).bold()
+    } else if step.is_some_and(|s| s.kind == "check") {
+        dim
+    } else {
+        Style::new()
+    };
+    Line::from(vec![
+        Span::styled(if now { "▶" } else { " " }, style::accent(theme)),
+        Span::styled(lead, dim),
+        Span::styled(was.to_string(), was_look),
+        Span::styled("→", dim),
+        Span::styled(format!("{is} "), is_look),
+        Span::styled(clip(&text, room), text_look),
+        Span::styled(note, note_look),
+    ])
 }

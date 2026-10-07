@@ -122,9 +122,15 @@ enum Command {
     /// opens on.
     E2e {
         /// One test, by its name or its phrase: what it ran, what documents it, and the
-        /// smaller tests below it.
+        /// smaller tests below it; with `--stretch`, how it ran before the stretch and now.
         #[arg(long)]
         test: Option<String>,
+        /// What a stretch of history did: `week`, `last`, `uncommitted`, or a commit.
+        #[arg(long)]
+        stretch: Option<String>,
+        /// With `--stretch`: record the tests at the stretch's base first, in a worktree.
+        #[arg(long, requires = "stretch")]
+        record: bool,
         /// Everything, as JSON.
         #[arg(long)]
         json: bool,
@@ -193,9 +199,17 @@ fn main() -> Result<()> {
         Some(Command::Toggle { number }) => toggle(&from, number),
         Some(Command::Reanchor) => reanchor(&from),
         Some(Command::Overview) => overview_file(&from),
-        Some(Command::E2e { test, json }) => match test {
-            Some(name) => end_to_end_test(&from, &name, json),
-            None => end_to_end(&from, json),
+        Some(Command::E2e {
+            test,
+            stretch,
+            record,
+            json,
+        }) => match (stretch, test) {
+            (Some(stretch), test) => {
+                end_to_end_stretch(&from, &stretch, test.as_deref(), record, json)
+            }
+            (None, Some(name)) => end_to_end_test(&from, &name, json),
+            (None, None) => end_to_end(&from, json),
         },
         Some(Command::Def { name }) => definitions(&from, &name),
         Some(Command::Refs { name }) => references(&from, &name),
@@ -317,6 +331,135 @@ fn end_to_end(from: &std::path::Path, json: bool) -> Result<()> {
         opening.failed,
         opening.unrecorded
     );
+    Ok(())
+}
+
+/// `e2e --stretch`: what a stretch did, through the end-to-end tests; with `--test`, one of
+/// them before and after.
+fn end_to_end_stretch(
+    from: &std::path::Path,
+    stretch: &str,
+    test: Option<&str>,
+    record: bool,
+    json: bool,
+) -> Result<()> {
+    use codereview::spec::Stretch;
+    let stretch = match stretch {
+        "week" => Stretch::Week,
+        "last" => Stretch::LastCommit,
+        "uncommitted" => Stretch::Uncommitted,
+        hash => Stretch::Commit(hash.to_string()),
+    };
+    let mut session = Session::open(from)?;
+    if record {
+        let span = codereview::spec::span(&session, &stretch)?;
+        let base = span
+            .from
+            .with_context(|| "there is no commit before this stretch to record at")?;
+        let (worktree, check) = codereview::stretch::prepare(&session, &base)?;
+        eprintln!("running {} in {}", check.run, worktree.display());
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&check.run)
+            .current_dir(&worktree)
+            .status()?;
+        if !status.success() {
+            eprintln!(
+                "{} failed; its recordings are compared as far as they go",
+                check.run
+            );
+        }
+    }
+    if let Some(name) = test {
+        let file = session
+            .end_to_end()
+            .tests
+            .into_iter()
+            .find(|t| t.test.name == name || t.test.label == name)
+            .map(|t| t.test.path)
+            .with_context(|| format!("no end-to-end test called {name:?}"))?;
+        let c = codereview::stretch::compare(&mut session, &stretch, &file, name)?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&c)?);
+            return Ok(());
+        }
+        let mark = |r: &Option<codereview::recording::Recording>| match r {
+            None => "not run",
+            Some(r) if r.passed => "passed",
+            Some(_) => "failed",
+        };
+        let at = c.base.as_ref().map_or("—".to_string(), |b| b.short.clone());
+        println!(
+            "{name}: {} at {at}, {} now",
+            mark(&c.before),
+            mark(&c.after)
+        );
+        for p in &c.steps {
+            let text = |s: &Option<codereview::recording::Step>| {
+                s.as_ref().map_or("—".to_string(), |s| s.text.clone())
+            };
+            let what = match (&p.before, &p.after, p.same_screen) {
+                (None, _, _) => "new",
+                (_, None, _) => "gone",
+                (_, _, Some(false)) => "screen changed",
+                (_, _, Some(true)) => "same screen",
+                _ => "",
+            };
+            println!("  {:<40} {:<40} {what}", text(&p.before), text(&p.after));
+        }
+        return Ok(());
+    }
+    let r = codereview::stretch::report(&mut session, &stretch)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&r)?);
+        return Ok(());
+    }
+    println!("{}", r.span.label);
+    for c in r.changes.iter().filter(|c| c.what.alarming()) {
+        println!("  {} {} ({}:{})", c.what.word(), c.label, c.path, c.line);
+    }
+    println!(
+        "{} of {} changed lines no end-to-end test ran",
+        r.unran_lines, r.changed
+    );
+    for u in &r.unran {
+        println!("  {} — {} of {} lines", u.path, u.lines, u.changed);
+    }
+    if r.without_coverage > 0 {
+        println!("({} end-to-end tests left no coverage)", r.without_coverage);
+    }
+    for t in &r.touched {
+        println!("ran {} changed lines: {}", t.lines, t.label);
+    }
+    match &r.base {
+        None => println!("no commit before it to compare with"),
+        Some(b) if b.recorded == 0 => println!(
+            "not recorded at {}{}",
+            b.short,
+            b.command
+                .as_ref()
+                .map_or(String::new(), |c| format!("; --record runs {c} there"))
+        ),
+        Some(b) => {
+            println!("before: recorded at {}", b.short);
+            for o in &r.outcomes {
+                let m = |v: Option<bool>| match v {
+                    None => "–",
+                    Some(true) => "✓",
+                    Some(false) => "✗",
+                };
+                println!(
+                    "  {} → {} {}{}",
+                    m(o.before),
+                    m(o.after),
+                    o.label,
+                    o.screens_changed
+                        .filter(|n| *n > 0)
+                        .map_or(String::new(), |n| format!(" (screen changed at {n} steps)"))
+                );
+            }
+        }
+    }
     Ok(())
 }
 

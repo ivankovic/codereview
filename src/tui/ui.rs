@@ -372,11 +372,7 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             Screen::Explorer => app.viewer.as_ref().and_then(|v| {
                 let line = v.current_line()?;
-                let ran = v
-                    .ran
-                    .as_ref()
-                    .filter(|r| r.covers(line))
-                    .map(|r| format!("▌ ran by “{}”", r.test));
+                let ran = v.ran.as_ref().filter(|r| r.covers(line)).map(|r| r.says());
                 ran.or_else(|| {
                     let op = v.line_ops.as_ref()?.get(line).copied()?;
                     op.is_change()
@@ -420,10 +416,10 @@ fn hint_for(screen: &Screen) -> &'static str {
             "Enter open/close, diff, test or area  h close fold  / search  f files a test names  s stretch  q back"
         }
         Screen::EndToEnd(_) => {
-            "Enter the test  Space play  ] [ steps  0 start  z whole  s source  o video  q code"
+            "Enter the test  Space play  ] [ steps  w stretch  b record before  s source  o video  q code"
         }
         Screen::EndToEndTest(_) => {
-            "Enter go there  Space play  ] [ steps  0 start  z whole  s source  o video  q back"
+            "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q back"
         }
         Screen::Agent => {
             "i ask  A address all pending  Esc cancel  1-9/y/n answer  t thoughts  l log  C clear  R restart  q back"
@@ -531,6 +527,18 @@ const HELP: &[(&str, &str)] = &[
     ("s", "the test's source"),
     ("o", "open the recording in the system's player (videos)"),
     (
+        "w",
+        "the stretch of history marked: the last 7 days, the last commit, uncommitted work",
+    ),
+    (
+        "Enter",
+        "on what the stretch did: a test that asks less, its diff; changed code no end-to-end test ran, the file with those lines marked ▌",
+    ),
+    (
+        "b",
+        "record the tests at the stretch's base, in a worktree of it, to compare each test with how it ran then",
+    ),
+    (
         "a",
         "with no end-to-end tests: ask the agent to write the first ones",
     ),
@@ -543,6 +551,10 @@ const HELP: &[(&str, &str)] = &[
         "a step: that moment of the recording; a file it ran: the file, the lines it ran marked ▌; a section or a test: there",
     ),
     ("s", "the test's source, at the step under the cursor"),
+    (
+        "w",
+        "the stretch: with the tests recorded at its base, the recording then beside the one now, and the steps paired",
+    ),
     ("q", "back to the list"),
     ("", ""),
     ("Agent panel", ""),

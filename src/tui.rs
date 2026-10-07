@@ -789,6 +789,181 @@ mod tests {
     }
 
     #[test]
+    fn a_stretch_shows_what_no_test_ran_and_each_test_before_and_after() {
+        use super::app::{E2eRow, TestRow};
+        let dir = scratch_repo();
+        let root = dir.path();
+        let write = |root: &std::path::Path, path: &str, text: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}");
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+        write(root, "Makefile", "e2e:\n\tcargo test --test cli\n");
+        write(
+            root,
+            "tests/cli.rs",
+            "// drives it through portable_pty\n#[test]\nfn a_review_is_saved() {}\n",
+        );
+        let unit =
+            "#[cfg(test)]\nmod tests {\n    #[test]\n    fn saves() {\n        assert!(true);\n";
+        write(
+            root,
+            "src/lib.rs",
+            &format!(
+                "pub fn save_review() {{\n    write();\n}}\n\nfn write() {{}}\n\n{unit}        \
+                 assert!(true);\n    }}\n}}\n"
+            ),
+        );
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "base"]);
+        let base = git(&["rev-parse", "HEAD"]);
+        let short = git(&["rev-parse", "--short", "HEAD"]);
+        // Uncommitted: it saves twice, exports a review nothing runs, and its unit test checks
+        // one thing fewer.
+        write(
+            root,
+            "src/lib.rs",
+            &format!(
+                "pub fn save_review() {{\n    write();\n    write();\n}}\n\npub fn export_review() \
+                 {{\n    write();\n}}\n\nfn write() {{}}\n\n{unit}    }}\n}}\n"
+            ),
+        );
+        // A recording of the test now, and one at the base, in a worktree of it.
+        let record = |root: &std::path::Path, passed: bool, screen: &str, ran: &[u32]| {
+            let dir = "target/e2e/cli/a-review-is-saved";
+            write(
+                root,
+                &format!("{dir}/test.json"),
+                &format!(
+                    r#"{{"test": "a_review_is_saved", "file": "tests/cli.rs", "line": 3,
+                        "passed": {passed}, "recording": "terminal.cast", "steps": [
+                        {{"at_ms": 100, "kind": "action", "text": "save it"}},
+                        {{"at_ms": 900, "kind": "check", "text": "it is saved"}}]}}"#
+                ),
+            );
+            write(
+                root,
+                &format!("{dir}/terminal.cast"),
+                &format!(
+                    "{{\"version\":2,\"width\":20,\"height\":2}}\n[0.1,\"o\",\"start\"]\n\
+                     [0.8,\"o\",\"\\r\\n{screen}\"]\n"
+                ),
+            );
+            let da: String = [1, 2, 3, 4, 6, 7, 8, 10]
+                .iter()
+                .map(|l| format!("DA:{l},{}\n", u32::from(ran.contains(l))))
+                .collect();
+            write(
+                root,
+                &format!("{dir}/coverage.lcov"),
+                &format!("SF:src/lib.rs\n{da}end_of_record\n"),
+            );
+        };
+        record(root, true, "saved twice", &[1, 2, 3, 4, 10]);
+        let session = scratch_session(root);
+        let (worktree, _) = crate::stretch::prepare(&session, &base).unwrap();
+        record(&worktree, false, "saved once", &[1, 2, 3]);
+        let mut app = App::new(session, None);
+        let mut term = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        press(&mut app, &[KeyCode::Char('E')]);
+        until_indexed(&mut app);
+
+        // From the last 7 days to the last commit to the uncommitted work.
+        press(&mut app, &[KeyCode::Char('w'), KeyCode::Char('w')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("marking uncommitted work (w)"), "{screen}");
+        assert!(screen.contains("In uncommitted work"), "{screen}");
+        assert!(
+            screen.contains("✗ weakened saves"),
+            "the unit test that asks less: {screen}"
+        );
+        assert!(screen.contains("No end-to-end test ran "), "{screen}");
+        assert!(screen.contains("▌src/lib.rs  "), "{screen}");
+        assert!(
+            screen.contains(&format!("Before {short}: recorded, 1 test")),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("✓ a review is saved Δ") && screen.contains("✗→✓ screen changed"),
+            "the test ran the change, failed before, passes now: {screen}"
+        );
+
+        // The changed code nothing ran opens with those lines marked.
+        let Screen::EndToEnd(state) = app.screen() else {
+            panic!("the list");
+        };
+        let unran = state
+            .rows
+            .items
+            .iter()
+            .position(|r| *r == E2eRow::Unran(0))
+            .unwrap();
+        if let Some(Screen::EndToEnd(state)) = app.screens.last_mut() {
+            state.rows.cursor = unran;
+        }
+        let screen = draw(&mut term, &mut app);
+        assert!(
+            screen.contains("ran in no end-to-end test"),
+            "the row says what it is: {screen}"
+        );
+        press(&mut app, &[KeyCode::Enter]);
+        assert!(matches!(app.screen(), Screen::Explorer));
+        let viewer = app.viewer.as_ref().unwrap();
+        assert_eq!(viewer.path, "src/lib.rs");
+        let marked = viewer.ran.clone().unwrap();
+        assert!(marked.unran);
+        // Git decides which of the moved lines are the new ones; what nothing ran is in the
+        // new function, whichever it picks.
+        assert!(
+            !marked.ranges.is_empty() && marked.ranges.iter().all(|(a, b)| 6 <= *a && *b <= 8),
+            "{:?}",
+            marked.ranges
+        );
+        let screen = draw(&mut term, &mut app);
+        assert!(
+            screen.contains("▌ changed in uncommitted work, run by no end-to-end test"),
+            "{screen}"
+        );
+
+        // The test on its own: before and after, side by side, the steps paired.
+        press(&mut app, &[KeyCode::Char('E')]);
+        press(&mut app, &[KeyCode::Enter]);
+        let Screen::EndToEndTest(state) = app.screen() else {
+            panic!("the test's own screen");
+        };
+        let rows = state.rows.items.clone();
+        assert!(rows.contains(&TestRow::Pair(1)), "{rows:?}");
+        let screen = draw(&mut term, &mut app);
+        assert!(
+            screen.contains(&format!("Steps, as they ran at {short} → as they run now")),
+            "{screen}"
+        );
+        assert!(screen.contains(&format!("at {short} · ")), "{screen}");
+        assert!(screen.contains("now · "), "{screen}");
+        assert!(screen.contains("it is saved  screen changed"), "{screen}");
+        let pair = rows.iter().position(|r| *r == TestRow::Pair(1)).unwrap();
+        if let Some(Screen::EndToEndTest(state)) = app.screens.last_mut() {
+            state.rows.cursor = pair;
+        }
+        press(&mut app, &[KeyCode::Enter]);
+        let screen = draw(&mut term, &mut app);
+        assert!(
+            screen.contains("saved once") && screen.contains("saved twice"),
+            "both recordings at the step: {screen}"
+        );
+    }
+
+    #[test]
     fn a_test_leads_to_the_code_it_ran_and_what_documents_it() {
         use super::app::TestRow;
         let dir = scratch_repo();

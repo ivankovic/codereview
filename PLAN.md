@@ -178,8 +178,12 @@ phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
       tests that reach the same code. Coverage per test comes from the run like the recording:
       this repository's own tests count it under `make e2e-coverage`, the terminal ones a
       process each, the browser ones by a call between tests that only a coverage build has.
-   4. **What a stretch did**, per test: recordings before and after, and the changed code no
-      end-to-end test ran.
+   4. **What a stretch did** (built 2026-10-07), per test: recordings before and after, and
+      the changed code no end-to-end test ran. The before is offered, not run in the background:
+      it builds the base from nothing in a worktree, minutes for this repository, and the
+      opt-in for running on its own is the watched checks' to extend when that is wanted. A plain
+      run of the tests keeps the coverage the last counting run left, with its time, so that a
+      reviewer is not told nothing ran just because nothing was counted this time.
 
 ## Layout
 

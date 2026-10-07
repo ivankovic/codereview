@@ -41,6 +41,7 @@ pub mod repo;
 pub mod review;
 pub mod session;
 pub mod spec;
+pub mod stretch;
 pub mod symbols;
 pub mod testsuite;
 pub mod theme;

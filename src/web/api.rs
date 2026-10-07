@@ -161,16 +161,125 @@ pub(super) async fn get_e2e_test(
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "no such end-to-end test".into()))
 }
 
+/// What a stretch of history did, through the end-to-end tests: what happened to the tests,
+/// the changed code none of them ran, and each test before and after once the base is
+/// recorded. Needs the symbol index, like a test's own view.
+pub(super) async fn get_stretch(
+    state: Ctx,
+    Query(q): Query<SpecQuery>,
+) -> ApiResult<crate::stretch::Report> {
+    let stretch = stretch_of(&q)?;
+    if state.warming.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(ApiError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "still reading the tests".into(),
+        ));
+    }
+    Ok(Json(
+        with_session(&state, move |s| crate::stretch::report(s, &stretch)).await?,
+    ))
+}
+
+#[derive(Deserialize)]
+pub(super) struct StretchTestQuery {
+    #[serde(flatten)]
+    stretch: SpecQuery,
+    file: String,
+    name: String,
+}
+
+/// One end-to-end test before and after a stretch, step by step.
+pub(super) async fn get_stretch_test(
+    state: Ctx,
+    Query(q): Query<StretchTestQuery>,
+) -> ApiResult<crate::stretch::Comparison> {
+    let stretch = stretch_of(&q.stretch)?;
+    Ok(Json(
+        with_session(&state, move |s| {
+            crate::stretch::compare(s, &stretch, &q.file, &q.name)
+        })
+        .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+pub(super) struct RecordBase {
+    commit: String,
+}
+
+/// The name a recording at `commit` runs under, among the checks' runs.
+fn base_run(commit: &str) -> String {
+    format!("end-to-end tests at {commit}")
+}
+
+/// Records the end-to-end tests as they were at a commit: a worktree of it, and the
+/// repository's end-to-end command run there. What it leaves is the worktree's recordings;
+/// while it runs, its progress is a run like a check's.
+pub(super) async fn post_stretch_record(
+    state: Ctx,
+    Json(body): Json<RecordBase>,
+) -> ApiResult<crate::analysis::Run> {
+    let checks = state.checks.clone();
+    let run = with_session(&state, move |s| {
+        let commit = s.repo.resolve(&body.commit)?;
+        let name = base_run(&commit);
+        let mut runs = checks.lock().unwrap_or_else(|e| e.into_inner());
+        if runs
+            .get(&name)
+            .is_some_and(|r| r.lock().unwrap_or_else(|e| e.into_inner()).running)
+        {
+            anyhow::bail!(Conflict(format!(
+                "the tests at {commit} are already being recorded"
+            )));
+        }
+        let (worktree, mut check) = crate::stretch::prepare(s, &commit)?;
+        check.name = name.clone();
+        let started = crate::analysis::start(&check, &worktree)?;
+        runs.insert(name, started.clone());
+        let run = started.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        Ok(run)
+    })
+    .await?;
+    Ok(Json(run))
+}
+
+/// How the recording at a commit is going, or went: `null` when none was started here.
+pub(super) async fn get_stretch_record(
+    state: Ctx,
+    Query(q): Query<RecordBase>,
+) -> ApiResult<Option<crate::analysis::Run>> {
+    let checks = state.checks.clone();
+    Ok(Json(
+        with_session(&state, move |s| {
+            let commit = s.repo.resolve(&q.commit)?;
+            let runs = checks.lock().unwrap_or_else(|e| e.into_inner());
+            Ok(runs
+                .get(&base_run(&commit))
+                .map(|r| r.lock().unwrap_or_else(|e| e.into_inner()).clone()))
+        })
+        .await?,
+    ))
+}
+
 /// The recording `path` names, when it is one a test run left: the path is checked against
 /// what was found, never opened because a request named it.
-fn recording_file(s: &Session, path: &str) -> Result<std::path::PathBuf> {
-    let found = crate::recording::find(s.root())
+fn recording_file(s: &Session, path: &str, at: Option<&str>) -> Result<std::path::PathBuf> {
+    let root = match at {
+        Some(commit) => {
+            if commit.len() != 40 || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
+                anyhow::bail!("{commit:?} is not a full commit hash");
+            }
+            crate::stretch::worktree_path(s, commit)?
+        }
+        None => s.root().to_path_buf(),
+    };
+    let found = crate::recording::find(&root)
         .into_iter()
         .any(|r| r.media().as_deref() == Some(path));
     if !found {
         anyhow::bail!("{path} is not a recording a test left");
     }
-    Ok(s.root().join(path))
+    Ok(root.join(path))
 }
 
 /// A recording larger than this is not served: a test's video is a few megabytes.
@@ -181,7 +290,7 @@ const MOST_RECORDING_BYTES: u64 = 256 << 20;
 pub(super) async fn get_recording(
     state: Ctx,
     headers: axum::http::HeaderMap,
-    Query(q): Query<PathQuery>,
+    Query(q): Query<RecordingQuery>,
 ) -> Result<Response, ApiError> {
     let Some(kind) = crate::recording::media_type(&q.path) else {
         return Err(ApiError(
@@ -190,8 +299,9 @@ pub(super) async fn get_recording(
         ));
     };
     let path = q.path.clone();
+    let at = q.at.clone();
     let bytes = with_session(&state, move |s| {
-        let file = recording_file(s, &path)?;
+        let file = recording_file(s, &path, at.as_deref())?;
         let size = std::fs::metadata(&file)?.len();
         if size > MOST_RECORDING_BYTES {
             anyhow::bail!("{path} is over {} MB", MOST_RECORDING_BYTES >> 20);
@@ -248,14 +358,14 @@ fn byte_range(header: &str, total: usize) -> Option<(usize, usize)> {
 /// A terminal recording played into frames of styled text, for the page to draw.
 pub(super) async fn get_cast(
     state: Ctx,
-    Query(q): Query<PathQuery>,
+    Query(q): Query<RecordingQuery>,
 ) -> ApiResult<crate::recording::Cast> {
     Ok(Json(
         with_session(&state, move |s| {
             if crate::recording::kind_of(&q.path) != Some(crate::recording::Kind::Terminal) {
                 anyhow::bail!("{} is not a terminal recording", q.path);
             }
-            let file = recording_file(s, &q.path)?;
+            let file = recording_file(s, &q.path, q.at.as_deref())?;
             crate::recording::frames(&std::fs::read_to_string(file)?)
         })
         .await?,
@@ -285,6 +395,24 @@ pub(super) struct SpecQuery {
     commit: Option<String>,
 }
 
+/// The stretch of history a query names: one commit, or `week` (the default), `last` or
+/// `uncommitted`.
+fn stretch_of(q: &SpecQuery) -> Result<crate::spec::Stretch, ApiError> {
+    use crate::spec::Stretch;
+    Ok(match (q.commit.as_deref(), q.stretch.as_deref()) {
+        (Some(hash), _) if !hash.is_empty() => Stretch::Commit(hash.to_string()),
+        (_, None | Some("" | "week")) => Stretch::Week,
+        (_, Some("last")) => Stretch::LastCommit,
+        (_, Some("uncommitted")) => Stretch::Uncommitted,
+        (_, Some(other)) => {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                format!("no stretch called {other:?}; week, last or uncommitted"),
+            ));
+        }
+    })
+}
+
 #[derive(Serialize)]
 pub(super) struct SpecResponse {
     #[serde(flatten)]
@@ -297,19 +425,7 @@ pub(super) struct SpecResponse {
 /// The tests as a specification: by level, with what a stretch of history did to them. While
 /// the index is built the list comes from `OVERVIEW.md`, the same way the overview's does.
 pub(super) async fn get_spec(state: Ctx, Query(q): Query<SpecQuery>) -> ApiResult<SpecResponse> {
-    use crate::spec::Stretch;
-    let stretch = match (q.commit.as_deref(), q.stretch.as_deref()) {
-        (Some(hash), _) if !hash.is_empty() => Stretch::Commit(hash.to_string()),
-        (_, None | Some("" | "week")) => Stretch::Week,
-        (_, Some("last")) => Stretch::LastCommit,
-        (_, Some("uncommitted")) => Stretch::Uncommitted,
-        (_, Some(other)) => {
-            return Err(ApiError(
-                StatusCode::BAD_REQUEST,
-                format!("no stretch called {other:?}; week, last or uncommitted"),
-            ));
-        }
-    };
+    let stretch = stretch_of(&q)?;
     let warming = state.warming.load(std::sync::atomic::Ordering::Relaxed);
     Ok(Json(
         with_session(&state, move |s| {
@@ -567,6 +683,14 @@ pub(super) async fn get_file(state: Ctx, Query(q): Query<FileQuery>) -> ApiResul
 #[derive(Deserialize)]
 pub(super) struct PathQuery {
     path: String,
+}
+
+#[derive(Deserialize)]
+pub(super) struct RecordingQuery {
+    path: String,
+    /// A commit the recording was made at, in its worktree, rather than the working tree.
+    #[serde(default)]
+    at: Option<String>,
 }
 
 /// A picture in the working tree, as its bytes with its media type, for the page to show. Only

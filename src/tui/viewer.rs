@@ -97,14 +97,27 @@ impl Search {
     }
 }
 
-/// The lines an end-to-end test ran in a file, marked in its gutter while it was opened from
-/// that test.
+/// Lines marked in a file's gutter while it was opened from an end-to-end screen: the lines a
+/// test ran, or the lines a stretch of history changed that no end-to-end test ran.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RanBy {
-    /// The test, as its sentence.
+    /// The test, as its sentence; for changed lines, the stretch, as its label.
     pub test: String,
     /// 1-based, first and last of each run of lines.
     pub ranges: Vec<(u32, u32)>,
+    /// The lines are changed code no end-to-end test ran, rather than what a test ran.
+    pub unran: bool,
+}
+
+impl RanBy {
+    /// What the mark on a line says, for the status line.
+    pub fn says(&self) -> String {
+        if self.unran {
+            format!("▌ changed in {}, run by no end-to-end test", self.test)
+        } else {
+            format!("▌ ran by “{}”", self.test)
+        }
+    }
 }
 
 impl RanBy {
@@ -564,8 +577,13 @@ impl Viewer {
                     }
                     spans.push(Span::styled(format!("{:>digits$} ", i + 1), dim));
                     // A line the test it was opened from ran: the bar the code leans on.
-                    if self.ran.as_ref().is_some_and(|r| r.covers(i)) {
-                        spans.push(Span::styled("▌", style::fg(theme.insert_fg)));
+                    if let Some(ran) = self.ran.as_ref().filter(|r| r.covers(i)) {
+                        let colour = if ran.unran {
+                            theme.moved
+                        } else {
+                            theme.insert_fg
+                        };
+                        spans.push(Span::styled("▌", style::fg(colour)));
                     } else {
                         spans.push(Span::styled("│", dim));
                     }

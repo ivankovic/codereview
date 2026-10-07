@@ -32,6 +32,31 @@ const TOKEN: &str = "browser-test-token-long-enough";
 /// tagged with a hash of what it is built from, so that a change to it is a new image.
 const CONTAINERFILE: &str = include_str!("browser/Containerfile");
 
+/// The scratch repository's end-to-end command: it writes the recordings its tests would
+/// leave, as they ran at whatever commit it is run in, which is the fixture's base.
+const RECORD_SH: &str = r#"set -e
+d=target/e2e/fixture/listed
+mkdir -p $d
+cat > $d/test.json <<'J'
+{"test": "a_review_is_listed", "file": "tests/cli.rs", "line": 2, "passed": true,
+ "recording": "terminal.cast", "duration_ms": 1500, "steps": [
+ {"at_ms": 100, "line": 3, "kind": "action", "text": "start it"},
+ {"at_ms": 1200, "line": 3, "kind": "check", "text": "the review is listed", "passed": true}]}
+J
+cat > $d/terminal.cast <<'J'
+{"version":2,"width":40,"height":4}
+[0.1,"o","\u001b[1mreviews\u001b[0m"]
+[1.2,"o","\r\n(none yet)"]
+J
+d=target/e2e/fixture/saved
+mkdir -p $d
+cat > $d/test.json <<'J'
+{"test": "a_review_is_saved", "file": "tests/cli.rs", "line": 7, "passed": true, "steps": [
+ {"at_ms": 0, "line": 9, "kind": "action", "text": "save the review"},
+ {"at_ms": 1500, "line": 9, "kind": "check", "text": "REVIEW.md has it", "passed": true}]}
+J
+"#;
+
 /// The page's own checks, run inside the container against the server below.
 const PHONE: &str = include_str!("browser/phone.js");
 
@@ -94,7 +119,11 @@ fn counting() -> bool {
 /// Puts together each browser test's `coverage.lcov`: what the page's script ran, which the
 /// script wrote beside the video, and, when the server counted, what it ran, from the profile
 /// it wrote for that test in `profiles`.
-fn gather_coverage(recordings: &std::path::Path, profiles: &std::path::Path) {
+fn gather_coverage(
+    recordings: &std::path::Path,
+    profiles: &std::path::Path,
+    mut kept: std::collections::HashMap<String, common::Kept>,
+) {
     let Ok(dirs) = std::fs::read_dir(recordings) else {
         return;
     };
@@ -103,6 +132,12 @@ fn gather_coverage(recordings: &std::path::Path, profiles: &std::path::Path) {
         let mut lcov = std::fs::read(&page).unwrap_or_default();
         let _ = std::fs::remove_file(&page);
         let slug = dir.file_name().unwrap().to_string_lossy().into_owned();
+        // A run that does not count keeps the fuller coverage the last one that did left,
+        // rather than replacing it with the page's half.
+        if let Some(kept) = kept.remove(&slug) {
+            common::restore_coverage(&dir, kept);
+            continue;
+        }
         let profile = profiles.join(format!("{slug}.profraw"));
         if profile.is_file() {
             if let Some(more) = lcov_of(&[profile], env!("CARGO_BIN_EXE_codereview")) {
@@ -182,7 +217,8 @@ fn every_browser_test_passes_in_a_real_browser() {
     // A test target for the page to find and run, and a test for it to list.
     std::fs::write(
         repo.join("Makefile"),
-        "all:\n\techo hi\ntest:\n\t@echo 'test result: ok. 1 passed; 0 failed; 0 ignored'\n",
+        "all:\n\techo hi\ntest:\n\t@echo 'test result: ok. 1 passed; 0 failed; 0 ignored'\n\
+         e2e:\n\tsh tests/record.sh\n",
     )
     .unwrap();
     std::fs::create_dir_all(repo.join("src")).unwrap();
@@ -259,12 +295,33 @@ fn every_browser_test_passes_in_a_real_browser() {
         "video.webm",
         include_bytes!("browser/fixture.webm"),
     );
-    // What that run executed: two lines of src/core.rs, which a unit test lives beside.
+    // What `make e2e` leaves when it records the tests at a commit: how they ran before the
+    // stretch under review, one of them passing then and one with another screen.
+    std::fs::write(repo.join("tests/record.sh"), RECORD_SH).unwrap();
+    // A stretch to review: all of that committed, the recordings ignored as a build's output
+    // is, and one change on top, half of which a test ran.
+    std::fs::write(repo.join(".gitignore"), "target/\n").unwrap();
+    let git = |args: &[&str]| {
+        let mut all = vec!["-C", repo.to_str().unwrap()];
+        all.extend_from_slice(args);
+        run("git", &all);
+    };
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "the fixture"]);
     std::fs::write(
-        repo.join("target/e2e/fixture/saved/coverage.lcov"),
-        "SF:src/core.rs\nDA:1,1\nDA:2,1\nDA:3,0\nend_of_record\n",
+        repo.join("src/core.rs"),
+        "pub fn parse_review() {}\npub fn write_review() { parse_review(); }\npub struct ReviewFile;\n\
+         pub fn export_review() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a_review_round_trips() {}\n}\n",
     )
     .unwrap();
+    // What the failing test's run executed, made after that change: two lines of src/core.rs,
+    // which a unit test lives beside, and two it counts but did not run.
+    std::fs::write(
+        repo.join("target/e2e/fixture/saved/coverage.lcov"),
+        "SF:src/core.rs\nDA:1,1\nDA:2,1\nDA:3,0\nDA:4,0\nend_of_record\n",
+    )
+    .unwrap();
+
     // And a repository with no end-to-end test at all, which opens on saying so.
     let bare = work.path().join("bare");
     scratch_repo(&bare);
@@ -329,6 +386,19 @@ fn every_browser_test_passes_in_a_real_browser() {
     // worth watching. The whole directory is replaced, so a test that is gone takes its
     // recording with it.
     let recordings = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/e2e/browser");
+    let kept: std::collections::HashMap<String, common::Kept> = if counting() {
+        std::collections::HashMap::new()
+    } else {
+        std::fs::read_dir(&recordings)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let slug = e.file_name().to_string_lossy().into_owned();
+                Some((slug, common::keep_coverage(&e.path())?))
+            })
+            .collect()
+    };
     let _ = std::fs::remove_dir_all(&recordings);
     std::fs::create_dir_all(recordings.parent().unwrap()).unwrap();
     let copied = Command::new(runtime())
@@ -340,6 +410,7 @@ fn every_browser_test_passes_in_a_real_browser() {
     gather_coverage(
         &recordings,
         profiles.as_ref().map_or(work.path(), |p| p.path()),
+        kept,
     );
 
     assert!(out.status.success(), "{report}");

@@ -399,6 +399,15 @@ impl Index {
         defined
     }
 
+    /// The rows of `path` that are test code, 0-based and inclusive: a test module inside a
+    /// file of code, or the whole of a test file.
+    pub fn test_rows(&self, path: &str) -> Vec<(u32, u32)> {
+        self.files
+            .get(path)
+            .map(|f| f.test_code.clone())
+            .unwrap_or_default()
+    }
+
     /// The files that are test code throughout: under a `tests` directory, named the way a
     /// runner collects them, or declared by a Rust module under `#[cfg(test)]` elsewhere.
     fn test_files(&self) -> HashSet<&str> {

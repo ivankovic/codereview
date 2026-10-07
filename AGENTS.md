@@ -22,7 +22,9 @@
   leaves a recording a reviewer watches with those steps beside it (`target/e2e/`). Name the
   section of SPECS.md or the README it demonstrates (`t.documents(...)` in the terminal
   harness, `{ docs: [...] }` in the browser one), so its view links there rather than guessing.
-  `make e2e-coverage` records which code each test ran.
+  `make e2e-coverage` records which code each test ran; `codereview e2e --stretch uncommitted`
+  then says which of the code you changed no end-to-end test ran, which is the code to write a
+  test for before calling the change done.
 - `make browser-test` opens the page in a headless Chromium at 360x640 and taps things.
   **Run it after any change to `src/web/index.html`.** Everything else in the suite reads what
   the server sends, which is exactly the check that passes while the page is unusable: a menu

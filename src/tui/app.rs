@@ -270,6 +270,12 @@ pub struct App {
     warming: Option<std::sync::mpsc::Receiver<crate::symbols::Index>>,
     /// When `OVERVIEW.md` was last looked after.
     kept_at: std::time::Instant,
+    /// The stretch of history the end-to-end screens mark: what it did to the tests and the
+    /// code, and each test as it ran before it and after.
+    pub stretch: Stretch,
+    /// The end-to-end tests being recorded at a stretch's base commit, in a worktree of it:
+    /// the commit, and the run.
+    pub base_run: Option<(String, crate::analysis::Running)>,
     pub screens: Vec<Screen>,
     pub prompt: Option<Prompt>,
     pub message: Option<(String, bool)>,
@@ -315,6 +321,8 @@ impl App {
             picture: None,
             warming: None,
             kept_at: std::time::Instant::now(),
+            stretch: Stretch::Week,
+            base_run: None,
             screens: vec![Screen::Explorer],
             prompt: None,
             message: None,
@@ -735,6 +743,7 @@ impl App {
             }
         }
         changed |= self.advance_playback();
+        changed |= self.watch_base_run();
         if active && self.kept_at.elapsed() >= std::time::Duration::from_secs(5) {
             self.kept_at = std::time::Instant::now();
             // What went wrong is not worth a message every five seconds; the file is a

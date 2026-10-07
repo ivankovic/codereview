@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::e2e::Detail;
+use crate::stretch::Comparison;
 use crate::tui::viewer::RanBy;
 
 /// One row of a test's screen.
@@ -21,6 +22,8 @@ pub enum TestRow {
     Text(String),
     /// An index into the recording's steps.
     Step(usize),
+    /// An index into the steps as they ran before the stretch and after it.
+    Pair(usize),
     /// The test's own line that took step `n`, under it.
     Source(usize),
     /// An index into the files the run executed.
@@ -35,7 +38,11 @@ impl TestRow {
     fn selectable(&self) -> bool {
         matches!(
             self,
-            TestRow::Step(_) | TestRow::Ran(_) | TestRow::Doc(_) | TestRow::Smaller(_)
+            TestRow::Step(_)
+                | TestRow::Pair(_)
+                | TestRow::Ran(_)
+                | TestRow::Doc(_)
+                | TestRow::Smaller(_)
         )
     }
 }
@@ -47,6 +54,11 @@ pub struct EndToEndTestState {
     pub detail: Option<Detail>,
     pub rows: ListState<TestRow>,
     pub player: Player,
+    /// The test as it ran before the stretch and as it runs after, when the tests are
+    /// recorded at the stretch's base.
+    pub comparison: Option<Comparison>,
+    /// The recording from before the stretch, played beside the one from after.
+    pub before: Player,
     /// The recording takes the whole screen.
     pub full: bool,
     /// Whether this repository has a make target that records coverage, to say so.
@@ -58,41 +70,86 @@ impl EndToEndTestState {
         key: (String, String),
         detail: Option<Detail>,
         cast: Option<Played>,
+        compared: Option<(Comparison, Option<Played>)>,
         coverage_target: bool,
     ) -> Self {
         let recording = detail.as_ref().and_then(|d| d.test.recording.clone());
+        let (comparison, before_cast) = match compared {
+            Some((c, cast)) if c.before.is_some() => (Some(c), cast),
+            _ => (None, None),
+        };
+        let before = Player::new(
+            comparison.as_ref().and_then(|c| c.before.clone()),
+            before_cast,
+        );
         let mut state = Self {
-            rows: ListState::new(rows_of(detail.as_ref(), coverage_target)),
+            rows: ListState::new(rows_of(
+                detail.as_ref(),
+                comparison.as_ref(),
+                coverage_target,
+            )),
             key,
             detail,
             player: Player::new(recording, cast),
+            comparison,
+            before,
             full: false,
             coverage_target,
         };
         settle(&mut state.rows, 1, TestRow::selectable);
         state
     }
+
+    /// The index among the after side's steps of each pair's after step.
+    pub fn after_index(&self, pair: usize) -> Option<usize> {
+        let steps = &self.comparison.as_ref()?.steps;
+        steps.get(pair)?.after.as_ref()?;
+        Some(steps[..pair].iter().filter(|p| p.after.is_some()).count())
+    }
 }
 
-/// The rows: the steps, the code it ran, the documentation, the smaller tests.
-fn rows_of(detail: Option<&Detail>, coverage_target: bool) -> Vec<TestRow> {
+/// The rows: the steps — before and after the stretch when both are recorded — the code it
+/// ran, the documentation, the smaller tests.
+fn rows_of(
+    detail: Option<&Detail>,
+    comparison: Option<&Comparison>,
+    coverage_target: bool,
+) -> Vec<TestRow> {
     let Some(d) = detail else {
         return vec![TestRow::Text("reading the tests…".into())];
     };
     let mut rows = vec![TestRow::Heading("Steps".into())];
-    match &d.test.recording {
-        Some(r) if !r.steps.is_empty() => {
-            for i in 0..r.steps.len() {
-                rows.push(TestRow::Step(i));
-                if d.sources.get(i).is_some_and(Option::is_some) {
-                    rows.push(TestRow::Source(i));
+    if let Some(c) = comparison {
+        let short = c.base.as_ref().map_or("", |b| b.short.as_str());
+        rows[0] = TestRow::Heading(format!("Steps, as they ran at {short} → as they run now"));
+        let mut after = 0;
+        for (i, pair) in c.steps.iter().enumerate() {
+            rows.push(TestRow::Pair(i));
+            if pair.after.is_some() {
+                if d.sources.get(after).is_some_and(Option::is_some) {
+                    rows.push(TestRow::Source(after));
                 }
+                after += 1;
             }
         }
-        Some(_) => rows.push(TestRow::Text("Its run recorded no steps.".into())),
-        None => rows.push(TestRow::Text(
-            "No recording: its last run left none behind, or it has not run here.".into(),
-        )),
+        if c.steps.is_empty() {
+            rows.push(TestRow::Text("Neither run recorded any steps.".into()));
+        }
+    } else {
+        match &d.test.recording {
+            Some(r) if !r.steps.is_empty() => {
+                for i in 0..r.steps.len() {
+                    rows.push(TestRow::Step(i));
+                    if d.sources.get(i).is_some_and(Option::is_some) {
+                        rows.push(TestRow::Source(i));
+                    }
+                }
+            }
+            Some(_) => rows.push(TestRow::Text("Its run recorded no steps.".into())),
+            None => rows.push(TestRow::Text(
+                "No recording: its last run left none behind, or it has not run here.".into(),
+            )),
+        }
     }
 
     rows.push(TestRow::Heading("Code it ran".into()));
@@ -144,7 +201,8 @@ impl App {
         let key = (path.to_string(), name.to_string());
         let detail = self.read_detail(&key);
         let cast = self.cast_for(detail.as_ref());
-        let state = EndToEndTestState::new(key, detail, cast, self.has_coverage_target());
+        let compared = self.read_comparison(&key);
+        let state = EndToEndTestState::new(key, detail, cast, compared, self.has_coverage_target());
         if matches!(self.screen(), Screen::EndToEndTest(_)) {
             self.screens.pop();
         }
@@ -158,6 +216,21 @@ impl App {
             return None;
         }
         crate::e2e::detail(&mut self.session, &key.0, &key.1)
+    }
+
+    /// The test across the stretch, and the frames of its recording from before it, when the
+    /// tests are recorded at the stretch's base; not while the symbols are read.
+    fn read_comparison(&mut self, key: &(String, String)) -> Option<(Comparison, Option<Played>)> {
+        if !self.session.has_index() && self.warming.is_some() {
+            return None;
+        }
+        let stretch = self.stretch.clone();
+        let c = crate::stretch::compare(&mut self.session, &stretch, &key.0, &key.1).ok()?;
+        let before = c.before.as_ref()?;
+        let worktree =
+            crate::stretch::worktree_path(&self.session, &c.base.as_ref()?.commit).ok()?;
+        let cast = played(&worktree, &mut HashMap::new(), before);
+        Some((c, cast))
     }
 
     /// The frames of `detail`'s recording, from the list's cache when it played them already.
@@ -195,6 +268,7 @@ impl App {
         for key in keys {
             let detail = self.read_detail(&key);
             let cast = self.cast_for(detail.as_ref());
+            let compared = self.read_comparison(&key);
             let coverage_target = self.has_coverage_target();
             for screen in &mut self.screens {
                 let Screen::EndToEndTest(state) = screen else {
@@ -207,6 +281,7 @@ impl App {
                     key.clone(),
                     detail.clone(),
                     cast.clone(),
+                    compared.clone(),
                     coverage_target,
                 );
                 fresh.rows.cursor = state
@@ -219,6 +294,11 @@ impl App {
                     == state.player.recording.as_ref().map(|r| &r.dir)
                 {
                     fresh.player.position_ms = state.player.position_ms;
+                }
+                if fresh.before.recording.as_ref().map(|r| &r.dir)
+                    == state.before.recording.as_ref().map(|r| &r.dir)
+                {
+                    fresh.before.position_ms = state.before.position_ms;
                 }
                 **state = fresh;
             }
@@ -253,18 +333,33 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc if state.full => state.full = false,
             KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
+            // Both recordings, when there are two: the same test, before and after, side by
+            // side and in step.
             KeyCode::Char(' ') | KeyCode::Char('p') => {
+                if state.before.cast().is_some_and(|c| c.is_ok())
+                    && state.before.playing.is_some() == state.player.playing.is_some()
+                {
+                    state.before.toggle_play(now);
+                }
                 if let Some(said) = play(&mut state.player, now) {
                     self.say(said);
                 }
             }
             KeyCode::Char(']') | KeyCode::Char('[') => {
-                if let Some(at) = state.player.step_at(key.code == KeyCode::Char(']')) {
+                let forward = key.code == KeyCode::Char(']');
+                if let Some(at) = state.player.step_at(forward) {
                     state.player.seek(at, now);
                 }
+                if let Some(at) = state.before.step_at(forward) {
+                    state.before.seek(at, now);
+                }
             }
-            KeyCode::Char('0') => state.player.seek(0, now),
+            KeyCode::Char('0') => {
+                state.player.seek(0, now);
+                state.before.seek(0, now);
+            }
             KeyCode::Char('z') => state.full = !state.full,
+            KeyCode::Char('w') => self.next_stretch(),
             KeyCode::Char('o') => {
                 let recording = state.player.recording.clone();
                 match recording.as_ref().and_then(|r| r.media()) {
@@ -283,7 +378,16 @@ impl App {
                 let Some(d) = &state.detail else {
                     return;
                 };
+                let pair_step = match state.rows.current() {
+                    Some(TestRow::Pair(i)) => state.after_index(*i),
+                    _ => None,
+                };
                 let line = match state.rows.current() {
+                    Some(TestRow::Pair(_)) => pair_step
+                        .and_then(|j| d.test.recording.as_ref()?.steps.get(j))
+                        .map(|s| s.line)
+                        .filter(|l| *l > 0)
+                        .unwrap_or(d.test.test.line),
                     Some(TestRow::Step(i)) => d
                         .test
                         .recording
@@ -308,6 +412,22 @@ impl App {
                             state.player.seek(at, now);
                         }
                     }
+                    Some(TestRow::Pair(i)) => {
+                        let Some(pair) = state.comparison.as_ref().and_then(|c| c.steps.get(i))
+                        else {
+                            return;
+                        };
+                        let (was, is) = (
+                            pair.before.as_ref().map(|s| s.at_ms),
+                            pair.after.as_ref().map(|s| s.at_ms),
+                        );
+                        if let Some(at) = is {
+                            state.player.seek(at, now);
+                        }
+                        if let Some(at) = was {
+                            state.before.seek(at, now);
+                        }
+                    }
                     Some(TestRow::Ran(i)) => {
                         let Some(file) = d.ran.as_ref().and_then(|r| r.get(i)).cloned() else {
                             return;
@@ -315,6 +435,7 @@ impl App {
                         let ran = RanBy {
                             test: d.test.test.label.clone(),
                             ranges: file.ranges.clone(),
+                            unran: false,
                         };
                         let first = file.ranges.first().map_or(1, |r| r.0 as usize);
                         self.go_to_source(&file.path, first);
