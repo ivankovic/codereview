@@ -8,10 +8,18 @@ use std::net::TcpStream;
 /// A server on a token, already signed in: the string is the API token of a session,
 /// which is what every request below sends.
 pub(super) fn serve(roots: &[&Path]) -> (SocketAddr, String, tokio::runtime::Runtime) {
-    let token = auth::random_secret();
-    let (addr, rt) = listen(test_router(roots, Auth::Token(token.clone())));
-    let api_token = sign_in_with_token(addr, &token);
+    let (addr, api_token, rt, _) = serve_state(roots);
     (addr, api_token, rt)
+}
+
+/// [`serve`], and the server's state, for a test that changes it from outside as the
+/// server's own threads do.
+fn serve_state(roots: &[&Path]) -> (SocketAddr, String, tokio::runtime::Runtime, AppState) {
+    let token = auth::random_secret();
+    let state = test_state(roots, Auth::Token(token.clone()));
+    let (addr, rt) = listen(router(state.clone()));
+    let api_token = sign_in_with_token(addr, &token);
+    (addr, api_token, rt, state)
 }
 
 /// Writes a config file naming the agent `kind` where the server below reads it: inside
@@ -1095,6 +1103,98 @@ fn several_repositories() {
 }
 
 #[test]
+fn the_specification_and_what_a_stretch_did_to_it() {
+    let dir = scratch_repo();
+    std::fs::create_dir(dir.path().join("tests")).unwrap();
+    std::fs::write(
+        dir.path().join("tests/login.rs"),
+        "#[test]\nfn a_wrong_password_is_refused() {\n    assert!(true);\n}\n",
+    )
+    .unwrap();
+    let (addr, token, _rt) = serve(&[dir.path()]);
+    let t = Some(token.as_str());
+    let get = |path: &str| {
+        let (status, body) = request(addr, "GET", path, t, None);
+        assert_eq!(status, 200, "{path}: {body}");
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()
+    };
+
+    let now = get("/api/spec?stretch=uncommitted");
+    assert_eq!(now["span"]["label"], "uncommitted work");
+    assert_eq!(now["changes"][0]["what"], "added");
+    assert_eq!(now["changes"][0]["level"], "security");
+    assert_eq!(now["groups"][0]["level"], "security");
+    assert_eq!(now["groups"][0]["total"], 1);
+    let test = &now["groups"][0]["files"][0]["tests"][0];
+    assert_eq!(test["label"], "a wrong password is refused");
+    assert_eq!(test["why"], "its name says password");
+    assert_eq!(
+        now["groups"][1]["total"], 0,
+        "no end-to-end tests, and it says so"
+    );
+    // It names no code, so it counts towards where it is; and the file holding it lists it.
+    assert_eq!(test["areas"][0], "tests");
+    assert_eq!(test["level"], "security");
+    let area = now["areas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == "tests")
+        .unwrap();
+    assert_eq!(area["levels"][0], 1);
+    let of = get("/api/tests_of?path=tests/login.rs");
+    assert_eq!(of[0]["label"], "a wrong password is refused");
+    assert_eq!(get("/api/tests_of?path=a.rs").as_array().unwrap().len(), 0);
+
+    assert_eq!(get("/api/spec")["span"]["stretch"]["kind"], "week");
+    // A commit from the log, against its parent: this one touched no tests.
+    let log = get("/api/log?limit=1");
+    let hash = log[0]["hash"].as_str().unwrap();
+    let drill = get(&format!("/api/spec?commit={hash}"));
+    assert!(
+        drill["span"]["label"].as_str().unwrap().ends_with("second"),
+        "{drill}"
+    );
+    assert_eq!(drill["changes"].as_array().unwrap().len(), 0);
+
+    for bad in ["/api/spec?stretch=forever", "/api/spec?commit=--all"] {
+        assert_eq!(request(addr, "GET", bad, t, None).0, 400, "{bad}");
+    }
+}
+
+#[test]
+fn a_repository_that_appears_later_is_served() {
+    let a = scratch_repo();
+    let b = scratch_repo();
+    let (addr, token, _rt, state) = serve_state(&[a.path()]);
+    let t = Some(token.as_str());
+    let count = |path: &str| {
+        let (status, body) = request(addr, "GET", path, t, None);
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()
+    };
+    assert_eq!(count("/api/version")["repos"], 1);
+    assert_eq!(request(addr, "GET", "/api/state?repo=1", t, None).0, 404);
+
+    // What the server's own thread does when a scan finds one: the page learns of it from
+    // the count it polls, and reaches it at the next place in the list.
+    state
+        .repos
+        .push(crate::session::tests::scratch_session(b.path()));
+    assert_eq!(count("/api/version")["repos"], 2);
+    let repos = count("/api/repos");
+    assert_eq!(repos.as_array().unwrap().len(), 2);
+    assert_eq!(repos[1]["index"], 1);
+    let b_root = b.path().canonicalize().unwrap().display().to_string();
+    assert_eq!(count("/api/state?repo=1")["root"], b_root);
+    assert_eq!(
+        count("/api/state")["root"],
+        repos[0]["root"],
+        "the first stays first"
+    );
+}
+
+#[test]
 fn agent_endpoints() {
     let dir = scratch_repo();
     configure_agent(dir.path(), "fake-acp");
@@ -1241,4 +1341,194 @@ fn agent_endpoints() {
     let (_, body) = request(addr, "GET", "/api/agent/events", t, None);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["count"], 0, "{body}");
+}
+
+/// What a repository opens on: its end-to-end tests with what their last runs left, the
+/// recordings served as they are and the terminal ones as frames, and nothing served that a
+/// test did not leave.
+#[test]
+fn the_end_to_end_tests_and_their_recordings() {
+    let dir = scratch_repo();
+    let root = dir.path();
+    let put = |path: &str, bytes: &[u8]| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    };
+    put(
+        "tests/cli.rs",
+        b"// drives CARGO_BIN_EXE_tool\n#[test]\nfn a_file_opens() {\n    assert!(true);\n}\n",
+    );
+    put(
+        "target/e2e/terminal/a-file-opens/test.json",
+        br#"{"test": "a_file_opens", "file": "tests/cli.rs", "line": 2, "passed": true,
+            "started": "2030-01-01T00:00:00Z", "recording": "terminal.cast",
+            "steps": [{"at_ms": 0, "line": 3, "kind": "action", "text": "start it"}]}"#,
+    );
+    put(
+        "target/e2e/terminal/a-file-opens/terminal.cast",
+        b"{\"version\":2,\"width\":10,\"height\":2}\n[0.1,\"o\",\"hello\"]\n[0.9,\"o\",\"\\r\\nthere\"]\n",
+    );
+    put(
+        "target/e2e/browser/gone/test.json",
+        br#"{"test": "a page that was", "file": "tests/page.js", "passed": false,
+            "recording": "video.webm"}"#,
+    );
+    put("target/e2e/browser/gone/video.webm", b"0123456789");
+    let (addr, token, _rt) = serve(&[root]);
+    let t = Some(token.as_str());
+
+    let (status, body) = request(addr, "GET", "/api/e2e", t, None);
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["tests"][0]["label"], "a file opens", "{body}");
+    assert_eq!(v["tests"][0]["why"], "it drives the built program");
+    assert_eq!(v["tests"][0]["recording"]["kind"], "terminal");
+    assert_eq!(v["tests"][0]["stale"]["commits"], 0, "{body}");
+    assert_eq!(v["orphans"][0]["test"], "a page that was");
+    assert_eq!(v["failed"], 0);
+
+    let (status, body) = request(
+        addr,
+        "GET",
+        "/api/cast?path=target/e2e/terminal/a-file-opens/terminal.cast",
+        t,
+        None,
+    );
+    assert_eq!(status, 200, "{body}");
+    let cast: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        cast["frames"][0]["rows"][0][1][0]["text"], "hello",
+        "{body}"
+    );
+    assert_eq!(cast["frames"][1]["at_ms"], 900);
+
+    // A video seeks by asking for ranges.
+    let auth = ("Authorization".to_string(), format!("Bearer {token}"));
+    let (status, head, body) = request_full(
+        addr,
+        "GET",
+        "/api/recording?path=target/e2e/browser/gone/video.webm",
+        &[auth.clone(), ("Range".into(), "bytes=2-4".into())],
+        None,
+    );
+    assert_eq!(status, 206, "{head}");
+    assert!(head.contains("content-range: bytes 2-4/10"), "{head}");
+    assert!(head.contains("content-type: video/webm"), "{head}");
+    assert_eq!(body, "234");
+
+    // Only what a test left: not another file, and not a recording by another way there.
+    for path in [
+        "README.md",
+        "target/e2e/browser/gone/../gone/video.webm",
+        "target/e2e/browser/other.webm",
+    ] {
+        let (status, _) = request(addr, "GET", &format!("/api/recording?path={path}"), t, None);
+        assert!(status == 404 || status == 415, "{path} answered {status}");
+    }
+}
+
+/// A stretch of history through the end-to-end tests: the changed code no test ran, and the
+/// tests recorded at the base by the repository's own command, in a worktree, and compared.
+#[test]
+fn a_stretch_is_recorded_at_its_base_and_compared() {
+    let dir = scratch_repo();
+    let root = dir.path();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+    };
+    let put = |path: &str, text: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    // The end-to-end command: it leaves a recording of a test that, at the base, failed.
+    put(
+        "Makefile",
+        "e2e:\n\tmkdir -p target/e2e/t/saves\n\
+         \tprintf '%s' '{\"test\": \"a_review_is_saved\", \"file\": \"tests/cli.rs\", \
+         \"passed\": false, \"steps\": [{\"at_ms\": 0, \"kind\": \"action\", \"text\": \"save\"}]}' \
+         > target/e2e/t/saves/test.json\n",
+    );
+    put(
+        "tests/cli.rs",
+        "// CARGO_BIN_EXE_tool\n#[test]\nfn a_review_is_saved() {}\n",
+    );
+    put(
+        "src/lib.rs",
+        "pub fn save_review_file() {\n    write();\n}\n",
+    );
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "base"]);
+    put(
+        "src/lib.rs",
+        "pub fn save_review_file() {\n    write();\n    write();\n}\n",
+    );
+    put(
+        "target/e2e/t/saves/test.json",
+        r#"{"test": "a_review_is_saved", "file": "tests/cli.rs", "passed": true,
+            "steps": [{"at_ms": 0, "kind": "action", "text": "save"}]}"#,
+    );
+    let (addr, token, _rt) = serve(&[root]);
+    let t = Some(token.as_str());
+    let get = |path: &str| {
+        // The server builds the symbol index first, and says so until it has.
+        for _ in 0..100 {
+            let (status, body) = request(addr, "GET", path, t, None);
+            if status != 503 {
+                assert_eq!(status, 200, "{path}: {body}");
+                return serde_json::from_str::<serde_json::Value>(&body).unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("{path} never came");
+    };
+
+    let v = get("/api/stretch?stretch=uncommitted");
+    assert_eq!(v["changed"], 1, "{v}");
+    assert_eq!(v["unran"][0]["path"], "src/lib.rs", "{v}");
+    assert_eq!(v["base"]["recorded"], 0);
+    assert_eq!(v["base"]["command"], "make e2e");
+    let commit = v["base"]["commit"].as_str().unwrap().to_string();
+
+    let body = format!("{{\"commit\": \"{commit}\"}}");
+    let (status, run) = request(addr, "POST", "/api/stretch/record", t, Some(&body));
+    assert_eq!(status, 200, "{run}");
+    let mut done = false;
+    for _ in 0..100 {
+        let run = get(&format!("/api/stretch/record?commit={commit}"));
+        if run["running"] == false {
+            assert_eq!(run["exit"], 0, "{run}");
+            done = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(done, "the recording never finished");
+
+    let v = get("/api/stretch?stretch=uncommitted");
+    assert_eq!(v["base"]["recorded"], 1, "{v}");
+    assert_eq!(v["outcomes"][0]["before"], false, "{v}");
+    assert_eq!(v["outcomes"][0]["after"], true);
+    let c = get("/api/stretch/test?stretch=uncommitted&file=tests/cli.rs&name=a_review_is_saved");
+    assert_eq!(c["before"]["passed"], false, "{c}");
+    assert_eq!(c["steps"][0]["before"]["text"], "save");
+    // A recording at a commit is found in its worktree, and only by its full hash.
+    let (status, _) = request(
+        addr,
+        "GET",
+        &format!(
+            "/api/recording?path=target/e2e/t/saves/video.webm&at={}",
+            &commit[..7]
+        ),
+        t,
+        None,
+    );
+    assert_ne!(status, 200);
 }

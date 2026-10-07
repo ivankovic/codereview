@@ -111,7 +111,9 @@ Notes on that unit:
   and install the agent's binaries somewhere outside `/home` as well — a `claude` under
   `~/.local/bin` or an nvm node is invisible to this unit however plainly it is there. Every
   path in `ExecStart` is a repository, a directory inside one, or a directory of checkouts,
-  whose repositories are all opened. See the main README.
+  whose repositories are all opened. A repository cloned or created in such a directory
+  later is served within seconds, with no restart; it goes to the end of the list. See the
+  main README.
 - There is no `MemoryDenyWriteExecute` here, and there cannot be: the agent runs on Node,
   which needs writable executable pages. The tool always serves the agent.
 - `systemctl restart` works cleanly; the server shuts down on SIGTERM. It also signs everyone

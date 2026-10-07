@@ -112,6 +112,12 @@ fn operations(file: &str) -> Vec<Op> {
         get("overview", "/api/overview".into()),
         get("leans on (builds the index)", "/api/leans_on".into()),
         get("tests", "/api/tests".into()),
+        get("specification, last 7 days", "/api/spec".into()),
+        get(
+            "specification, last commit",
+            "/api/spec?stretch=last".into(),
+        ),
+        get("tests that reach the file", f("/api/tests_of?path={file}")),
         get("open the largest file", f("/api/file?path={file}")),
         get("blame", f("/api/blame?path={file}")),
         get("version poll", f("/api/version?path={file}")),

@@ -259,6 +259,7 @@ impl App {
                     self.symbol_search(text.trim());
                 }
             }
+            PromptKind::SpecSearch { .. } => self.search_spec(text),
         }
     }
 
@@ -273,6 +274,10 @@ impl App {
                     self.tree.filter = was.clone();
                     self.prompt = None;
                     self.tree.rebuild();
+                } else if let PromptKind::SpecSearch { was } = &p.kind {
+                    let was = was.clone();
+                    self.prompt = None;
+                    self.search_spec(was);
                 } else {
                     self.prompt = None;
                 }
@@ -293,6 +298,9 @@ impl App {
                 if matches!(p.kind, PromptKind::Filter { .. }) {
                     self.tree.filter = p.text.clone();
                     self.tree.rebuild();
+                } else if matches!(p.kind, PromptKind::SpecSearch { .. }) {
+                    let text = p.text.clone();
+                    self.search_spec(text);
                 }
             }
             (KeyCode::Delete, _) => p.delete(),
@@ -301,6 +309,9 @@ impl App {
                 if matches!(p.kind, PromptKind::Filter { .. }) {
                     self.tree.filter = p.text.clone();
                     self.tree.rebuild();
+                } else if matches!(p.kind, PromptKind::SpecSearch { .. }) {
+                    let text = p.text.clone();
+                    self.search_spec(text);
                 }
             }
             _ => {}

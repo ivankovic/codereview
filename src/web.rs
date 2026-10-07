@@ -50,9 +50,11 @@ const LOGIN_HTML: &str = include_str!("web/login.html");
 
 /// The page carries its own script and styles and fetches nothing else, so everything but
 /// same-origin requests can be refused. `form-action` is for the sign-in form, and `blob:`
-/// images are the repository's own pictures, fetched with the API token and shown from memory.
+/// images and videos are the repository's own pictures and the recordings its tests left,
+/// fetched with the API token and shown from memory.
 const CSP: &str = "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; \
-                   style-src 'unsafe-inline'; img-src 'self' data: blob:; manifest-src 'self'; \
+                   style-src 'unsafe-inline'; img-src 'self' data: blob:; media-src blob:; \
+                   manifest-src 'self'; \
                    frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 /// What a phone needs to put the page on its home screen: the app's name and icons, and
@@ -75,7 +77,7 @@ const MAX_BODY: usize = 1024 * 1024;
 
 #[derive(Clone)]
 struct AppState {
-    repos: Arc<Vec<RepoState>>,
+    repos: Arc<Repos>,
     /// What a browser must show to be let in: a password, or a token in the first URL.
     auth: Arc<Auth>,
     /// Everyone signed in, and how sign-in has been going.
@@ -94,6 +96,45 @@ impl AppState {
         // A lock this short is only poisoned by a panic while holding it, which would mean
         // a bug in the few lines below each `sessions()` call.
         self.sessions.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Every served repository, in the order they were opened: the command line's, then each one
+/// that appeared later in a directory of checkouts. The list only grows, since a page names a
+/// repository by its place in it and an address must keep naming the same one.
+struct Repos(std::sync::RwLock<Vec<Arc<RepoState>>>);
+
+impl Repos {
+    fn new(sessions: impl IntoIterator<Item = Session>) -> Self {
+        Self(std::sync::RwLock::new(
+            sessions
+                .into_iter()
+                .map(|s| Arc::new(RepoState::new(s)))
+                .collect(),
+        ))
+    }
+
+    fn list(&self) -> std::sync::RwLockReadGuard<'_, Vec<Arc<RepoState>>> {
+        // Nothing panics while holding this lock but a push, which cannot.
+        self.0.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn get(&self, index: usize) -> Option<Arc<RepoState>> {
+        self.list().get(index).cloned()
+    }
+
+    /// A copy of the list as it stands, to walk without holding the lock.
+    fn all(&self) -> Vec<Arc<RepoState>> {
+        self.list().clone()
+    }
+
+    fn len(&self) -> usize {
+        self.list().len()
+    }
+
+    fn push(&self, session: Session) {
+        let repo = Arc::new(RepoState::new(session));
+        self.0.write().unwrap_or_else(|e| e.into_inner()).push(repo);
     }
 }
 
@@ -148,8 +189,7 @@ impl RepoState {
 /// The repository a request is about: `?repo=N` (0-based, the order on the command line),
 /// or the first one. Every `/api` handler takes this instead of the whole state.
 struct Ctx {
-    repos: Arc<Vec<RepoState>>,
-    index: usize,
+    repo: Arc<RepoState>,
     /// Whether the server's own thread is still building indexes: a request that finds none
     /// then waits for that rather than building a second one under the lock.
     warming: Arc<std::sync::atomic::AtomicBool>,
@@ -159,7 +199,7 @@ impl Deref for Ctx {
     type Target = RepoState;
 
     fn deref(&self) -> &RepoState {
-        &self.repos[self.index]
+        &self.repo
     }
 }
 
@@ -182,19 +222,15 @@ impl FromRequestParts<AppState> for Ctx {
             })
             .transpose()?
             .unwrap_or(0);
-        if index >= state.repos.len() {
+        let Some(repo) = state.repos.get(index) else {
             return Err(ApiError(
                 StatusCode::NOT_FOUND,
                 format!("no repository {index}; {} open", state.repos.len()),
             ));
-        }
-        *state.repos[index]
-            .touched
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Instant::now();
+        };
+        *repo.touched.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
         Ok(Ctx {
-            repos: state.repos.clone(),
-            index,
+            repo,
             warming: state.warming.clone(),
         })
     }
@@ -320,7 +356,13 @@ pub struct Serve {
     pub public_url: Option<String>,
 }
 
-pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
+/// `checkouts` are the directories of checkouts among the paths served: a repository that
+/// appears in one later is served from then on.
+pub fn run(
+    sessions: Vec<Session>,
+    checkouts: crate::session::Checkouts,
+    serve: Serve,
+) -> Result<()> {
     anyhow::ensure!(!sessions.is_empty(), "no repository to serve");
     let public = match serve.public_url.as_deref() {
         Some(url) => {
@@ -352,13 +394,13 @@ pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
         );
     }
     let runtime = tokio::runtime::Runtime::new().context("tokio runtime")?;
-    runtime.block_on(async {
+    let served = runtime.block_on(async {
         let first_url = match auth.token() {
             Some(token) => format!("/?t={token}"),
             None => "/".to_string(),
         };
         let state = AppState {
-            repos: Arc::new(sessions.into_iter().map(RepoState::new).collect()),
+            repos: Arc::new(Repos::new(sessions)),
             auth: Arc::new(auth),
             sessions: Arc::new(Mutex::new(Sessions::default())),
             secure_cookie: public.as_deref().is_some_and(|u| u.starts_with("https://")),
@@ -388,47 +430,51 @@ pub fn run(sessions: Vec<Session>, serve: Serve) -> Result<()> {
                 eprintln!("could not open a browser: {e}");
             }
         }
-        watch_repositories(state.clone());
-        warm_and_keep(state.clone());
+        watch_repositories(state.clone(), !checkouts.is_empty());
+        warm_and_keep(state.clone(), checkouts);
         axum::serve(listener, router(state))
             .with_graceful_shutdown(shutdown_signal())
             .await
             .context("server")
-    })
+    });
+    // The threads that watch and keep the repositories loop for as long as the process lives,
+    // and dropping a runtime waits for its blocking threads: without this a stop signal ends
+    // the server and then hangs until the service manager kills it.
+    runtime.shutdown_background();
+    served
 }
 
 /// How long after its last request a repository is still someone's, for keeping its
 /// `OVERVIEW.md`: a page polls every two seconds while it is open.
 const LOOKED_AT: Duration = Duration::from_secs(120);
 
-/// Two things no request should wait for, on one thread of their own. First, every served
+/// What no request should wait for, on one thread of their own. First, every served
 /// repository's symbol index is built, one repository at a time, and handed to its session,
 /// so that the first look at an overview finds it ready rather than paying seconds for it;
-/// the page shows `OVERVIEW.md` meanwhile. Then, every few seconds, `OVERVIEW.md` is kept
-/// for the repositories someone has looked at lately: written once one has held still for
-/// ten seconds and says something new.
-fn warm_and_keep(state: AppState) {
+/// the page shows `OVERVIEW.md` meanwhile. Then, every few seconds, the directories of
+/// checkouts are read again and a repository that has appeared in one is served and indexed,
+/// and `OVERVIEW.md` is kept for the repositories someone has looked at lately: written once
+/// one has held still for ten seconds and says something new.
+fn warm_and_keep(state: AppState, mut checkouts: crate::session::Checkouts) {
     use std::sync::atomic::Ordering;
     state.warming.store(true, Ordering::Relaxed);
     tokio::task::spawn_blocking(move || {
-        for repo in state.repos.iter() {
-            let (root, files) = {
-                let s = repo.session.lock().unwrap_or_else(|e| e.into_inner());
-                if s.has_index() {
-                    continue;
-                }
-                (s.root().to_path_buf(), s.files.clone())
-            };
-            let index = crate::symbols::Index::build(&root, &files);
-            repo.session
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .install_index(index);
-        }
+        warm(&state.repos.all());
         state.warming.store(false, Ordering::Relaxed);
         loop {
             std::thread::sleep(TICK);
-            for repo in state.repos.iter() {
+            let found = checkouts.scan(|m| eprintln!("{m}"));
+            if !found.is_empty() {
+                let before = state.repos.len();
+                for session in found {
+                    println!("serving {}, new in its directory", session.root().display());
+                    state.repos.push(session);
+                }
+                // Not marked as warming: a request for a new repository builds its own index
+                // rather than waiting on this thread to get to it.
+                warm(&state.repos.all()[before..]);
+            }
+            for repo in state.repos.all() {
                 let looked_at = repo
                     .touched
                     .lock()
@@ -446,6 +492,25 @@ fn warm_and_keep(state: AppState) {
             }
         }
     });
+}
+
+/// Builds the symbol index of each of `repos` that has none, one at a time, and hands it to
+/// its session.
+fn warm(repos: &[Arc<RepoState>]) {
+    for repo in repos {
+        let (root, files) = {
+            let s = repo.session.lock().unwrap_or_else(|e| e.into_inner());
+            if s.has_index() {
+                continue;
+            }
+            (s.root().to_path_buf(), s.files.clone())
+        };
+        let index = crate::symbols::Index::build(&root, &files);
+        repo.session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .install_index(index);
+    }
 }
 
 /// How often each repository is looked at, and how long it must then hold still before a
@@ -466,30 +531,31 @@ const MIN_BETWEEN: Duration = Duration::from_secs(120);
 /// One run at a time across the whole server, whatever it is serving: fifteen repositories
 /// building at once is a machine nobody can use, and the second build would be waiting on the
 /// first for the same lock anyway.
-fn watch_repositories(state: AppState) {
+///
+/// Whether a repository is watched is decided once, when it is first seen: at start, or when
+/// it appears in a directory of checkouts, which `may_grow` says can happen.
+fn watch_repositories(state: AppState, may_grow: bool) {
+    fn is_watched(repo: &RepoState) -> bool {
+        let s = repo.session.lock().unwrap_or_else(|e| e.into_inner());
+        let root = s.root().to_path_buf();
+        s.config
+            .analysis
+            .iter()
+            .any(|c| crate::analysis::watches(c, &root))
+    }
+    let repos = state.repos.all();
+    let mut watched: Vec<bool> = repos.iter().map(|r| is_watched(r)).collect();
     // Nothing to watch, nothing to spawn: the usual case, and it should cost nothing.
-    let watched: Vec<usize> = state
-        .repos
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| {
-            let s = r.session.lock().unwrap_or_else(|e| e.into_inner());
-            let root = s.root().to_path_buf();
-            s.config
-                .analysis
-                .iter()
-                .any(|c| crate::analysis::watches(c, &root))
-        })
-        .map(|(i, _)| i)
-        .collect();
-    if watched.is_empty() {
+    let count = watched.iter().filter(|w| **w).count();
+    if count == 0 && !may_grow {
         return;
     }
-    println!(
-        "watching {} of {} repositories for checks to run",
-        watched.len(),
-        state.repos.len()
-    );
+    if count > 0 {
+        println!(
+            "watching {count} of {} repositories for checks to run",
+            repos.len()
+        );
+    }
     tokio::task::spawn_blocking(move || {
         // Per repository: the fingerprint last seen, when it last moved, and when each check
         // was last started here. All of it dies with the process, like every other run.
@@ -498,8 +564,23 @@ fn watch_repositories(state: AppState) {
         let mut ran: HashMap<(usize, String), (Instant, u64)> = HashMap::new();
         loop {
             std::thread::sleep(TICK);
-            for &i in &watched {
-                let repo = &state.repos[i];
+            let repos = state.repos.all();
+            for repo in &repos[watched.len()..] {
+                let watch = is_watched(repo);
+                if watch {
+                    let name = repo
+                        .session
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .name();
+                    println!("watching {name} for checks to run");
+                }
+                watched.push(watch);
+            }
+            for (i, repo) in repos.iter().enumerate() {
+                if !watched[i] {
+                    continue;
+                }
                 let (fingerprint, root, checks) = {
                     let s = repo.session.lock().unwrap_or_else(|e| e.into_inner());
                     let root = s.root().to_path_buf();
@@ -571,7 +652,7 @@ fn due(
 
 /// Whether any check is running anywhere on this server.
 fn anything_running(state: &AppState) -> bool {
-    state.repos.iter().any(|r| {
+    state.repos.all().iter().any(|r| {
         r.checks
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -622,6 +703,18 @@ fn router(state: AppState) -> Router {
         .route("/overview", get(api::get_overview))
         .route("/leans_on", get(api::get_leans_on))
         .route("/tests", get(api::get_tests))
+        .route("/spec", get(api::get_spec))
+        .route("/e2e", get(api::get_e2e))
+        .route("/e2e/test", get(api::get_e2e_test))
+        .route("/stretch", get(api::get_stretch))
+        .route("/stretch/test", get(api::get_stretch_test))
+        .route(
+            "/stretch/record",
+            get(api::get_stretch_record).post(api::post_stretch_record),
+        )
+        .route("/recording", get(api::get_recording))
+        .route("/cast", get(api::get_cast))
+        .route("/tests_of", get(api::get_tests_of))
         .route("/file", get(api::get_file))
         .route("/blame", get(api::get_blame))
         .route("/image", get(api::get_image))
@@ -656,7 +749,11 @@ fn router(state: AppState) -> Router {
         .route("/agent/cancel", post(agent::post_agent_cancel))
         .route("/agent/stop", post(agent::post_agent_stop))
         .route("/agent/clear", post(agent::post_agent_clear))
-        .route("/logout", post(post_logout))
+        .route("/logout", post(post_logout));
+    // Only in a build instrumented for coverage, which is never one that is deployed.
+    #[cfg(coverage)]
+    let api = api.route("/coverage", post(coverage::post_coverage));
+    let api = api
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -672,6 +769,57 @@ fn router(state: AppState) -> Router {
         .nest("/api", api)
         .layer(middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+/// The server's coverage a test at a time, for the browser tests: one server answers all of
+/// them, so what each one ran is what the counters say between two calls here. Compiled only
+/// when `cargo llvm-cov` builds the crate (it sets `--cfg coverage`), and even then it writes
+/// only where `CODEREVIEW_COVERAGE_DIR` says, under a name made of letters, digits and dashes.
+#[cfg(coverage)]
+mod coverage {
+    use super::*;
+    use std::ffi::{CString, c_char, c_int};
+
+    unsafe extern "C" {
+        fn __llvm_profile_reset_counters();
+        fn __llvm_profile_set_filename(name: *const c_char);
+        fn __llvm_profile_write_file() -> c_int;
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct CoverageQuery {
+        /// Write what ran since the last call to `<test>.profraw`; without it, only start
+        /// counting afresh.
+        test: Option<String>,
+    }
+
+    pub(super) async fn post_coverage(Query(q): Query<CoverageQuery>) -> Response {
+        let Some(dir) = std::env::var_os("CODEREVIEW_COVERAGE_DIR") else {
+            return ApiError(StatusCode::NOT_FOUND, "coverage is not being taken".into())
+                .into_response();
+        };
+        if let Some(test) = q.test {
+            let named =
+                !test.is_empty() && test.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+            if !named {
+                return ApiError(StatusCode::BAD_REQUEST, "not a test's name".into())
+                    .into_response();
+            }
+            let path = std::path::Path::new(&dir).join(format!("{test}.profraw"));
+            let Ok(path) = CString::new(path.to_string_lossy().into_owned()) else {
+                return ApiError(StatusCode::BAD_REQUEST, "not a path".into()).into_response();
+            };
+            // SAFETY: the profiler runtime is linked into every instrumented build, and
+            // copies the name it is given before this returns.
+            unsafe {
+                __llvm_profile_set_filename(path.as_ptr());
+                __llvm_profile_write_file();
+            }
+        }
+        // SAFETY: as above; resetting counters is what the runtime offers this for.
+        unsafe { __llvm_profile_reset_counters() };
+        StatusCode::NO_CONTENT.into_response()
+    }
 }
 
 async fn require_token(
@@ -914,20 +1062,24 @@ where
 
 #[cfg(test)]
 pub(crate) fn test_router(roots: &[&Path], auth: Auth) -> Router {
-    router(AppState {
-        repos: Arc::new(
+    router(test_state(roots, auth))
+}
+
+#[cfg(test)]
+fn test_state(roots: &[&Path], auth: Auth) -> AppState {
+    AppState {
+        repos: Arc::new(Repos::new(
             roots
                 .iter()
-                .map(|r| RepoState::new(crate::session::tests::scratch_session(r)))
-                .collect(),
-        ),
+                .map(|r| crate::session::tests::scratch_session(r)),
+        )),
         auth: Arc::new(auth),
         sessions: Arc::new(Mutex::new(Sessions::default())),
         secure_cookie: false,
         in_flight: Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT)),
         // No thread builds indexes for a test server; a request that needs one builds it.
         warming: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    })
+    }
 }
 
 #[cfg(not(test))]

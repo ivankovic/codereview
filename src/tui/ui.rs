@@ -11,15 +11,19 @@ use crate::anchor::AnchorState;
 use crate::session::DiffTarget;
 use crate::theme::Theme;
 use crate::tui::agent_panel;
-use crate::tui::app::{App, Screen};
+use crate::tui::app::{App, Screen, SpecRow};
 use crate::tui::style::{self, comment_style};
 use crate::tui::workspace::Workspace;
 
+mod end_to_end;
 mod explorer;
 mod screens;
 
+use end_to_end::{draw_end_to_end, draw_end_to_end_test};
 use explorer::draw_explorer;
-use screens::{draw_changes, draw_diff, draw_locations, draw_log, draw_notes, draw_review};
+use screens::{
+    draw_changes, draw_diff, draw_locations, draw_log, draw_notes, draw_review, draw_spec,
+};
 
 /// Every open repository: the strip naming them when there is more than one, the active
 /// app below it, and the picker on top.
@@ -169,6 +173,9 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
         Screen::Review(_) => draw_review(frame, app, main),
         Screen::Notes(_) => draw_notes(frame, app, main),
         Screen::Locations(_) => draw_locations(frame, app, main),
+        Screen::Spec(_) => draw_spec(frame, app, main),
+        Screen::EndToEnd(_) => draw_end_to_end(frame, app, main),
+        Screen::EndToEndTest(_) => draw_end_to_end_test(frame, app, main),
         Screen::Agent => {
             let theme = app.theme.clone();
             let label = app.agent_label();
@@ -365,9 +372,12 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             Screen::Explorer => app.viewer.as_ref().and_then(|v| {
                 let line = v.current_line()?;
-                let op = v.line_ops.as_ref()?.get(line).copied()?;
-                op.is_change()
-                    .then(|| format!("{} vs HEAD", crate::tui::style::op_marker(op)))
+                let ran = v.ran.as_ref().filter(|r| r.covers(line)).map(|r| r.says());
+                ran.or_else(|| {
+                    let op = v.line_ops.as_ref()?.get(line).copied()?;
+                    op.is_change()
+                        .then(|| format!("{} vs HEAD", crate::tui::style::op_marker(op)))
+                })
             }),
             _ => None,
         };
@@ -402,6 +412,15 @@ fn hint_for(screen: &Screen) -> &'static str {
         }
         Screen::Notes(_) => "Enter go to  n add  e edit  d delete  q back",
         Screen::Locations(_) => "Enter go there  Ctrl-o back to where you were  q close",
+        Screen::Spec(_) => {
+            "Enter open/close, diff, test or area  h close fold  / search  f files a test names  s stretch  q back"
+        }
+        Screen::EndToEnd(_) => {
+            "Enter the test  Space play  ] [ steps  w stretch  b record before  s source  o video  q code"
+        }
+        Screen::EndToEndTest(_) => {
+            "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q back"
+        }
         Screen::Agent => {
             "i ask  A address all pending  Esc cancel  1-9/y/n answer  t thoughts  l log  C clear  R restart  q back"
         }
@@ -412,7 +431,20 @@ const HELP: &[(&str, &str)] = &[
     ("Everywhere", ""),
     ("?", "this help"),
     ("q / Esc", "back, or quit from the explorer"),
+    (
+        "E",
+        "the end-to-end tests, each with the recording of its last run: what a repository opens on",
+    ),
     ("L", "repository log"),
+    (
+        "P",
+        "specification: the tests by level and area, and what the last 7 days did to them (s: last commit, uncommitted); in the log, what that commit did",
+    ),
+    ("U", "the tests that name the open file"),
+    (
+        "/ in P",
+        "search the tests by their words, as you type; Enter opens or closes a fold, h closes the one the cursor is in",
+    ),
     ("S", "working tree changes (s toggles staged)"),
     ("R", "review: every comment in REVIEW.md"),
     ("T", "notes: every note in NOTES.md"),
@@ -479,6 +511,51 @@ const HELP: &[(&str, &str)] = &[
         "a",
         "ask the agent about the line, the selection, or the comment",
     ),
+    ("", ""),
+    ("End to end", ""),
+    ("Space  p", "play or pause the selected test's recording"),
+    (
+        "] [",
+        "the next / previous step of the test, in the recording",
+    ),
+    ("0", "back to the start of the recording"),
+    ("z", "the recording on the whole screen, and back"),
+    (
+        "Enter",
+        "the test on its own: steps, the code it ran, its documentation, the tests below it",
+    ),
+    ("s", "the test's source"),
+    ("o", "open the recording in the system's player (videos)"),
+    (
+        "w",
+        "the stretch of history marked: the last 7 days, the last commit, uncommitted work",
+    ),
+    (
+        "Enter",
+        "on what the stretch did: a test that asks less, its diff; changed code no end-to-end test ran, the file with those lines marked ▌",
+    ),
+    (
+        "b",
+        "record the tests at the stretch's base, in a worktree of it, to compare each test with how it ran then",
+    ),
+    (
+        "a",
+        "with no end-to-end tests: ask the agent to write the first ones",
+    ),
+    ("q", "the code"),
+    ("", ""),
+    ("One end-to-end test", ""),
+    ("Space  p  ] [  0  z  o", "the recording, as in the list"),
+    (
+        "Enter",
+        "a step: that moment of the recording; a file it ran: the file, the lines it ran marked ▌; a section or a test: there",
+    ),
+    ("s", "the test's source, at the step under the cursor"),
+    (
+        "w",
+        "the stretch: with the tests recorded at its base, the recording then beside the one now, and the steps paired",
+    ),
+    ("q", "back to the list"),
     ("", ""),
     ("Agent panel", ""),
     ("i", "ask something"),

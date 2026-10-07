@@ -80,3 +80,71 @@ pub fn scratch_repo(root: &Path) {
     git(&["add", "-A"]);
     git(&["commit", "-qm", "first"]);
 }
+
+/// An LLVM tool of the toolchain that builds the tests: `llvm-profdata` or `llvm-cov`, which
+/// `rustup component add llvm-tools` puts beside the compiler.
+fn llvm_tool(name: &str) -> Option<std::path::PathBuf> {
+    let sysroot = Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+        .ok()?;
+    let sysroot = std::path::PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    std::fs::read_dir(sysroot.join("lib/rustlib"))
+        .ok()?
+        .flatten()
+        .map(|e| e.path().join("bin").join(name))
+        .find(|p| p.is_file())
+}
+
+/// The lines `binary` ran, as lcov, from the coverage profiles it wrote. `None` when there is
+/// no profile or no tool to read one: a test's coverage is something to show, not a check.
+pub fn lcov_of(profiles: &[std::path::PathBuf], binary: &str) -> Option<Vec<u8>> {
+    if profiles.is_empty() {
+        return None;
+    }
+    let work = tempfile::tempdir().ok()?;
+    let merged = work.path().join("merged.profdata");
+    let ok = Command::new(llvm_tool("llvm-profdata")?)
+        .args(["merge", "-sparse", "-o"])
+        .arg(&merged)
+        .args(profiles)
+        .status()
+        .is_ok_and(|s| s.success());
+    if !ok {
+        return None;
+    }
+    let out = Command::new(llvm_tool("llvm-cov")?)
+        .args([
+            "export",
+            "-format=lcov",
+            "-ignore-filename-regex=(\\.cargo/registry|/rustc/)",
+        ])
+        .arg("-instr-profile")
+        .arg(&merged)
+        .arg(binary)
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// A test's `coverage.lcov`, and when it was made.
+pub struct Kept(Vec<u8>, std::time::SystemTime);
+
+/// The coverage the last counting run left in `dir`, to keep across a run that does not
+/// count: without it every plain run of the tests would forget what each one runs.
+pub fn keep_coverage(dir: &Path) -> Option<Kept> {
+    let file = dir.join("coverage.lcov");
+    let made = std::fs::metadata(&file).and_then(|m| m.modified()).ok()?;
+    Some(Kept(std::fs::read(&file).ok()?, made))
+}
+
+/// Puts kept coverage back in `dir` as it was, made when it was made: a reader judges by that
+/// whether it knows the code as it is now.
+pub fn restore_coverage(dir: &Path, kept: Kept) {
+    let file = dir.join("coverage.lcov");
+    if std::fs::write(&file, kept.0).is_ok() {
+        if let Ok(f) = std::fs::File::options().write(true).open(&file) {
+            let _ = f.set_modified(kept.1);
+        }
+    }
+}

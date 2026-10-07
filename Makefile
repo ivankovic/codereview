@@ -1,4 +1,4 @@
-.PHONY: build build-web test integration-test browser-test check fmt clippy install deploy
+.PHONY: build build-web test integration-test browser-test e2e e2e-coverage check fmt clippy install deploy
 
 build:
 	cargo build --release
@@ -25,6 +25,20 @@ perf:
 # else reads what the server sends, which a clipped menu does not change.
 browser-test:
 	cargo nextest run --features web --run-ignored all -E 'binary(browser)' --no-capture
+
+# The end-to-end tests, both halves: the terminal UI in a pseudo-terminal (also part of `make
+# test`) and the page in a real browser. Each test leaves its recording and its steps under
+# target/e2e/.
+e2e:
+	cargo nextest run -E 'binary(terminal)'
+	$(MAKE) browser-test
+
+# The same, with the code each test ran: built to count what it runs (cargo-llvm-cov, and
+# `rustup component add llvm-tools`), each test leaves a coverage.lcov beside its recording,
+# which is what a test's own view lists as the code it ran. A few minutes longer.
+e2e-coverage:
+	cargo llvm-cov nextest --no-report -E 'binary(terminal)'
+	cargo llvm-cov nextest --no-report --features web --run-ignored all -E 'binary(browser)'
 
 fmt:
 	cargo fmt --check

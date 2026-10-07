@@ -6,6 +6,7 @@
 //! having to be made public for them.
 
 use super::*;
+use std::collections::HashMap;
 
 pub struct LogState {
     /// `None` for the whole repository, or the file whose history this is.
@@ -57,7 +58,559 @@ pub struct LocationsState {
     pub items: ListState<Hit>,
 }
 
+/// The specification: what a stretch of history did to the tests, then every test, folded by
+/// level, area and file. One list of rows, headings and folds among them, so the cursor walks
+/// the whole page and Enter opens or closes whatever it is on.
+pub struct SpecState {
+    pub stretch: Stretch,
+    pub span: crate::spec::Span,
+    pub total: usize,
+    pub ignored: usize,
+    pub rows: ListState<SpecRow>,
+    /// What the rows are drawn from, kept to narrow them, fold them and search them.
+    pub spec: crate::spec::Spec,
+    /// The one area the tests are narrowed to, if any.
+    pub area: Option<String>,
+    /// Folds someone opened or closed, by key; the rest are open when they are small.
+    pub open: HashMap<String, bool>,
+    /// Words the tests are searched for; empty shows the folds instead.
+    pub query: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum SpecRow {
+    /// A section's title; alarming when it lists tests that now ask less.
+    Heading(String, bool),
+    /// A sentence under a heading; a finding when what it says is missing matters.
+    Text(String, bool),
+    /// A change, and how deep in the folds it is.
+    Change(TestChange, u8),
+    /// A part of the code, with what the tests do for it; Enter narrows to it.
+    Area(crate::spec::Area),
+    /// What a fold holds and how many; Enter opens or closes it.
+    Fold {
+        key: String,
+        label: String,
+        count: usize,
+        skipped: usize,
+        depth: u8,
+        open: bool,
+        /// A level's fold, drawn in the accent colour like a heading.
+        level: bool,
+    },
+    Test(crate::spec::SpecTest, u8),
+}
+
+/// A group small enough to read whole: its fold starts open, and it is not split further.
+const SMALL: usize = 12;
+
+/// What a level's empty section says: an absent security or end-to-end suite is a finding.
+fn level_says(level: Level) -> (&'static str, &'static str) {
+    match level {
+        Level::Security => (
+            "Tests whose name or path is about signing in, secrets, permissions or attacks.",
+            "No test is named for security: nothing here says what an attacker cannot do.",
+        ),
+        Level::EndToEnd => (
+            "Tests that drive the whole system the way a person would: through a browser, or a real server.",
+            "No test drives the whole system: nothing here shows it working the way someone would use it.",
+        ),
+        Level::Integration => (
+            "Tests that reach the system through its public interface.",
+            "None found.",
+        ),
+        Level::Unit => ("Everything else: one piece at a time.", "None found."),
+    }
+}
+
+/// Items grouped by a key, in the order the keys sort.
+fn grouped<T: Clone>(items: &[T], key: impl Fn(&T) -> String) -> Vec<(String, Vec<T>)> {
+    let mut groups: std::collections::BTreeMap<String, Vec<T>> = Default::default();
+    for item in items {
+        groups.entry(key(item)).or_default().push(item.clone());
+    }
+    groups.into_iter().collect()
+}
+
+impl SpecState {
+    fn is_open(&self, key: &str, default: bool) -> bool {
+        self.open.get(key).copied().unwrap_or(default)
+    }
+
+    /// The rows again, after a fold, an area or the search changed, with the cursor kept on
+    /// the same row as near as the new rows allow.
+    pub fn rebuild(&mut self) {
+        let (cursor, scroll) = (self.rows.cursor, self.rows.scroll);
+        self.rows = ListState::new(spec_rows(self));
+        self.rows.cursor = cursor.min(self.rows.items.len().saturating_sub(1));
+        self.rows.scroll = scroll.min(self.rows.cursor);
+    }
+
+    /// A fold inside a level or a kind of change, closed until someone opens it: it is only
+    /// there because what holds it was too long to show whole.
+    fn fold(
+        &self,
+        rows: &mut Vec<SpecRow>,
+        key: String,
+        label: String,
+        count: usize,
+        skipped: usize,
+        depth: u8,
+    ) -> bool {
+        let open = self.is_open(&key, false);
+        rows.push(SpecRow::Fold {
+            key,
+            label,
+            count,
+            skipped,
+            depth,
+            open,
+            level: false,
+        });
+        open
+    }
+
+    /// Tests by the area each is filed in, then by file; a group of one is not a fold, and a
+    /// small enough set is listed as it is.
+    fn by_area(
+        &self,
+        rows: &mut Vec<SpecRow>,
+        tests: &[crate::spec::SpecTest],
+        key: &str,
+        depth: u8,
+    ) {
+        let areas = grouped(tests, |t| t.home.clone());
+        if tests.len() <= SMALL || areas.len() == 1 {
+            return self.by_file(rows, tests, key, depth);
+        }
+        for (area, these) in areas {
+            let key = format!("{key}:{area}");
+            let skipped = these.iter().filter(|t| t.test.ignored).count();
+            if self.fold(rows, key.clone(), area, these.len(), skipped, depth) {
+                self.by_file(rows, &these, &key, depth + 1);
+            }
+        }
+    }
+
+    fn by_file(
+        &self,
+        rows: &mut Vec<SpecRow>,
+        tests: &[crate::spec::SpecTest],
+        key: &str,
+        depth: u8,
+    ) {
+        let files = grouped(tests, |t| t.test.path.clone());
+        if tests.len() <= SMALL || files.len() == 1 {
+            rows.extend(tests.iter().cloned().map(|t| SpecRow::Test(t, depth)));
+            return;
+        }
+        for (path, these) in files {
+            let key = format!("{key}:{path}");
+            let skipped = these.iter().filter(|t| t.test.ignored).count();
+            if self.fold(rows, key, path, these.len(), skipped, depth) {
+                rows.extend(these.into_iter().map(|t| SpecRow::Test(t, depth + 1)));
+            }
+        }
+    }
+}
+
+/// The rows of the specification, in the order the page shows them: what the stretch did
+/// (the tests that ask less in full, the rest a fold per kind of change), the areas, then the
+/// tests, folded by level, area and file, or what matches the search when there is one.
+pub fn spec_rows(state: &SpecState) -> Vec<SpecRow> {
+    let spec = &state.spec;
+    let area = state.area.as_deref();
+    let mut rows = vec![SpecRow::Heading(format!("In {}", spec.span.label), false)];
+    if spec.changes.is_empty() {
+        rows.push(SpecRow::Text(
+            "Nothing: no test was added, changed or removed.".into(),
+            false,
+        ));
+    }
+    let (alarming, rest): (Vec<_>, Vec<_>) = spec
+        .changes
+        .iter()
+        .cloned()
+        .partition(|c| c.what.alarming());
+    if !alarming.is_empty() {
+        rows.push(SpecRow::Heading(
+            format!("Asks less than before: {}", alarming.len()),
+            true,
+        ));
+        rows.extend(alarming.into_iter().map(|c| SpecRow::Change(c, 1)));
+    }
+    // Everything else, a fold per kind of change, closed until someone opens one.
+    let mut kinds: Vec<(What, Vec<TestChange>)> = Vec::new();
+    for c in rest {
+        match kinds.iter_mut().find(|(w, _)| *w == c.what) {
+            Some((_, cs)) => cs.push(c),
+            None => kinds.push((c.what, vec![c])),
+        }
+    }
+    kinds.sort_by_key(|(w, _)| *w);
+    for (what, cs) in kinds {
+        let key = format!("kind:{}", what.word());
+        let open = state.is_open(&key, false);
+        rows.push(SpecRow::Fold {
+            key: key.clone(),
+            label: what.word().to_string(),
+            count: cs.len(),
+            skipped: 0,
+            depth: 0,
+            open,
+            level: false,
+        });
+        if !open {
+            continue;
+        }
+        let files = grouped(&cs, |c| c.path.clone());
+        if cs.len() <= SMALL || files.len() == 1 {
+            rows.extend(cs.into_iter().map(|c| SpecRow::Change(c, 1)));
+            continue;
+        }
+        for (path, these) in files {
+            if state.fold(&mut rows, format!("{key}:{path}"), path, these.len(), 0, 1) {
+                rows.extend(these.into_iter().map(|c| SpecRow::Change(c, 2)));
+            }
+        }
+    }
+
+    rows.push(SpecRow::Text(String::new(), false));
+    match area {
+        Some(a) => rows.push(SpecRow::Heading(
+            format!("Area {a}: the tests that count towards it (Esc: every area)"),
+            false,
+        )),
+        None => {
+            rows.push(SpecRow::Heading(
+                "Tests by area: security, end to end, integration, unit; files no test names"
+                    .into(),
+                false,
+            ));
+            rows.extend(spec.areas.iter().cloned().map(SpecRow::Area));
+        }
+    }
+
+    let pool: Vec<crate::spec::SpecTest> = spec
+        .groups
+        .iter()
+        .flat_map(|g| g.files.iter().flat_map(|f| f.tests.iter()))
+        .filter(|t| area.is_none_or(|a| t.areas.iter().any(|x| x == a)))
+        .cloned()
+        .collect();
+
+    // Searching shows what matches instead of the folds: every word must be in the test's
+    // sentence, its name or its file.
+    let words: Vec<String> = state
+        .query
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .collect();
+    if !words.is_empty() {
+        let hits: Vec<_> = pool
+            .iter()
+            .filter(|t| {
+                let text =
+                    format!("{} {} {}", t.test.label, t.test.name, t.test.path).to_lowercase();
+                words.iter().all(|w| text.contains(w.as_str()))
+            })
+            .cloned()
+            .collect();
+        rows.push(SpecRow::Text(String::new(), false));
+        rows.push(SpecRow::Heading(
+            format!(
+                "{} {} \"{}\" (Esc clears)",
+                hits.len(),
+                if hits.len() == 1 {
+                    "test matches"
+                } else {
+                    "tests match"
+                },
+                state.query.trim()
+            ),
+            false,
+        ));
+        for group in &spec.groups {
+            let these: Vec<_> = hits
+                .iter()
+                .filter(|t| t.level == group.level)
+                .cloned()
+                .collect();
+            if these.is_empty() {
+                continue;
+            }
+            rows.push(SpecRow::Heading(
+                format!("{} {}", group.title, these.len()),
+                false,
+            ));
+            rows.extend(these.into_iter().map(|t| SpecRow::Test(t, 1)));
+        }
+        return rows;
+    }
+
+    for group in &spec.groups {
+        let tests: Vec<_> = pool
+            .iter()
+            .filter(|t| t.level == group.level)
+            .cloned()
+            .collect();
+        rows.push(SpecRow::Text(String::new(), false));
+        if tests.is_empty() {
+            rows.push(SpecRow::Heading(format!("{} 0", group.title), false));
+            match area {
+                Some(a) => rows.push(SpecRow::Text(format!("None counts towards {a}."), false)),
+                None => {
+                    let finding = matches!(group.level, Level::Security | Level::EndToEnd);
+                    rows.push(SpecRow::Text(level_says(group.level).1.into(), finding));
+                }
+            }
+            continue;
+        }
+        let key = format!("level:{}", group.title);
+        let open = state.is_open(&key, tests.len() <= SMALL);
+        rows.push(SpecRow::Fold {
+            key: key.clone(),
+            label: group.title.clone(),
+            count: tests.len(),
+            skipped: tests.iter().filter(|t| t.test.ignored).count(),
+            depth: 0,
+            open,
+            level: true,
+        });
+        if !open {
+            continue;
+        }
+        rows.push(SpecRow::Text(level_says(group.level).0.into(), false));
+        match area {
+            Some(_) => state.by_file(&mut rows, &tests, &key, 1),
+            None => state.by_area(&mut rows, &tests, &key, 1),
+        }
+    }
+    rows
+}
+
 impl App {
+    /// The specification for `stretch`, on top of the stack; the one already there is
+    /// replaced, so cycling stretches does not pile screens up, and keeps its folds and its
+    /// search.
+    pub(super) fn push_spec(&mut self, stretch: Stretch) {
+        let spec = self.session.spec(&stretch);
+        let Some(spec) = self.report(spec) else {
+            return;
+        };
+        let (open, query) = match self.screen() {
+            Screen::Spec(s) => (s.open.clone(), s.query.clone()),
+            _ => (HashMap::new(), String::new()),
+        };
+        let mut state = SpecState {
+            stretch,
+            span: spec.span.clone(),
+            total: spec.total,
+            ignored: spec.ignored,
+            rows: ListState::new(Vec::new()),
+            spec,
+            area: None,
+            open,
+            query,
+        };
+        state.rows = ListState::new(spec_rows(&state));
+        if matches!(self.screen(), Screen::Spec(_)) {
+            self.screens.pop();
+        }
+        self.screens.push(Screen::Spec(Box::new(state)));
+    }
+
+    /// Searches the specification on top for `query`, as it is typed.
+    pub(super) fn search_spec(&mut self, query: String) {
+        if let Some(Screen::Spec(state)) = self.screens.last_mut() {
+            state.query = query;
+            state.rows = ListState::new(spec_rows(state));
+        }
+    }
+
+    pub(super) fn handle_spec_key(&mut self, key: KeyEvent) {
+        let height = self.measured.list_height.max(1) as isize;
+        let Screen::Spec(state) = self.screens.last_mut().expect("screen") else {
+            return;
+        };
+        if state.rows.handle_nav(key, height) {
+            return;
+        }
+        match key.code {
+            // The first ways back are out of the search, then out of the area.
+            KeyCode::Char('q') | KeyCode::Esc if !state.query.is_empty() => {
+                state.query.clear();
+                state.rows = ListState::new(spec_rows(state));
+            }
+            KeyCode::Char('q') | KeyCode::Esc if state.area.is_some() => {
+                state.area = None;
+                state.rows = ListState::new(spec_rows(state));
+            }
+            KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
+            KeyCode::Char('/') => {
+                let was = state.query.clone();
+                self.prompt = Some(Prompt::new(
+                    PromptKind::SpecSearch { was: was.clone() },
+                    "search the tests",
+                    &was,
+                ));
+            }
+            // The files a test names, to jump to.
+            KeyCode::Char('f') => {
+                let Some(SpecRow::Test(t, _)) = state.rows.current().cloned() else {
+                    self.info("f lists the files a test names; put the cursor on a test");
+                    return;
+                };
+                if t.reaches.is_empty() {
+                    self.info("this test names no code directly");
+                    return;
+                }
+                let hits = t
+                    .reaches
+                    .iter()
+                    .map(|path| Hit {
+                        path: path.clone(),
+                        line: 1,
+                        column: 0,
+                        label: crate::spec::area_of(path),
+                        text: String::new(),
+                    })
+                    .collect();
+                self.push_locations(format!("what {} names", t.test.label), hits);
+            }
+            KeyCode::Char('s') => {
+                if matches!(state.stretch, Stretch::Commit(_)) {
+                    self.info("this is one commit; L and the log pick another");
+                    return;
+                }
+                let at = Stretch::CHOICES
+                    .iter()
+                    .position(|c| *c == state.stretch)
+                    .unwrap_or(0);
+                let next = Stretch::CHOICES[(at + 1) % Stretch::CHOICES.len()].clone();
+                self.push_spec(next);
+            }
+            // A fold opens or closes; a change opens on the diff of its file across the
+            // stretch, where what happened to it is shown; a test opens where it is.
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                match state.rows.current().cloned() {
+                    Some(SpecRow::Fold { key, open, .. }) => {
+                        state.open.insert(key, !open);
+                        state.rebuild();
+                    }
+                    Some(SpecRow::Change(c, _)) => {
+                        let target = DiffTarget::Revisions {
+                            from: state.span.base.clone(),
+                            to: state.span.to.clone().unwrap_or_default(),
+                        };
+                        let file = ChangedFile {
+                            status: FileStatus::Modified,
+                            path: c.path.clone(),
+                            old_path: None,
+                        };
+                        self.push_diff(target, vec![file], 0);
+                    }
+                    Some(SpecRow::Test(t, _)) => self.jump_to(&t.test.path, t.test.line.max(1)),
+                    Some(SpecRow::Area(a)) => {
+                        state.area = Some(a.name);
+                        state.rows = ListState::new(spec_rows(state));
+                    }
+                    _ => {}
+                }
+            }
+            // Closes the fold the cursor is in, from anywhere inside it.
+            KeyCode::Char('h') | KeyCode::Left => {
+                let at = state.rows.cursor;
+                let depth = |r: &SpecRow| match r {
+                    SpecRow::Fold { depth, .. } => Some(*depth),
+                    SpecRow::Test(_, d) | SpecRow::Change(_, d) => Some(*d),
+                    _ => None,
+                };
+                let Some(mine) = state.rows.current().and_then(depth) else {
+                    return;
+                };
+                // The nearest open fold above that is shallower, without crossing into
+                // another section.
+                let mut parent = None;
+                for i in (0..at).rev() {
+                    match &state.rows.items[i] {
+                        SpecRow::Heading(..) => break,
+                        SpecRow::Fold {
+                            depth, open: true, ..
+                        } if *depth < mine => {
+                            parent = Some(i);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                let target = match state.rows.current() {
+                    Some(SpecRow::Fold { open: true, .. }) => Some(at),
+                    _ => parent,
+                };
+                if let Some(i) = target {
+                    if let SpecRow::Fold { key, .. } = &state.rows.items[i] {
+                        state.open.insert(key.clone(), false);
+                        state.rows.cursor = i;
+                        state.rebuild();
+                    }
+                }
+            }
+            KeyCode::Char('o') => match state.rows.current().cloned() {
+                Some(SpecRow::Change(c, _)) if c.what != What::Removed => {
+                    if state.span.to.is_some() {
+                        self.info("o opens the working tree; this change is in a commit");
+                    } else {
+                        self.jump_to(&c.path, c.line.max(1));
+                    }
+                }
+                Some(SpecRow::Test(t, _)) => self.jump_to(&t.test.path, t.test.line.max(1)),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    /// The tests that name something the open file defines, as places to jump to: the way
+    /// from a file to what checks it.
+    pub(super) fn push_tests_of_file(&mut self) {
+        let Some(path) = self.viewer.as_ref().map(|v| v.path.clone()) else {
+            self.info("open a file first");
+            return;
+        };
+        let tests = self.session.tests_reaching(&path);
+        let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+        if tests.is_empty() {
+            self.info(format!("no test names anything in {name}"));
+            return;
+        }
+        let hits = tests
+            .into_iter()
+            .map(|t| Hit {
+                path: t.test.path.clone(),
+                line: t.test.line,
+                column: 0,
+                label: t.level.title().to_lowercase(),
+                text: t.test.label,
+            })
+            .collect::<Vec<_>>();
+        let title = format!(
+            "{} {} {name}",
+            hits.len(),
+            if hits.len() == 1 {
+                "test names"
+            } else {
+                "tests name"
+            }
+        );
+        // Not `push_locations`: that starts on the hit nearest the cursor in this file, and
+        // these are mostly in other files.
+        self.screens.push(Screen::Locations(LocationsState {
+            title,
+            items: ListState::new(hits),
+        }));
+    }
+
     pub(super) fn push_log(&mut self, path: Option<String>) {
         let commits = match &path {
             Some(p) => self.session.file_log(p, 0, LOG_PAGE),

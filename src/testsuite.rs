@@ -46,8 +46,19 @@ pub struct TestCase {
     pub path: String,
     /// 1-based.
     pub line: usize,
+    /// The last line of its body, 1-based; the same as `line` when that is not known.
+    #[serde(default)]
+    pub end: usize,
     /// Marked to be skipped: `#[ignore]`, `@pytest.mark.skip`, `it.skip`.
     pub ignored: bool,
+    /// How many assertions its body makes, counted by their spelling in each language: a
+    /// test that makes fewer than it did has been asked to check less.
+    #[serde(default)]
+    pub checks: usize,
+    /// A fingerprint of its body with its own name left out and whitespace ignored, so that
+    /// a test given a new name is recognised as the same test.
+    #[serde(default, skip_serializing)]
+    pub shape: u64,
 }
 
 /// What one file contributes: its tests, and which of its lines are test code, as 0-based
@@ -158,12 +169,16 @@ impl Walk<'_, '_> {
     }
 
     fn push(&mut self, name: &str, label: String, at: Node, ignored: bool) {
+        let body = self.text(at);
         self.found.tests.push(TestCase {
             name: name.to_string(),
             label,
             path: self.path.to_string(),
             line: at.start_position().row + 1,
+            end: at.end_position().row + 1,
             ignored,
+            checks: assertions(body),
+            shape: shape(body, name),
         });
     }
 
@@ -359,6 +374,42 @@ impl Walk<'_, '_> {
     }
 }
 
+/// How many assertions `body` makes, by the spellings the usual runners and libraries use:
+/// Rust's `assert!` family, Python's `assert` statement and `self.assert*`, `pytest.raises`,
+/// `expect(...)` and `assert.*` in JavaScript, and Go's `t.Error*`/`t.Fatal*` and testify.
+/// Comments are counted too, which a fingerprint of the body would catch anyway.
+pub fn assertions(body: &str) -> usize {
+    static ASSERT: OnceLock<Regex> = OnceLock::new();
+    let re = ASSERT.get_or_init(|| {
+        Regex::new(concat!(
+            r"\b(?:",
+            r"(?:debug_)?assert(?:_[a-z_]+)?!",       // Rust
+            r"|assert\s",                             // Python's statement
+            r"|(?:self\.)?assert[A-Z][A-Za-z]*\s*\(", // unittest
+            r"|pytest\.raises\s*\(",
+            r"|expect\s*\(",                 // Jest, Vitest, Playwright
+            r"|assert(?:\.[A-Za-z]+)?\s*\(", // node:assert, chai
+            r"|t\.(?:Error|Errorf|Fatal|Fatalf|Fail|FailNow)\s*\(", // Go
+            r"|(?:require|assert)\.[A-Z][A-Za-z]*\s*\(", // testify
+            r")"
+        ))
+        .expect("regex")
+    });
+    re.find_iter(body).count()
+}
+
+/// A fingerprint of a test's text with its name taken out and every run of whitespace made
+/// one space: what stays the same when a test is renamed or reindented.
+fn shape(body: &str, name: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let unnamed = body.replacen(name, "", 1);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for word in unnamed.split_whitespace() {
+        word.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 /// A function name as a phrase: `a_config_file_round_trips` reads "a config file round trips",
 /// `test_parses_empty` reads "parses empty", `TestParseConfig` reads "parse config".
 pub fn phrase(name: &str) -> String {
@@ -443,7 +494,10 @@ impl Inventory {
                         label: label.clone(),
                         path: path.clone(),
                         line: 0,
+                        end: 0,
                         ignored: *ignored,
+                        checks: 0,
+                        shape: 0,
                     })
                     .collect(),
             })
@@ -498,6 +552,36 @@ impl Inventory {
 mod tests {
     use super::*;
     use omnidiff::code::language::to_treesitter;
+
+    #[test]
+    fn assertions_are_counted_in_every_language() {
+        assert_eq!(
+            assertions("assert_eq!(a, b);\nassert!(x);\ndebug_assert!(y); asserted(z);"),
+            3
+        );
+        assert_eq!(
+            assertions("assert x == 1\nself.assertEqual(a, b)\nwith pytest.raises(E):\n"),
+            3
+        );
+        assert_eq!(
+            assertions("expect(a).toBe(b);\nassert.equal(1, 1);\nassert(x);\n"),
+            3
+        );
+        assert_eq!(
+            assertions("t.Errorf(\"no\")\nrequire.Equal(t, 1, 2)\nassert.NoError(t, err)\n"),
+            3
+        );
+        assert_eq!(assertions("let assertion = 1; // nothing asserted\n"), 0);
+        // A renamed test keeps its shape; an edited one does not.
+        assert_eq!(
+            shape("fn old() {\n    assert!(x);\n}", "old"),
+            shape("fn new() { assert!(x); }", "new")
+        );
+        assert_ne!(
+            shape("fn t() { assert!(x); }", "t"),
+            shape("fn t() { assert!(y); }", "t")
+        );
+    }
 
     fn found(path: &str, language: Language, text: &str) -> Found {
         let mut parser = tree_sitter::Parser::new();

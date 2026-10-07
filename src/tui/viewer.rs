@@ -97,6 +97,37 @@ impl Search {
     }
 }
 
+/// Lines marked in a file's gutter while it was opened from an end-to-end screen: the lines a
+/// test ran, or the lines a stretch of history changed that no end-to-end test ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RanBy {
+    /// The test, as its sentence; for changed lines, the stretch, as its label.
+    pub test: String,
+    /// 1-based, first and last of each run of lines.
+    pub ranges: Vec<(u32, u32)>,
+    /// The lines are changed code no end-to-end test ran, rather than what a test ran.
+    pub unran: bool,
+}
+
+impl RanBy {
+    /// What the mark on a line says, for the status line.
+    pub fn says(&self) -> String {
+        if self.unran {
+            format!("▌ changed in {}, run by no end-to-end test", self.test)
+        } else {
+            format!("▌ ran by “{}”", self.test)
+        }
+    }
+}
+
+impl RanBy {
+    /// Whether the test ran `line`, 0-based.
+    pub fn covers(&self, line: usize) -> bool {
+        let line = line as u32 + 1;
+        self.ranges.iter().any(|(a, b)| (*a..=*b).contains(&line))
+    }
+}
+
 pub struct Viewer {
     pub path: String,
     pub lines: Vec<String>,
@@ -119,6 +150,8 @@ pub struct Viewer {
     /// Start line (0-based) of a visual selection.
     pub visual: Option<usize>,
     pub search: Option<Search>,
+    /// The lines the end-to-end test this file was opened from ran.
+    pub ran: Option<RanBy>,
 }
 
 impl Viewer {
@@ -133,6 +166,7 @@ impl Viewer {
             comments: view.comments,
             blame: None,
             line_ops: None,
+            ran: None,
             binary: view.binary,
             rows: Vec::new(),
             cursor: 0,
@@ -542,7 +576,17 @@ impl Viewer {
                         spans.push(Span::styled(text, dim));
                     }
                     spans.push(Span::styled(format!("{:>digits$} ", i + 1), dim));
-                    spans.push(Span::styled("│", dim));
+                    // A line the test it was opened from ran: the bar the code leans on.
+                    if let Some(ran) = self.ran.as_ref().filter(|r| r.covers(i)) {
+                        let colour = if ran.unran {
+                            theme.moved
+                        } else {
+                            theme.insert_fg
+                        };
+                        spans.push(Span::styled("▌", style::fg(colour)));
+                    } else {
+                        spans.push(Span::styled("│", dim));
+                    }
                     let search = self
                         .search
                         .as_ref()

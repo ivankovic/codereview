@@ -4,7 +4,7 @@
 
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -160,10 +160,20 @@ struct Memo {
     /// syntax-aware and a couple of hundred milliseconds on a large file, and the same diff
     /// is asked for on every open of a modified file and every look at its diff.
     diffs: VecDeque<((String, u64, u64), crate::diff::FileDiff)>,
+    /// What a stretch of history did to the tests, by its revisions and, when it runs to the
+    /// working tree, the fingerprint of that: parsing every test file a busy week touched,
+    /// twice, is a few hundred milliseconds that the page would otherwise pay on every look.
+    spec_changes: VecDeque<(SpecKey, Vec<crate::spec::TestChange>)>,
+    /// Which files each test names, by the index generation it was read from.
+    coverage: Option<(u64, crate::spec::Coverage)>,
 }
+
+type SpecKey = (Option<String>, Option<String>, u64);
 
 /// How many diffs the session keeps.
 const DIFFS_REMEMBERED: usize = 16;
+/// How many stretches' changes it keeps: one of each kind a front end offers, and a commit.
+const SPECS_REMEMBERED: usize = 4;
 
 /// Where facts shown from `OVERVIEW.md` come from, for a page to say so while fresh ones
 /// are on their way.
@@ -463,6 +473,92 @@ impl Session {
         crate::testsuite::Inventory::of(tests, untested)
     }
 
+    /// The repository's tests as a specification, by level, with what `stretch` did to them.
+    /// Builds the symbol index on first use, like [`Self::tests`]; what the stretch did is
+    /// read from the files it touched and does not need it.
+    pub fn spec(&mut self, stretch: &crate::spec::Stretch) -> Result<crate::spec::Spec> {
+        let tests = self
+            .tests(0)
+            .files
+            .into_iter()
+            .flat_map(|f| f.tests)
+            .collect();
+        let coverage = self.coverage();
+        crate::spec::of(self, tests, Some(&coverage), stretch)
+    }
+
+    /// The end-to-end tests, with their recordings: what the repository opens on. Builds
+    /// the symbol index on first use, like [`Self::tests`].
+    pub fn end_to_end(&mut self) -> crate::e2e::Opening {
+        let tests = self
+            .tests(0)
+            .files
+            .into_iter()
+            .flat_map(|f| f.tests)
+            .collect();
+        crate::e2e::of(self, tests)
+    }
+
+    /// Which files each test names, and every file of code a test could reach: worked out
+    /// from the symbol index once per generation of it.
+    pub fn coverage(&mut self) -> crate::spec::Coverage {
+        self.index();
+        let generation = self.index_generation;
+        if let Some((g, c)) = &self.memo.borrow().coverage {
+            if *g == generation {
+                return c.clone();
+            }
+        }
+        let index = self.index();
+        let coverage = crate::spec::Coverage {
+            reach: index.test_reach(),
+            code: index.code_files(),
+        };
+        self.memo.borrow_mut().coverage = Some((generation, coverage.clone()));
+        coverage
+    }
+
+    /// The tests that name something `path` defines, or that it holds itself.
+    pub fn tests_reaching(&mut self, path: &str) -> Vec<crate::spec::SpecTest> {
+        let coverage = self.coverage();
+        let tests = self
+            .tests(0)
+            .files
+            .into_iter()
+            .flat_map(|f| f.tests)
+            .collect();
+        let mut tests = crate::spec::annotate(tests, Some(&coverage));
+        crate::e2e::promote(self.root(), &mut tests);
+        tests
+            .into_iter()
+            .filter(|t| t.test.path == path || t.reaches.iter().any(|r| r == path))
+            .collect()
+    }
+
+    /// What `span` did to the tests, remembered: a stretch ending at a commit cannot change,
+    /// and one ending at the working tree is taken again only once the tree has moved.
+    pub fn spec_changes(&self, span: &crate::spec::Span) -> Result<Vec<crate::spec::TestChange>> {
+        let stamp = match span.to {
+            Some(_) => 0,
+            None => self.fingerprint(None)?,
+        };
+        let key: SpecKey = (span.from.clone(), span.to.clone(), stamp);
+        if let Some((_, changes)) = self
+            .memo
+            .borrow()
+            .spec_changes
+            .iter()
+            .find(|(k, _)| *k == key)
+        {
+            return Ok(changes.clone());
+        }
+        let changes = crate::spec::changes(self, span)?;
+        let mut memo = self.memo.borrow_mut();
+        memo.spec_changes.push_front((key, changes.clone()));
+        memo.spec_changes.truncate(SPECS_REMEMBERED);
+        Ok(changes)
+    }
+
     /// Where what `OVERVIEW.md` says stands relative to now, for showing it while the index
     /// that would say it afresh is built: `None` once the index is ready; with no file, as of
     /// no commit at all.
@@ -615,6 +711,58 @@ impl Session {
         Ok(crate::analysis::Staleness { commits, files })
     }
 
+    /// [`Self::changed_since`] for many moments at once, as an opening with a recording per
+    /// test asks: the status is read once and the commits listed once, rather than both again
+    /// for every recording. The recordings' own directories are not changes to the code.
+    pub fn changed_since_each(
+        &self,
+        whens: &[Option<&str>],
+    ) -> Vec<Option<crate::analysis::Staleness>> {
+        let parse = |w: &str| -> Option<std::time::SystemTime> {
+            chrono::DateTime::parse_from_rfc3339(w).ok().map(Into::into)
+        };
+        let times: Vec<Option<std::time::SystemTime>> =
+            whens.iter().map(|w| w.and_then(parse)).collect();
+        let Some(oldest) = times.iter().flatten().min().copied() else {
+            return vec![None; whens.len()];
+        };
+        let commits = self.repo.commit_times_since(oldest).unwrap_or_default();
+        let root = self.repo.root();
+        let modified: Vec<std::time::SystemTime> = self
+            .repo
+            .status()
+            .map(|s| s.into_keys().collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| {
+                p != crate::review::FILE_NAME
+                    && p != crate::notes::FILE_NAME
+                    && !crate::recording::DIRS
+                        .iter()
+                        .any(|d| p.strip_prefix(d).is_some_and(|r| r.starts_with('/')))
+            })
+            .filter_map(|p| {
+                std::fs::metadata(root.join(p))
+                    .and_then(|m| m.modified())
+                    .ok()
+            })
+            .collect();
+        times
+            .into_iter()
+            .map(|then| {
+                let then = then?;
+                let secs = then
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                Some(crate::analysis::Staleness {
+                    commits: commits.iter().filter(|c| **c > secs).count(),
+                    files: modified.iter().filter(|m| **m > then).count(),
+                })
+            })
+            .collect()
+    }
+
     /// A fingerprint of everything a front end draws: the status of every path in the working
     /// tree, the branch, and the size and modification time of the two Markdown files and of
     /// one file being looked at. It moves whenever anything on screen would look different,
@@ -635,6 +783,8 @@ impl Session {
         }
         // A branch switch can leave the status untouched while every file reads differently.
         self.repo.head_label().hash(&mut hasher);
+        // A test run leaves its recordings where git does not look.
+        crate::recording::stamp(self.repo.root()).hash(&mut hasher);
         // Status only says *that* a file is modified, so a file written twice looks the same
         // twice over. The three files a page has on screen are stamped as well.
         let root = self.repo.root();
@@ -1070,9 +1220,6 @@ impl Session {
     }
 }
 
-/// The repositories directly below `dir` (child directories with a `.git` entry, hidden ones
-/// left out), sorted by name; what `codereview` opens when run in a directory of checkouts
-/// such as `~/src`.
 /// Size and modification time, or nothing at all when the file is not there. Two files that
 /// differ in neither are taken to be unchanged, which is what every build tool assumes.
 fn stamp(path: &Path) -> Option<(u64, Option<std::time::Duration>)> {
@@ -1084,6 +1231,9 @@ fn stamp(path: &Path) -> Option<(u64, Option<std::time::Duration>)> {
     Some((meta.len(), modified))
 }
 
+/// The repositories directly below `dir` (child directories with a `.git` entry, hidden ones
+/// left out), sorted by name; what `codereview` opens when run in a directory of checkouts
+/// such as `~/src`.
 pub fn repos_below(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -1107,6 +1257,76 @@ pub fn repos_below(dir: &Path) -> Vec<PathBuf> {
     repos
 }
 
+/// What [`open_targets`] opened: a session per repository with the file to open first, and
+/// the directories of checkouts among the paths it was given, to be read again later.
+pub struct Opened {
+    pub targets: Vec<(Session, Option<String>)>,
+    pub checkouts: Checkouts,
+}
+
+/// The directories of checkouts a front end was started on, such as `~/src`, and the
+/// repositories already open from them. A repository cloned or created in one after start-up
+/// is found by [`Checkouts::scan`], which a front end calls every few seconds. A scan is one
+/// directory listing per directory, which is why this polls rather than watching: a watch on
+/// `~/src` does not see a `.git` appear inside a directory that was already there, which is
+/// what `git init` in it and the second half of a `git clone` both do.
+#[derive(Default)]
+pub struct Checkouts {
+    dirs: Vec<PathBuf>,
+    config_path: Option<PathBuf>,
+    /// Every repository open, by its canonical directory and by its root, which differ when
+    /// the checkout is reached through a symlink.
+    known: HashSet<PathBuf>,
+    /// The ones that would not open, reported once rather than every few seconds. They are
+    /// tried again on every scan: the usual reason is a clone still under way.
+    failed: HashSet<PathBuf>,
+}
+
+impl Checkouts {
+    /// Whether there is anything to scan: nothing was started on a directory of checkouts.
+    pub fn is_empty(&self) -> bool {
+        self.dirs.is_empty()
+    }
+
+    fn remember(&mut self, dir: &Path, session: &Session) {
+        self.known
+            .insert(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
+        self.known.insert(session.root().to_path_buf());
+    }
+
+    /// Opens every repository that has appeared in the directories since start-up or since
+    /// the last scan, in name order. `notify` hears about one that will not open, once.
+    pub fn scan(&mut self, mut notify: impl FnMut(String)) -> Vec<Session> {
+        let mut found = Vec::new();
+        for parent in self.dirs.clone() {
+            for dir in repos_below(&parent) {
+                let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+                if self.known.contains(&canonical) {
+                    continue;
+                }
+                match Session::open_with_config(&dir, self.config_path.clone()) {
+                    Ok(session) => {
+                        self.failed.remove(&canonical);
+                        // Reached another way than at start-up, a symlink to a checkout
+                        // already open: the same repository, not a new one.
+                        let open = self.known.contains(session.root());
+                        self.remember(&dir, &session);
+                        if !open {
+                            found.push(session);
+                        }
+                    }
+                    Err(e) => {
+                        if self.failed.insert(canonical) {
+                            notify(format!("cannot open {}: {e:#}", dir.display()));
+                        }
+                    }
+                }
+            }
+        }
+        found
+    }
+}
+
 /// The sessions the UIs work on. Each of `paths` names a repository, a directory inside one,
 /// a directory holding repositories (all of them are opened; `notify` hears how many), or a
 /// file, which opens its repository at that file. A repository named twice is opened once,
@@ -1117,8 +1337,12 @@ pub fn open_targets(
     paths: &[String],
     config_path: Option<PathBuf>,
     mut notify: impl FnMut(String),
-) -> Result<Vec<(Session, Option<String>)>> {
+) -> Result<Opened> {
     let mut targets: Vec<(Session, Option<String>)> = Vec::new();
+    let mut checkouts = Checkouts {
+        config_path: config_path.clone(),
+        ..Checkouts::default()
+    };
     let mut add = |session: Session, file: Option<String>| match targets
         .iter_mut()
         .find(|(s, _)| s.root() == session.root())
@@ -1155,6 +1379,7 @@ pub fn open_targets(
                             .unwrap_or_else(|_| path.clone())
                             .display()
                     ));
+                    checkouts.dirs.push(path.clone());
                     for dir in below {
                         add(open(&dir)?, None);
                     }
@@ -1183,7 +1408,10 @@ pub fn open_targets(
             bail!("{}: no such file or directory", path.display());
         }
     }
-    Ok(targets)
+    for (session, _) in &targets {
+        checkouts.remember(session.root(), session);
+    }
+    Ok(Opened { targets, checkouts })
 }
 
 #[cfg(test)]
@@ -1301,7 +1529,14 @@ pub(crate) mod tests {
         session
             .add_comment("a.rs", Some((2, 2)), "why b?", None, None)
             .unwrap();
-        assert_ne!(added, taken(&session), "REVIEW.md was written");
+        let commented = taken(&session);
+        assert_ne!(added, commented, "REVIEW.md was written");
+
+        // A test run leaves a recording, in a directory git ignores.
+        let run = dir.path().join("target/e2e/terminal/opens");
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::write(run.join("test.json"), "{}").unwrap();
+        assert_ne!(commented, taken(&session), "a test left a recording");
 
         // A path from a request cannot lead out of the repository.
         assert!(session.fingerprint(Some("../outside")).is_err());
@@ -1336,8 +1571,9 @@ pub(crate) mod tests {
         );
         let config = parent.path().join("config.toml");
         let mut notes = Vec::new();
-        let targets =
-            open_targets(parent.path(), &[], Some(config.clone()), |m| notes.push(m)).unwrap();
+        let targets = open_targets(parent.path(), &[], Some(config.clone()), |m| notes.push(m))
+            .unwrap()
+            .targets;
         assert_eq!(targets.len(), 2);
         assert!(targets[0].0.root().ends_with("Alpha"));
         assert_eq!(notes.len(), 1, "{notes:?}");
@@ -1348,7 +1584,9 @@ pub(crate) mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let targets = open_targets(parent.path(), &args, Some(config.clone()), |_| {}).unwrap();
+        let targets = open_targets(parent.path(), &args, Some(config.clone()), |_| {})
+            .unwrap()
+            .targets;
         assert_eq!(targets.len(), 2);
         assert_eq!(targets[0].1.as_deref(), Some("x.rs"));
         assert!(targets[1].1.is_none());
@@ -1359,6 +1597,54 @@ pub(crate) mod tests {
             format!("{err:#}").contains("no repositories directly below"),
             "{err:#}"
         );
+    }
+
+    #[test]
+    fn a_repository_that_appears_later_is_found_once() {
+        let parent = tempfile::tempdir().unwrap();
+        let init = |name: &str| {
+            let dir = parent.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+        };
+        init("first");
+        let config = parent.path().join("config.toml");
+        let mut opened = open_targets(parent.path(), &[], Some(config.clone()), |_| {}).unwrap();
+        assert_eq!(opened.targets.len(), 1);
+        assert!(!opened.checkouts.is_empty());
+        assert!(opened.checkouts.scan(|_| {}).is_empty(), "nothing new yet");
+
+        // A directory made first and only later made a repository, as `git init` in it
+        // does: nothing until the `.git` is there, then found once.
+        std::fs::create_dir(parent.path().join("second")).unwrap();
+        assert!(opened.checkouts.scan(|_| {}).is_empty());
+        init("second");
+        // A symlink to a checkout already open is the same repository.
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(parent.path().join("first"), parent.path().join("link"))
+            .unwrap();
+        let found = opened.checkouts.scan(|_| {});
+        assert_eq!(found.len(), 1);
+        assert!(found[0].root().ends_with("second"));
+        assert!(opened.checkouts.scan(|_| {}).is_empty(), "and only once");
+
+        // One that will not open is reported once, and tried again until it does.
+        std::fs::create_dir_all(parent.path().join("broken/.git")).unwrap();
+        let mut notes = Vec::new();
+        assert!(opened.checkouts.scan(|m| notes.push(m)).is_empty());
+        assert!(opened.checkouts.scan(|m| notes.push(m)).is_empty());
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        std::fs::remove_dir_all(parent.path().join("broken/.git")).unwrap();
+        init("broken");
+        assert_eq!(opened.checkouts.scan(|_| {}).len(), 1);
+
+        // Started on repositories by name, there is nothing to scan.
+        let named = open_targets(parent.path(), &["first".into()], Some(config), |_| {}).unwrap();
+        assert!(named.checkouts.is_empty());
     }
 
     pub(crate) fn scratch_repo() -> tempfile::TempDir {

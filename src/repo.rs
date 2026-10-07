@@ -213,6 +213,24 @@ impl Repo {
         Ok(String::from_utf8_lossy(&out).trim().parse().unwrap_or(0))
     }
 
+    /// When each commit on HEAD after `when` was made, in seconds since the epoch, newest
+    /// first: one command for any number of questions about what came after a moment.
+    pub fn commit_times_since(&self, when: std::time::SystemTime) -> Result<Vec<u64>> {
+        if !self.has_commits() {
+            return Ok(Vec::new());
+        }
+        let secs = when
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let since = format!("--since=@{}", secs + 1);
+        let out = self.git(&["log", "--format=%ct", &since, "HEAD"])?;
+        Ok(String::from_utf8_lossy(&out)
+            .lines()
+            .filter_map(|l| l.trim().parse().ok())
+            .collect())
+    }
+
     /// Every tracked file plus untracked files that are not ignored, sorted.
     pub fn list_files(&self) -> Result<Vec<String>> {
         let out = self.git(&[
@@ -384,6 +402,149 @@ impl Repo {
         Ok(parse_name_status(&out))
     }
 
+    /// The lines each file has that `from` did not, by path: what a stretch of history added
+    /// or changed, counted in `to` (the working tree when `None`, untracked files included).
+    /// Lines only removed leave nothing to count.
+    pub fn changed_lines(
+        &self,
+        from: &str,
+        to: Option<&str>,
+    ) -> Result<std::collections::BTreeMap<String, Vec<u32>>> {
+        Self::check_rev(from)?;
+        let mut args = vec![
+            "diff",
+            "-U0",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-renames",
+            from,
+        ];
+        if let Some(to) = to {
+            Self::check_rev(to)?;
+            args.push(to);
+        }
+        let out = self.git(&args)?;
+        let mut lines = parse_unified_zero(&String::from_utf8_lossy(&out));
+        if to.is_none() {
+            for (path, entry) in self.status()? {
+                if entry.unstaged != Some(FileStatus::Untracked) {
+                    continue;
+                }
+                let Ok(Some(bytes)) = self.read_working(&path) else {
+                    continue;
+                };
+                let count = bytes.iter().filter(|b| **b == b'\n').count() as u32
+                    + u32::from(!bytes.is_empty() && !bytes.ends_with(b"\n"));
+                if count > 0 {
+                    lines.insert(path, (1..=count).collect());
+                }
+            }
+        }
+        Ok(lines)
+    }
+
+    /// The full hash of the commit `rev` names.
+    pub fn resolve(&self, rev: &str) -> Result<String> {
+        Self::check_rev(rev)?;
+        let spec = format!("{rev}^{{commit}}");
+        let out = self.git(&["rev-parse", "--verify", &spec])?;
+        Ok(String::from_utf8_lossy(&out).trim().to_string())
+    }
+
+    /// Where git keeps what all of this repository's worktrees share.
+    pub fn common_dir(&self) -> Result<PathBuf> {
+        let out = self.git(&["rev-parse", "--git-common-dir"])?;
+        let dir = PathBuf::from(String::from_utf8_lossy(&out).trim());
+        Ok(if dir.is_absolute() {
+            dir
+        } else {
+            self.root.join(dir)
+        })
+    }
+
+    /// A detached worktree of `commit` at `path`, made unless one is already there.
+    pub fn worktree(&self, commit: &str, path: &Path) -> Result<()> {
+        Self::check_rev(commit)?;
+        if path.join(".git").exists() {
+            return Ok(());
+        }
+        let path = path
+            .to_str()
+            .with_context(|| format!("{} is not a path git can take", path.display()))?;
+        self.git(&["worktree", "add", "--detach", "--force", path, commit])?;
+        Ok(())
+    }
+
+    /// Removes the worktree at `path`, whatever is in it.
+    pub fn remove_worktree(&self, path: &Path) -> Result<()> {
+        let path = path
+            .to_str()
+            .with_context(|| format!("{} is not a path git can take", path.display()))?;
+        self.git(&["worktree", "remove", "--force", path])?;
+        Ok(())
+    }
+
+    /// The first parent of `rev`, or `None` for a root commit.
+    pub fn parent(&self, rev: &str) -> Result<Option<String>> {
+        Self::check_rev(rev)?;
+        let spec = format!("{rev}^{{commit}}");
+        self.git(&["rev-parse", "--verify", "-q", &spec])?;
+        let parent = format!("{rev}^");
+        Ok(self
+            .git(&["rev-parse", "--verify", "-q", &parent])
+            .ok()
+            .map(|out| String::from_utf8_lossy(&out).trim().to_string()))
+    }
+
+    /// The newest commit reachable from HEAD made before `when`, or `None` when every commit
+    /// is newer, or there are none.
+    pub fn last_before(&self, when: std::time::SystemTime) -> Option<String> {
+        if !self.has_commits() {
+            return None;
+        }
+        let secs = when
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let before = format!("--before=@{secs}");
+        let out = self
+            .git(&["rev-list", "--max-count=1", &before, "HEAD"])
+            .ok()?;
+        let hash = String::from_utf8_lossy(&out).trim().to_string();
+        (!hash.is_empty()).then_some(hash)
+    }
+
+    /// The paths that differ between `from` and `to`, renames taken apart into the path that
+    /// went and the path that came. `None` for `from` is the empty tree, before the first
+    /// commit; `None` for `to` is the working tree, untracked files included.
+    pub fn paths_between(&self, from: Option<&str>, to: Option<&str>) -> Result<Vec<String>> {
+        let from = from.unwrap_or(EMPTY_TREE);
+        Self::check_rev(from)?;
+        let mut args = vec!["diff", "--name-only", "-z", "--no-renames", from];
+        if let Some(to) = to {
+            Self::check_rev(to)?;
+            args.push(to);
+        }
+        let out = self.git(&args)?;
+        let mut paths: Vec<String> = out
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .collect();
+        if to.is_none() {
+            let untracked = self.git(&["ls-files", "-z", "--others", "--exclude-standard"])?;
+            paths.extend(
+                untracked
+                    .split(|b| *b == 0)
+                    .filter(|p| !p.is_empty())
+                    .map(|p| String::from_utf8_lossy(p).into_owned()),
+            );
+        }
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+
     /// `rev` as a commit, abbreviated the way git abbreviates it: unambiguous here, now.
     pub fn short_hash(&self, rev: &str) -> Result<String> {
         Self::check_rev(rev)?;
@@ -490,6 +651,37 @@ pub struct BlameLine {
 
 /// `%x1f`-separated fields, one commit per `-z` NUL. Body last, since it can contain anything.
 const LOG_FORMAT: &str = "--format=%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%b";
+
+/// The after-side lines of every hunk of a `git diff -U0`, by the path they are in.
+fn parse_unified_zero(text: &str) -> std::collections::BTreeMap<String, Vec<u32>> {
+    let mut out: std::collections::BTreeMap<String, Vec<u32>> = std::collections::BTreeMap::new();
+    let mut path: Option<String> = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("+++ ") {
+            path = rest
+                .strip_prefix("b/")
+                .map(|p| p.trim_end_matches('\t').to_string())
+                .filter(|p| rest != "/dev/null" && !p.is_empty());
+        } else if let Some(rest) = line.strip_prefix("@@ ") {
+            let Some(path) = &path else {
+                continue;
+            };
+            // `@@ -a[,b] +c[,d] @@`: d lines from c, one when d is left out.
+            let Some(after) = rest.split(' ').find(|w| w.starts_with('+')) else {
+                continue;
+            };
+            let mut parts = after[1..].split(',');
+            let start: u32 = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+            let count: u32 = parts.next().and_then(|n| n.parse().ok()).unwrap_or(1);
+            if count > 0 {
+                out.entry(path.clone())
+                    .or_default()
+                    .extend(start..start + count);
+            }
+        }
+    }
+    out
+}
 
 fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = git_command(dir)
@@ -774,6 +966,16 @@ mod tests {
         assert_eq!(map["b.rs"].staged, Some(FileStatus::Modified));
         assert_eq!(map["c.rs"].unstaged, Some(FileStatus::Untracked));
         assert_eq!(map["new.rs"].old_path.as_deref(), Some("old.rs"));
+    }
+
+    #[test]
+    fn a_zero_context_diff_says_which_lines_are_new() {
+        let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -2 +2 @@ fn a\n-x\n+y\n\
+                    @@ -5,0 +6,3 @@\n+1\n+2\n+3\n@@ -9,2 +11,0 @@\n-gone\n-gone\n\
+                    diff --git a/old.rs b/old.rs\n--- a/old.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n";
+        let lines = parse_unified_zero(diff);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines["a.rs"], [2, 6, 7, 8]);
     }
 
     #[test]

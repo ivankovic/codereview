@@ -1,0 +1,6 @@
+# Chromium and puppeteer, as the browser test has always used, with ffmpeg added: puppeteer's
+# screencast hands the frames to it to make each test's video.
+FROM docker.io/zenika/alpine-chrome:with-puppeteer
+USER root
+RUN apk add --no-cache ffmpeg
+USER chrome
