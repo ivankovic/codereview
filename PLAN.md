@@ -54,7 +54,7 @@ grammar for (Makefiles, for one) fall back to its plain-text line diff.
   browsers see the same numbers because they are looking at the same files, a restart loses
   nothing that was not already on disk, and the rule above survives a feature that would
   otherwise have needed a database.
-- **AGPL-3.0-or-later**, like omnidiff.
+- **AGPL-3.0-only**, like omnidiff.
 
 ## Phases
 

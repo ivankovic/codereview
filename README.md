@@ -58,7 +58,7 @@ grammars, and `git` on `PATH`.
 
 ## License
 
-AGPL-3.0-or-later. Copyright 2026 Marko Ivankovic.
+AGPL-3.0-only. Copyright 2026 Marko Ivankovic.
 
 ## Usage
 
