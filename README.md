@@ -22,7 +22,7 @@ line they were left on and finding it again after edits.
 - **Explore** the working tree with syntax highlighting, change markers against HEAD, and blame;
   pictures are shown as pictures, in the browser and in a terminal that can draw them.
 - **Comment** on a line or a range. Comments go to `REVIEW.md`, pending or completed, in the
-  format [nvim-review](https://codeberg.org/ivankovic/nvim-review) uses, so both tools can share
+  format nvim-review uses, so both tools can share
   one file.
 - **Note** things that are not tasks, per file or in general, in `NOTES.md`.
 - **History** of every file, and the log of the whole repository, with a syntax-aware diff of
