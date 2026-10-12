@@ -372,11 +372,11 @@ fn from_junit(text: &str) -> Option<Figures> {
                 let head = &head[..head.find('>').unwrap_or(head.len())];
                 if let Some(start) = head.find(&key) {
                     let start = start + key.len();
-                    if let Some(stop) = head[start..].find('"') {
-                        if let Ok(n) = head[start..start + stop].parse::<u64>() {
-                            total += n;
-                            found = true;
-                        }
+                    if let Some(stop) = head[start..].find('"')
+                        && let Ok(n) = head[start..start + stop].parse::<u64>()
+                    {
+                        total += n;
+                        found = true;
                     }
                 }
             }

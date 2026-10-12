@@ -396,7 +396,8 @@ pub(super) fn draw_locations(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// The specification: what a stretch did to the tests, the ones that now ask less in the
-/// colour of a deletion, then every test by level, each with why it is there on the cursor.
+/// colour of a deletion, then every test grouped by its answer to one of the eight questions,
+/// each with why on the cursor.
 pub(super) fn draw_spec(frame: &mut Frame, app: &mut App, area: Rect) {
     use crate::spec::What;
     let theme = app.theme.clone();
@@ -417,6 +418,7 @@ pub(super) fn draw_spec(frame: &mut Frame, app: &mut App, area: Rect) {
         " specification ".into(),
         format!("{} tests{skipped} ", state.total).dim(),
         switch.dim(),
+        format!("(c: by {}) ", state.by.short()).dim(),
     ];
     if !state.query.is_empty() {
         title.push(format!("/{} ", state.query).yellow());
@@ -425,7 +427,7 @@ pub(super) fn draw_spec(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = title_block(&app.theme, title, true);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    // The cursor's own line explains a test's level; the list gets the rest.
+    // The cursor's own line explains a test's answer; the list gets the rest.
     let [list, foot] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
     app.measured.list_height = list.height as usize;
     state.rows.ensure_visible(list.height as usize);
@@ -497,9 +499,10 @@ pub(super) fn draw_spec(frame: &mut Frame, app: &mut App, area: Rect) {
                     }
                 };
                 let mut spans = vec![Span::raw(format!("  {:<14}", a.name))];
-                for (i, label) in ["sec", "e2e", "int", "unit"].iter().enumerate() {
+                for (group, n) in state.spec.groups.iter().zip(&a.counts) {
+                    let label: String = group.title.to_lowercase().chars().take(6).collect();
                     spans.push(Span::styled(format!(" {label}"), dim));
-                    spans.push(cell(a.levels[i]));
+                    spans.push(cell(*n));
                 }
                 if a.files > 0 {
                     let style = if a.unreached > 0 {
@@ -547,10 +550,16 @@ pub(super) fn draw_spec(frame: &mut Frame, app: &mut App, area: Rect) {
                 let mark = if t.test.ignored { " (skipped)" } else { "" };
                 let text = format!("{indent}{}{mark}", t.test.label);
                 let style = if t.test.ignored { dim } else { Style::new() };
-                Line::from(Span::styled(
-                    text.chars().take(width).collect::<String>(),
-                    style,
-                ))
+                let tag = if t.security.is_some() {
+                    " · security"
+                } else {
+                    ""
+                };
+                let text: String = text
+                    .chars()
+                    .take(width.saturating_sub(tag.width()))
+                    .collect();
+                vec![Span::styled(text, style), Span::styled(tag, alarm)].into()
             }
         },
     );
@@ -570,10 +579,22 @@ pub(super) fn draw_spec(frame: &mut Frame, app: &mut App, area: Rect) {
                 };
                 format!("names {}{more} (f)", shown.join(", "))
             };
-            format!("{}, line {}: {} · {names}", t.test.name, t.test.line, t.why)
+            let answered = t.kind.of(state.by);
+            let security = t
+                .security
+                .as_ref()
+                .map(|w| format!(" · security: {w}"))
+                .unwrap_or_default();
+            format!(
+                "{}, line {}: {}, {}{security} · {names} · K every question",
+                t.test.name, t.test.line, answered.summary, answered.reason
+            )
         }
         Some(SpecRow::Area(a)) => format!("Enter: the tests that count towards {}", a.name),
-        Some(SpecRow::Change(c, _)) => format!("{}: {}", c.level_title(), state.span.label),
+        Some(SpecRow::Change(c, _)) => match c.tag() {
+            Some(tag) => format!("{tag}: {}", state.span.label),
+            None => state.span.label.clone(),
+        },
         Some(SpecRow::Fold { open, .. }) => {
             format!(
                 "Enter {}; h closes the fold the cursor is in",

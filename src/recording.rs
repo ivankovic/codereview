@@ -486,11 +486,11 @@ pub fn frames(text: &str) -> Result<Cast> {
             continue;
         }
         let at_ms = (at.max(0.0) * 1000.0) as u64;
-        if let Some(start) = pending {
-            if at_ms > start + SETTLE_MS {
-                take(&parser, start, &mut frames);
-                pending = None;
-            }
+        if let Some(start) = pending
+            && at_ms > start + SETTLE_MS
+        {
+            take(&parser, start, &mut frames);
+            pending = None;
         }
         parser.process(data.as_bytes());
         pending.get_or_insert(at_ms);

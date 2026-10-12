@@ -82,14 +82,14 @@ struct Run {
 impl Run {
     /// Ends the run, with its fold row when there is something to fold or unfold.
     fn end(run: &mut Option<Run>, visible: &mut Vec<Row>) {
-        if let Some(r) = run.take() {
-            if r.hidden > 0 || r.whole {
-                visible.push(Row::Fold {
-                    dir: r.dir,
-                    depth: r.depth,
-                    hidden: r.hidden,
-                });
-            }
+        if let Some(r) = run.take()
+            && (r.hidden > 0 || r.whole)
+        {
+            visible.push(Row::Fold {
+                dir: r.dir,
+                depth: r.depth,
+                hidden: r.hidden,
+            });
         }
     }
 }

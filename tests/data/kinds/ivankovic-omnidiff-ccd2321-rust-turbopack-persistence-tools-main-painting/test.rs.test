@@ -1,0 +1,4 @@
+fn painting() -> Result<()> {
+    // `MINIMAL` sets the limit.
+    assert_matches_human_painting_within_limit("rust-turbopack-persistence-tools-main", 1.37)
+}

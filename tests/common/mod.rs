@@ -142,9 +142,9 @@ pub fn keep_coverage(dir: &Path) -> Option<Kept> {
 /// whether it knows the code as it is now.
 pub fn restore_coverage(dir: &Path, kept: Kept) {
     let file = dir.join("coverage.lcov");
-    if std::fs::write(&file, kept.0).is_ok() {
-        if let Ok(f) = std::fs::File::options().write(true).open(&file) {
-            let _ = f.set_modified(kept.1);
-        }
+    if std::fs::write(&file, kept.0).is_ok()
+        && let Ok(f) = std::fs::File::options().write(true).open(&file)
+    {
+        let _ = f.set_modified(kept.1);
     }
 }

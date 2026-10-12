@@ -1,0 +1,80 @@
+    fn full_turn_with_permission_and_file_access() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+        let mut agent = Agent::start(crate::fakes::acp(), "fake", dir.path()).unwrap();
+        assert_eq!(agent.name, "fake-agent");
+        assert!(agent.embedded_context);
+        assert_eq!(agent.session_id(), "sess-1");
+
+        agent
+            .prompt("hi", &[("file:///x".into(), "ctx".into())])
+            .unwrap();
+        assert!(agent.busy());
+        let events = drain(&mut agent, Duration::from_secs(10), |e| {
+            e.iter().any(|e| matches!(e, Event::Permission { .. }))
+        });
+        let permission = events
+            .iter()
+            .find_map(|e| match e {
+                Event::Permission {
+                    request_id,
+                    title,
+                    options,
+                    ..
+                } => Some((request_id.clone(), title.clone(), options.clone())),
+                _ => None,
+            })
+            .expect("permission request");
+        assert_eq!(permission.1, "Read a.rs");
+        assert_eq!(permission.2[0].kind, "allow_once");
+        assert!(
+            events.iter().any(
+                |e| matches!(e, Event::Text { role: Role::Thought, text } if text == "thinking")
+            )
+        );
+        assert!(events.iter().any(|e| matches!(e, Event::ToolCall { id, status: Some(s), .. } if id == "call-1" && s == "pending")));
+
+        agent
+            .respond_permission(&permission.0, Some("allow"))
+            .unwrap();
+        let events = drain(&mut agent, Duration::from_secs(10), |e| {
+            e.iter().any(|e| matches!(e, Event::TurnDone { .. }))
+        });
+        let text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Text {
+                    role: Role::Agent,
+                    text,
+                } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "; read 10 bytes; outside refused");
+        assert!(events.iter().any(|e| matches!(e, Event::ToolCall { status: Some(s), output: Some(o), .. } if s == "completed" && o == "fn a() {}\n")));
+        assert!(events.iter().any(|e| matches!(e, Event::Plan { entries } if entries[0] == ("step one".to_string(), "completed".to_string()))));
+        assert!(
+            matches!(events.last(), Some(Event::TurnDone { stop_reason }) if stop_reason == "end_turn")
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("written.txt")).unwrap(),
+            "by agent\n"
+        );
+        assert!(!agent.busy());
+
+        // A second turn, cancelled.
+        agent.prompt("please cancel me", &[]).unwrap();
+        let events = drain(&mut agent, Duration::from_secs(10), |e| !e.is_empty());
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Text { text, .. } if text == "working..."))
+        );
+        agent.cancel().unwrap();
+        let events = drain(&mut agent, Duration::from_secs(10), |e| {
+            e.iter().any(|e| matches!(e, Event::TurnDone { .. }))
+        });
+        assert!(
+            matches!(events.last(), Some(Event::TurnDone { stop_reason }) if stop_reason == "cancelled")
+        );
+    }

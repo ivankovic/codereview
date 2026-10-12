@@ -403,10 +403,10 @@ impl Session {
     /// symbol index is [`Self::leans_on`], so that one cold index does not hold up the rest.
     pub fn overview(&self) -> Result<crate::overview::Overview> {
         let fingerprint = self.fingerprint(None)?;
-        if let Some((at, overview)) = &self.memo.borrow().overview {
-            if *at == fingerprint {
-                return Ok(overview.clone());
-            }
+        if let Some((at, overview)) = &self.memo.borrow().overview
+            && *at == fingerprint
+        {
+            return Ok(overview.clone());
         }
         let overview = crate::overview::of(self)?;
         self.memo.borrow_mut().overview = Some((fingerprint, overview.clone()));
@@ -476,7 +476,11 @@ impl Session {
     /// The repository's tests as a specification, by level, with what `stretch` did to them.
     /// Builds the symbol index on first use, like [`Self::tests`]; what the stretch did is
     /// read from the files it touched and does not need it.
-    pub fn spec(&mut self, stretch: &crate::spec::Stretch) -> Result<crate::spec::Spec> {
+    pub fn spec(
+        &mut self,
+        stretch: &crate::spec::Stretch,
+        by: crate::classify::Question,
+    ) -> Result<crate::spec::Spec> {
         let tests = self
             .tests(0)
             .files
@@ -484,7 +488,7 @@ impl Session {
             .flat_map(|f| f.tests)
             .collect();
         let coverage = self.coverage();
-        crate::spec::of(self, tests, Some(&coverage), stretch)
+        crate::spec::of(self, tests, Some(&coverage), stretch, by)
     }
 
     /// The end-to-end tests, with their recordings: what the repository opens on. Builds
@@ -504,10 +508,10 @@ impl Session {
     pub fn coverage(&mut self) -> crate::spec::Coverage {
         self.index();
         let generation = self.index_generation;
-        if let Some((g, c)) = &self.memo.borrow().coverage {
-            if *g == generation {
-                return c.clone();
-            }
+        if let Some((g, c)) = &self.memo.borrow().coverage
+            && *g == generation
+        {
+            return c.clone();
         }
         let index = self.index();
         let coverage = crate::spec::Coverage {
@@ -527,9 +531,7 @@ impl Session {
             .into_iter()
             .flat_map(|f| f.tests)
             .collect();
-        let mut tests = crate::spec::annotate(tests, Some(&coverage));
-        crate::e2e::promote(self.root(), &mut tests);
-        tests
+        crate::spec::annotate(self.root(), tests, Some(&coverage))
             .into_iter()
             .filter(|t| t.test.path == path || t.reaches.iter().any(|r| r == path))
             .collect()
@@ -791,10 +793,10 @@ impl Session {
         stamp(&root.join(crate::review::FILE_NAME)).hash(&mut hasher);
         stamp(&root.join(crate::notes::FILE_NAME)).hash(&mut hasher);
         // Resolved rather than joined: `open` comes from a request.
-        if let Some(path) = open {
-            if let Some(full) = self.repo.working_path(path)? {
-                stamp(&full).hash(&mut hasher);
-            }
+        if let Some(path) = open
+            && let Some(full) = self.repo.working_path(path)?
+        {
+            stamp(&full).hash(&mut hasher);
         }
         Ok(hasher.finish())
     }
@@ -834,10 +836,10 @@ impl Session {
         self.review.ensure_default_sections();
         self.notes = NotesFile::load(self.repo.root())?;
         self.facts_file = Facts::load(self.repo.root())?;
-        if let Some(index) = &mut self.symbols {
-            if index.refresh(&self.files) {
-                self.index_generation += 1;
-            }
+        if let Some(index) = &mut self.symbols
+            && index.refresh(&self.files)
+        {
+            self.index_generation += 1;
         }
         Ok(())
     }
@@ -1045,10 +1047,10 @@ impl Session {
             text.hash(&mut h);
             h.finish()
         };
-        if let Some((h, map)) = self.line_maps.borrow().get(&key) {
-            if *h == hash {
-                return map.clone();
-            }
+        if let Some((h, map)) = self.line_maps.borrow().get(&key)
+            && *h == hash
+        {
+            return map.clone();
         }
         let map = self
             .repo

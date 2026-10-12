@@ -1,0 +1,34 @@
+fn setting_up_creates_the_ca_and_says_what_comes_next() {
+    let dir = crate::test_dir();
+    std::fs::create_dir(dir.path().join("out")).unwrap();
+    let mut session = session_in(dir.path());
+    clear(&mut session);
+    type_text(&mut session, "Test family");
+    key(&mut session, KeyCode::Enter);
+    clear(&mut session);
+    type_text(&mut session, "5");
+    key(&mut session, KeyCode::Enter);
+
+    let state = dir.path().join("state");
+    let ca = Ca::open(&Store::new(&state)).unwrap();
+    assert_eq!(ca.name(), "Test family");
+    assert_eq!(ca.not_after(), NOW + ca::years(5));
+    let screen = screen(&mut session);
+    assert!(
+        screen.contains("Test family is ready, valid until 3 Oct 2031."),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("Next, on the Nginx tab, tell it where nginx is"),
+        "{screen}"
+    );
+
+    key(&mut session, KeyCode::Enter);
+    assert_shows(&mut session, "No one has a certificate yet");
+    key(&mut session, KeyCode::Char('p'));
+    assert_eq!(
+        session.app().unwrap().form_purpose(),
+        Some(&crate::tui::components::form::Purpose::NewPerson),
+        "the CA works straight away"
+    );
+}

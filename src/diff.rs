@@ -366,10 +366,10 @@ fn follow_inner(path: &Path, before: &str, after: &str) -> Vec<Option<usize>> {
     let mut cursor = root.walk();
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
-        if node.id() != root.id() {
-            if let Some(row) = starting.get_mut(node.start_position().row) {
-                row.push(node);
-            }
+        if node.id() != root.id()
+            && let Some(row) = starting.get_mut(node.start_position().row)
+        {
+            row.push(node);
         }
         let children: Vec<_> = node.children(&mut cursor).collect();
         stack.extend(children.into_iter().rev());
@@ -393,12 +393,13 @@ fn follow_inner(path: &Path, before: &str, after: &str) -> Vec<Option<usize>> {
         let mut around = root.descendant_for_point_range(point, point);
         // The innermost node around the line that went somewhere, below the root.
         while let Some(node) = around.filter(|n| n.id() != root.id()) {
-            if node.start_position().row < row && node.end_position().row >= row {
-                if let Some(to) = went(&node) {
-                    let r = to.start_position().row + (row - node.start_position().row);
-                    map[row] = Some(r.min(to.end_position().row)).filter(|&r| r < after_len);
-                    break;
-                }
+            if node.start_position().row < row
+                && node.end_position().row >= row
+                && let Some(to) = went(&node)
+            {
+                let r = to.start_position().row + (row - node.start_position().row);
+                map[row] = Some(r.min(to.end_position().row)).filter(|&r| r < after_len);
+                break;
             }
             around = node.parent();
         }
@@ -499,25 +500,25 @@ fn spans_for_line(ranges: &[&RangeMatch], row: usize, len: usize) -> Vec<Span> {
     // stays sorted without being sorted again.
     let mut merged: Vec<Span> = Vec::new();
     for s in spans {
-        if let Some(last) = merged.last_mut() {
-            if s.start < last.end {
-                if s.start > last.start {
-                    let tail = Span {
-                        start: s.end,
-                        end: last.end,
-                        op: last.op,
-                    };
-                    last.end = s.start;
-                    merged.push(s);
-                    if tail.end > tail.start {
-                        merged.push(tail);
-                    }
-                } else {
-                    last.op = s.op;
-                    last.end = last.end.max(s.end);
+        if let Some(last) = merged.last_mut()
+            && s.start < last.end
+        {
+            if s.start > last.start {
+                let tail = Span {
+                    start: s.end,
+                    end: last.end,
+                    op: last.op,
+                };
+                last.end = s.start;
+                merged.push(s);
+                if tail.end > tail.start {
+                    merged.push(tail);
                 }
-                continue;
+            } else {
+                last.op = s.op;
+                last.end = last.end.max(s.end);
             }
+            continue;
         }
         merged.push(s);
     }

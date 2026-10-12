@@ -1,0 +1,26 @@
+fn the_iptables_boot_unit_restores_the_chain_under_its_sandbox() {
+    if !enabled() {
+        return;
+    }
+    let host = Host::start("stop-bots-boot-iptables");
+    host.stop_bots("set-firewall-backend --backend iptables");
+    host.stop_bots("add-firewall-rule --address 203.0.113.91");
+    host.stop_bots("render-firewall --apply --force");
+    host.sh("stop-bots install firewall");
+
+    host.sh(
+        "iptables -D INPUT -j STOP-BOTS && iptables -D FORWARD -j STOP-BOTS \
+         && iptables -F STOP-BOTS && iptables -X STOP-BOTS && rm -f /run/xtables.lock",
+    );
+    let started = host.try_start("stop-bots-firewall.service");
+
+    assert!(
+        started,
+        "the iptables boot unit failed under its sandbox. journal:\n{}",
+        host.journal("stop-bots-firewall.service")
+    );
+    assert!(
+        host.sh("iptables -S STOP-BOTS").contains("203.0.113.91"),
+        "the unit ran but the chain did not come back"
+    );
+}

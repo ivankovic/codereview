@@ -85,6 +85,14 @@ table.areas td.gap { color: var(--moved); }
 .spec details.fold .fold { margin-left: 14px; }
 .spec .fold-empty { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; padding: 6px 6px 6px calc(6px + 1.1em); }
 .spec .fold-empty b { color: var(--accent); }
+.spec label.by { display: block; margin: 4px 0 8px; }
+.spec label.by select { max-width: 100%; }
+.card-test details.kind { margin-top: 2px; font-size: 12px; }
+.card-test details.kind > summary { cursor: pointer; color: var(--dim); }
+.card-test details.kind table { border-collapse: collapse; margin-top: 4px; }
+.card-test details.kind th { text-align: left; font-weight: normal; padding-right: 8px; white-space: nowrap; }
+.card-test details.kind td { padding-right: 8px; vertical-align: top; }
+.badge.security { color: var(--del-fg); }
 .spec input.find { width: 100%; max-width: 40em; box-sizing: border-box; margin: 2px 0 8px; }
 .spec .chips.kinds { margin: 8px 0 4px; }
 .spec .chips.kinds .what { font-size: 12px; }
@@ -1358,7 +1366,7 @@ async function showTestsOf(path) {
     const tests = await api('/tests_of?path=' + encodeURIComponent(path));
     const name = path.split('/').pop();
     showDrawer(tests.length ? `${tests.length} ${tests.length === 1 ? 'test names' : 'tests name'} ${name}` : `No test names ${name}`,
-      tests.map(t => ({ path: t.path, line: t.line, label: t.label, text: `${LEVEL_NAMES[t.level]}${t.ignored ? ', skipped' : ''}` })));
+      tests.map(t => ({ path: t.path, line: t.line, label: t.label, text: `${kindName(t)}${t.security ? ', security' : ''}${t.ignored ? ', skipped' : ''}` })));
   } catch (e) { fail(e); }
 }
 
@@ -1768,16 +1776,21 @@ function renderRunCard(card, checks) {
   card.onclick = () => document.querySelector('#content .testing')?.scrollIntoView({ behavior: 'smooth' });
 }
 
-const LEVEL_NAMES = { security: 'security', end_to_end: 'end to end', integration: 'integration', unit: 'unit' };
+// A test's answer to one of the eight questions of the classification (see `classify.rs`).
+const answerOf = (t, question) => ((t.kind && t.kind.answers) || []).find(a => a.question === question);
+// What kind of test it is, in a word or two: end to end, or how it reaches what it tests.
+const kindName = t => t.end_to_end ? 'end to end' : ((answerOf(t, 'interaction') || {}).summary || 'test').toLowerCase();
 
-// One row per part of the code: how many tests of each level count towards it, and how many
+// One row per part of the code: how many tests of each group count towards it, and how many
 // of its files no test names. A row opens the tests narrowed to that part.
 function renderAreasCard(card, spec) {
   card.className = 'card';
   const rows = spec.areas.map(a => `<tr class="area" data-area="${esc(a.name)}"><td>${esc(a.name)}</td>`
-    + a.levels.map(n => `<td class="${n ? '' : 'zero'}">${n}</td>`).join('')
+    + a.counts.map(n => `<td class="${n ? '' : 'zero'}">${n}</td>`).join('')
     + `<td class="${a.unreached ? 'gap' : 'zero'}">${a.files ? a.unreached + ' of ' + a.files : ''}</td></tr>`).join('');
-  card.innerHTML = `<h3>Tests by area</h3><table class="areas"><tr><th>area</th><th title="security">sec</th><th title="end to end">e2e</th><th title="integration">int</th><th>unit</th><th title="files of code that no test names">untested</th></tr>${rows}</table>`
+  const heads = spec.groups.map(g => `<th title="${esc(g.title)}">${esc(g.title.toLowerCase().slice(0, 6))}</th>`).join('');
+  const asked = (spec.questions || []).find(q => q.question === spec.by);
+  card.innerHTML = `<h3>Tests by area</h3>${asked ? `<div class="dim">${esc(asked.title)}</div>` : ''}<table class="areas"><tr><th>area</th>${heads}<th title="files of code that no test names">untested</th></tr>${rows}</table>`
     + (spec.as_of ? '<div class="dim asof">From OVERVIEW.md, by where the tests are; reading the repository…</div>' : '');
   card.onclick = e => {
     const tr = e.target.closest('tr.area');
@@ -1810,7 +1823,7 @@ function renderSuite(into, inv, link) {
     into.innerHTML = '';
     const all = document.createElement('div');
     all.className = 'item';
-    all.innerHTML = `<span class="grow">${inv.total} ${inv.total === 1 ? 'test' : 'tests'} in ${files} ${files === 1 ? 'file' : 'files'}${inv.ignored ? ', ' + inv.ignored + ' marked to skip' : ''}: what they say, by level and area</span><span class="dim">Tests ›</span>`;
+    all.innerHTML = `<span class="grow">${inv.total} ${inv.total === 1 ? 'test' : 'tests'} in ${files} ${files === 1 ? 'file' : 'files'}${inv.ignored ? ', ' + inv.ignored + ' marked to skip' : ''}: what they say, by kind and area</span><span class="dim">Tests ›</span>`;
     all.onclick = () => showSpec();
     into.appendChild(all);
   }
@@ -1830,18 +1843,11 @@ function renderSuite(into, inv, link) {
 
 // ----- specification --------------------------------------------------------------------------
 
-// What the tests say the system does, by level, and what a stretch of history did to them.
+// What the tests say the system does, grouped by one of the eight questions of the
+// classification, and what a stretch of history did to them.
 // The repository is what is reviewed: the stretch is only what is marked in it, the last week
 // unless another is picked, or one commit when the log sent us here.
 const STRETCHES = [['week', 'last 7 days'], ['last', 'last commit'], ['uncommitted', 'uncommitted']];
-const LEVEL_SAYS = {
-  security: ['Tests whose name or path is about signing in, secrets, permissions or attacks.',
-    'No test is named for security: nothing here says what an attacker cannot do.'],
-  end_to_end: ['Tests that drive the whole system the way a person would: through a browser, or a real server.',
-    'No test drives the whole system: nothing here shows it working the way someone would use it.'],
-  integration: ['Tests that reach the system through its public interface.', 'None found.'],
-  unit: ['Everything else: one piece at a time.', 'None found.'],
-};
 
 // ----- end to end ---------------------------------------------------------------------------
 
@@ -2042,7 +2048,7 @@ async function showTestView(file, name) {
   for (const t of d.smaller) {
     const row = document.createElement('div');
     row.className = 'item';
-    row.innerHTML = `<span class="grow">${esc(t.label)} <span class="dim">${esc(LEVEL_NAMES[t.level] || t.level)}</span></span>
+    row.innerHTML = `<span class="grow">${esc(t.label)} <span class="dim">${esc(kindName(t))}</span></span>
       <span class="mono dim" title="${esc(t.shared.join(', '))}">${esc(t.path)}:${t.line}</span>`;
     row.onclick = () => openFile(t.path, t.line || undefined);
     smaller.appendChild(row);
@@ -2419,13 +2425,16 @@ async function showSpec(params = {}) {
   const p = params.commit ? { commit: params.commit } : { stretch: params.stretch || state.specStretch || 'week' };
   if (!p.commit) state.specStretch = p.stretch;
   if (params.area) p.area = params.area;
+  const by = params.by || state.specBy;
+  if (by && by !== 'interaction') p.by = by;
+  state.specBy = by;
   state.specParams = p;
   const route = routes.spec(p);
   navigate(route);
   const content = $('#content');
   if (!content.querySelector('.spec')) content.innerHTML = '<div class="center">reading the tests…</div>';
   try {
-    const spec = await api('/spec?' + qs({ stretch: p.stretch, commit: p.commit }));
+    const spec = await api('/spec?' + qs({ stretch: p.stretch, commit: p.commit, by: p.by }));
     if (state.view !== 'spec' || currentRoute !== route) return;
     renderSpec(content, spec, p);
     // The list came from OVERVIEW.md while the index is built; ask again until it has not.
@@ -2445,13 +2454,14 @@ function renderSpec(content, spec, p) {
     : '<span class="stretches">' + STRETCHES.map(([k, name]) => `<button data-stretch="${k}" class="${p.stretch === k ? 'on' : ''}">${name}</button>`).join('') + '</span>';
   content.innerHTML = `<div class="panelhead"><span class="path">Tests</span><span class="dim lines">${spec.total}${spec.ignored ? ', ' + spec.ignored + ' skipped' : ''}</span><span class="spacer"></span>${choices}</div>
     <div class="overview spec"></div>`;
-  content.querySelectorAll('[data-stretch]').forEach(b => b.onclick = () => showSpec({ stretch: b.dataset.stretch, area: p.area }));
+  content.querySelectorAll('[data-stretch]').forEach(b => b.onclick = () => showSpec({ stretch: b.dataset.stretch, area: p.area, by: p.by }));
   on(content, 'log', () => showLog(null, true, p.commit));
   const body = content.querySelector('.spec');
   body.appendChild(changesCard(spec));
 
   // The tests as they are: narrowed to an area by a chip, searched by their words, and
-  // otherwise folded by level, area and file, so that the first screen is a dozen rows
+  // otherwise folded by their answer to a question, then area and file, so that the first
+  // screen is a dozen rows
   // however many thousand tests there are.
   const all = spec.groups.flatMap(g => g.files.flatMap(f => f.tests));
   const pool = all.filter(t => !p.area || (t.areas || []).includes(p.area));
@@ -2459,30 +2469,34 @@ function renderSpec(content, spec, p) {
   for (const t of all) for (const a of t.areas || []) count[a] = (count[a] || 0) + 1;
   const names = spec.areas.length ? spec.areas.map(a => a.name) : Object.keys(count).sort();
   const tools = document.createElement('section');
+  const questions = (spec.questions || []).map(q => `<option value="${q.question}"${q.question === spec.by ? ' selected' : ''}>${esc(q.title)}</option>`).join('');
   tools.innerHTML = `<h3>The tests as they are</h3>
+    <label class="by">grouped by <select class="question" title="the eight questions of “What Types of Automated Tests do Developers Write?”">${questions}</select></label>
     <input type="search" class="find" placeholder="search ${pool.length} ${pool.length === 1 ? 'test' : 'tests'} by their words" value="${esc(state.specQuery || '')}">
     <div class="chips"><button data-area="" class="${p.area ? '' : 'on'}">All ${all.length}</button>${names.map(a => `<button data-area="${esc(a)}" class="${p.area === a ? 'on' : ''}">${esc(a)} ${count[a] || 0}</button>`).join('')}</div>`;
   tools.querySelectorAll('[data-area]').forEach(b => b.onclick = () => showSpec({ ...p, area: b.dataset.area || undefined }));
+  tools.querySelector('select.question').onchange = e => showSpec({ ...p, by: e.target.value });
   const found = document.createElement('div');
   const levels = document.createElement('div');
   tools.append(found, levels);
+  const summary = t => (answerOf(t, spec.by) || {}).summary;
   body.appendChild(tools);
 
   for (const g of spec.groups) {
-    const [what, none] = LEVEL_SAYS[g.level];
-    const tests = pool.filter(t => t.level === g.level);
+    const tests = pool.filter(t => summary(t) === g.title);
+    const key = `group:${spec.by}:${g.title}`;
     if (!tests.length) {
-      const finding = !p.area && (g.level === 'security' || g.level === 'end_to_end');
-      levels.insertAdjacentHTML('beforeend', `<div class="fold-empty"><b>${esc(g.title)}</b><span class="empty ${finding ? 'finding' : 'dim'}">${esc(p.area ? 'None counts towards ' + p.area + '.' : none)}</span></div>`);
+      const finding = !p.area && g.finding;
+      levels.insertAdjacentHTML('beforeend', `<div class="fold-empty"><b>${esc(g.title)}</b><span class="empty ${finding ? 'finding' : 'dim'}">${esc(p.area ? 'None counts towards ' + p.area + '.' : g.none)}</span></div>`);
       continue;
     }
-    levels.appendChild(fold('level:' + g.level, `<b>${esc(g.title)}</b>`, tests, d => {
-      d.insertAdjacentHTML('beforeend', `<div class="dim caveat">${esc(what)}</div>`);
-      if (p.area) byFile(d, tests, 'level:' + g.level); else byArea(d, tests, 'level:' + g.level);
-    }, 'level'));
+    levels.appendChild(fold(key, `<b>${esc(g.title)}</b>`, tests, d => {
+      if (g.says) d.insertAdjacentHTML('beforeend', `<div class="dim caveat">${esc(g.says)}</div>`);
+      if (p.area) byFile(d, tests, key); else byArea(d, tests, key);
+    }, 'group'));
   }
 
-  // Searching shows what matches instead of the folds, a level at a time; every word typed
+  // Searching shows what matches instead of the folds, a group at a time; every word typed
   // must be in the test's sentence, its name or its file.
   const search = tools.querySelector('.find');
   const draw = () => {
@@ -2496,8 +2510,8 @@ function renderSpec(content, spec, p) {
     });
     found.insertAdjacentHTML('beforeend', `<div class="dim caveat">${hits.length} ${hits.length === 1 ? 'test matches' : 'tests match'}</div>`);
     for (const g of spec.groups) {
-      const these = hits.filter(t => t.level === g.level);
-      if (these.length) found.appendChild(fold('found:' + g.level, `<b>${esc(g.title)}</b>`, these, d => paged(d, these, testCard), '', true));
+      const these = hits.filter(t => summary(t) === g.title);
+      if (these.length) found.appendChild(fold('found:' + g.title, `<b>${esc(g.title)}</b>`, these, d => paged(d, these, testCard), '', true));
     }
   };
   search.oninput = () => { state.specQuery = search.value; draw(); };
@@ -2634,8 +2648,13 @@ function testCard(t) {
   const names = reaches.length
     ? 'names ' + reaches.slice(0, 3).map(r => `<a data-path="${esc(r)}">${esc(base(r))}</a>`).join(', ') + (reaches.length > 3 ? ` and ${reaches.length - 3} more` : '')
     : t.line ? 'names no code directly' : '';
-  el.innerHTML = `<div class="grow"><div class="label">${esc(t.label)}</div><div class="sub dim"><span class="mono">${esc(t.path)}${t.line ? ':' + t.line : ''}</span>${names ? ' · ' + names : ''}</div></div>${t.ignored ? '<span class="dim">skipped</span>' : ''}`;
-  el.title = `${t.name}. ${LEVEL_NAMES[t.level] || ''}: ${t.why}.`;
+  const answers = (t.kind && t.kind.answers) || [];
+  const kind = answers.length ? `<details class="kind"><summary>${esc(kindName(t))}</summary><table>${answers.map(a =>
+    `<tr title="${esc(a.reason)}"><th>${esc(a.question.replace(/_/g, ' '))}</th><td>${esc(a.summary)}</td><td class="dim">${esc(a.reason)}</td></tr>`).join('')}</table></details>` : '';
+  el.innerHTML = `<div class="grow"><div class="label">${esc(t.label)}${t.security ? ' <span class="badge security" title="' + esc(t.security) + '">security</span>' : ''}</div><div class="sub dim"><span class="mono">${esc(t.path)}${t.line ? ':' + t.line : ''}</span>${names ? ' · ' + names : ''}</div>${kind}</div>${t.ignored ? '<span class="dim">skipped</span>' : ''}`;
+  el.title = t.name;
+  // The kind opens in place; it is not a way to the file.
+  el.querySelector('details.kind')?.addEventListener('click', e => e.stopPropagation());
   // From OVERVIEW.md a test has no line; the file opens at the top.
   el.onclick = () => t.line ? openFile(t.path, t.line) : openFile(t.path);
   el.querySelectorAll('a[data-path]').forEach(a => a.onclick = e => { e.stopPropagation(); openFile(a.dataset.path); });
@@ -2649,9 +2668,8 @@ function changeRow(c, span) {
   el.className = 'item';
   const checks = c.checks && c.checks[0] !== c.checks[1] ? `${c.checks[0]} → ${c.checks[1]} assertions` : '';
   const was = c.was ? `was ${c.was}` : '';
-  const levelName = { security: 'security', end_to_end: 'end to end', integration: 'integration', unit: 'unit' }[c.level];
   el.innerHTML = `<span class="what ${c.what}">${c.what}</span><span class="grow">${esc(c.label)}${was || checks ? `<div class="dim was">${esc([was, checks].filter(Boolean).join(' · '))}</div>` : ''}</span>
-    <span class="dim where">${levelName} · <span class="mono">${esc(c.path)}${c.line ? ':' + c.line : ''}</span></span>`;
+    <span class="dim where">${c.security ? 'security · ' : ''}<span class="mono">${esc(c.path)}${c.line ? ':' + c.line : ''}</span></span>`;
   el.title = 'the diff of ' + c.path + ' across ' + span.label;
   el.onclick = () => showDiff({ kind: 'revisions', from: span.base, to: span.to || '', path: c.path, status: 'M' }, [], 0);
   return el;
@@ -3293,7 +3311,7 @@ const HELP = `
 <tr><td><kbd>End to end</kbd></td><td>what the repository opens on: every test that drives it the way a person does, each with the recording its last run left, whether it passed, and how far the code has moved since. Tap a step to go to that moment of the recording; the file name opens the test</td></tr>
 <tr><td><kbd>Ask the agent to write the first ones</kbd></td><td>where there are none: the agent writes them, each leaving a recording</td></tr></table>
 <h3>Spec</h3><table>
-<tr><td><kbd>Spec</kbd></td><td>every test as a sentence, by level: security, end to end, integration, unit; hover a test for why it is at its level</td></tr>
+<tr><td><kbd>Spec</kbd></td><td>every test as a sentence, grouped by one of eight questions about what kind of test it is; a test's kind opens to all eight answers and why</td></tr>
 <tr><td><kbd>last 7 days</kbd> <kbd>last commit</kbd> <kbd>uncommitted</kbd></td><td>what that stretch did to the tests, the ones that now ask less first: removed, skipped, fewer assertions</td></tr>
 <tr><td><kbd>Tests in this commit</kbd></td><td>in the log: the same for one commit</td></tr></table>
 <h3>Changes</h3><table>

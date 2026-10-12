@@ -87,6 +87,11 @@ impl Found {
 /// The tests in one parsed file.
 pub fn find(path: &str, language: Language, root: Node, bytes: &[u8]) -> Found {
     let mut found = Found::default();
+    // A copy of a source file kept as data, `after.rs.test`, is parsed as its language for
+    // highlighting, but holds no tests of this repository.
+    if !testable(path) {
+        return found;
+    }
     let whole = is_test_file(path, language);
     if whole {
         found.code.push((0, u32::MAX));
@@ -221,11 +226,11 @@ impl Walk<'_, '_> {
                         let body = item.child_by_field_name("body");
                         if has(cfg_test) {
                             self.mark(item);
-                            if body.is_none() {
-                                if let Some(name) = item.child_by_field_name("name") {
-                                    let name = self.text(name).to_string();
-                                    self.found.test_modules.push(name);
-                                }
+                            if body.is_none()
+                                && let Some(name) = item.child_by_field_name("name")
+                            {
+                                let name = self.text(name).to_string();
+                                self.found.test_modules.push(name);
                             }
                         }
                         if let Some(body) = body {
@@ -304,26 +309,26 @@ impl Walk<'_, '_> {
         if depth > MAX_DEPTH {
             return;
         }
-        if node.kind() == "call_expression" {
-            if let Some((what, skip, name)) = self.js_call(node) {
-                let ignored = skipped || skip;
-                if what == "describe" {
-                    describes.push(name);
-                    if let Some(args) = node.child_by_field_name("arguments") {
-                        self.javascript(args, describes, ignored, depth + 1);
-                    }
-                    describes.pop();
-                    return;
+        if node.kind() == "call_expression"
+            && let Some((what, skip, name)) = self.js_call(node)
+        {
+            let ignored = skipped || skip;
+            if what == "describe" {
+                describes.push(name);
+                if let Some(args) = node.child_by_field_name("arguments") {
+                    self.javascript(args, describes, ignored, depth + 1);
                 }
-                let label = describes
-                    .iter()
-                    .map(String::as_str)
-                    .chain([name.as_str()])
-                    .collect::<Vec<_>>()
-                    .join(" › ");
-                self.push(&name, label, node, ignored);
+                describes.pop();
                 return;
             }
+            let label = describes
+                .iter()
+                .map(String::as_str)
+                .chain([name.as_str()])
+                .collect::<Vec<_>>()
+                .join(" › ");
+            self.push(&name, label, node, ignored);
+            return;
         }
         let mut cursor = node.walk();
         let children: Vec<Node> = node.named_children(&mut cursor).collect();
@@ -552,6 +557,13 @@ impl Inventory {
 mod tests {
     use super::*;
     use omnidiff::code::language::to_treesitter;
+
+    #[test]
+    fn a_copy_of_source_kept_as_data_holds_no_tests() {
+        let text = "#[test]\nfn theirs() {}\n";
+        assert_eq!(crate::symbols::tests_of("src/a.rs", text).len(), 1);
+        assert!(crate::symbols::tests_of("fixtures/after.rs.test", text).is_empty());
+    }
 
     #[test]
     fn assertions_are_counted_in_every_language() {

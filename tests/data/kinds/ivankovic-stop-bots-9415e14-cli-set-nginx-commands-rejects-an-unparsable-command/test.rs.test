@@ -1,0 +1,16 @@
+fn set_nginx_commands_rejects_an_unparsable_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("db.sqlite3");
+
+    stop_bots_bin()
+        .args([
+            "set-nginx-commands",
+            "--db",
+            db_path.to_str().unwrap(),
+            "--reload",
+            "docker exec \"web nginx -s reload",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unbalanced quote"));
+}

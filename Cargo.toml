@@ -2,7 +2,7 @@
 name = "codereview"
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.90"
 description = "Explore and review fast-changing codebases: comments in REVIEW.md, notes in NOTES.md, syntax-aware diffs, file and repository history"
 license = "AGPL-3.0-only"
 repository = "https://github.com/ivankovic/codereview"

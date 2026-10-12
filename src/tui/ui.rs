@@ -29,6 +29,10 @@ use screens::{
 /// app below it, and the picker on top.
 pub fn draw_workspace(frame: &mut Frame, ws: &mut Workspace) {
     let area = frame.area();
+    if ws.selecting {
+        draw_repo_select(frame, ws, area);
+        return;
+    }
     let body = if ws.apps.len() > 1 {
         let [strip, body] =
             Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(area);
@@ -119,11 +123,42 @@ fn draw_repo_picker(frame: &mut Frame, ws: &Workspace, area: Rect) {
     .style(style::fg(theme.fg).patch(style::bg(theme.panel)));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
-    // Keep the highlighted row inside the box when there are more rows than lines.
-    let rows = inner.height as usize;
+    frame.render_widget(Paragraph::new(repo_rows(ws, index, inner.height)), inner);
+}
+
+/// What a directory of checkouts opens on: every repository in it, one to a row, and nothing
+/// of any of them until one is picked.
+fn draw_repo_select(frame: &mut Frame, ws: &Workspace, area: Rect) {
+    let index = ws.picker.unwrap_or(ws.active);
+    let theme = ws.app().theme.clone();
+    let [main, status] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
+    let block = title_block(
+        &theme,
+        format!(" Select repository · {} ", ws.apps.len()).into(),
+        true,
+    );
+    let inner = block.inner(main);
+    frame.render_widget(block, main);
+    frame.render_widget(Paragraph::new(repo_rows(ws, index, inner.height)), inner);
+    let line: Line = vec![
+        " repositories ".reversed(),
+        "  j/k move  Enter open  1-9 direct  q quit".dim(),
+    ]
+    .into();
+    frame.render_widget(Paragraph::new(line), status);
+}
+
+/// The picker's rows, `rows` of them with the highlighted one, `index`, in view: number, name,
+/// branch, pending comments, what its agent is doing, and where it is.
+fn repo_rows(ws: &Workspace, index: usize, rows: u16) -> Vec<Line<'static>> {
+    let theme = &ws.app().theme;
+    let rows = rows as usize;
     let offset = index.saturating_sub(rows.saturating_sub(1));
-    let lines: Vec<Line> = ws
-        .apps
+    let names: Vec<String> = ws.apps.iter().map(|a| a.session.name()).collect();
+    let name_width = names.iter().map(|n| n.width()).max().unwrap_or(0);
+    let branch_width = ws.branches.iter().map(|b| b.width()).max().unwrap_or(0);
+    let number_width = ws.apps.len().to_string().len();
+    ws.apps
         .iter()
         .enumerate()
         .skip(offset)
@@ -137,24 +172,25 @@ fn draw_repo_picker(frame: &mut Frame, ws: &Workspace, area: Rect) {
             } else {
                 ""
             };
+            let branch = ws.branches.get(i).map_or("", String::as_str);
+            let name = &names[i];
             let text = format!(
-                "{} {:<24} {:<40} {} pending  {}",
+                " {:>number_width$} {name}{} {branch}{} {:>3} pending  {}  {agent}",
                 i + 1,
-                app.session.name(),
-                app.session.root().display(),
+                " ".repeat(name_width - name.width()),
+                " ".repeat(branch_width.saturating_sub(branch.width())),
                 pending,
-                agent
+                app.session.root().display(),
             );
             let mut style_ = Style::new();
             if i == index {
-                style_ = style::accent(&theme).reversed();
-            } else if i == ws.active {
+                style_ = style::accent(theme).reversed();
+            } else if i == ws.active && !ws.selecting {
                 style_ = style_.bold();
             }
             Line::from(Span::styled(text, style_))
         })
-        .collect();
-    frame.render_widget(Paragraph::new(lines), inner);
+        .collect()
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -413,7 +449,7 @@ fn hint_for(screen: &Screen) -> &'static str {
         Screen::Notes(_) => "Enter go to  n add  e edit  d delete  q back",
         Screen::Locations(_) => "Enter go there  Ctrl-o back to where you were  q close",
         Screen::Spec(_) => {
-            "Enter open/close, diff, test or area  h close fold  / search  f files a test names  s stretch  q back"
+            "Enter open/close, diff, test or area  h close fold  / search  c group by  K kind  f files a test names  s stretch  q back"
         }
         Screen::EndToEnd(_) => {
             "Enter the test  Space play  ] [ steps  w stretch  b record before  s source  o video  q code"

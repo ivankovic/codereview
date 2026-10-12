@@ -130,9 +130,48 @@ test('a repository without end-to-end tests opens on saying so', async t => {
   t.ok('the tests it does have are a tap away', await page.evaluate(hittable, '.e2e .finding [data-act=spec]'));
   t.step('see the tests it does have');
   await page.click('.e2e .finding [data-act=spec]');
-  await page.waitForSelector('.spec details.level');
+  await page.waitForSelector('.spec details.group');
   t.ok('they open', await page.evaluate(() => location.hash.startsWith('#/r1/spec')), await page.evaluate(() => location.hash));
 }, { docs: ['SPECS.md#What a repository opens on'] });
+
+test('the tests can be grouped by another of the eight questions', async t => {
+  const page = t.page;
+  await t.open('#/spec');
+  await page.waitForSelector('.spec details.group');
+  t.ok('they start grouped by how they interact', await page.evaluate(() =>
+    [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')].map(b => b.textContent).join(', ')
+      === 'API, GUI, No interaction' || [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')].map(b => b.textContent).join(', ')));
+  t.ok('the question is in reach', await page.evaluate(hittable, '.spec select.question'));
+  t.step('group them by what artifact they test');
+  await page.select('.spec select.question', 'artifact');
+  await page.waitForFunction(() => location.hash.includes('by=artifact'));
+  await page.waitForFunction(() => [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')]
+    .some(b => b.textContent === 'Documentation'));
+  t.ok('the groups are the artifacts', await page.evaluate(() =>
+    [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')].slice(0, 4).map(b => b.textContent).join(', ')
+      === 'Code, Config, Data, Documentation' || [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')].map(b => b.textContent).join(', ')));
+}, { docs: ['SPECS.md#What kind of test each one is'] });
+
+test('a test opens to what kind of test it is and why', async t => {
+  const page = t.page;
+  await t.open('#/spec');
+  await page.waitForSelector('.spec details.group');
+  const GUI = '.spec details.group:first-of-type';
+  await page.waitForSelector(GUI + ' .card-test details.kind');
+  await t.inView(GUI + ' .card-test details.kind > summary');
+  t.ok('an end-to-end test says so', await page.evaluate(sel =>
+    document.querySelector(sel + ' .card-test details.kind > summary').textContent === 'end to end'
+      || document.querySelector(sel + ' .card-test details.kind > summary').textContent, GUI));
+  t.step('open what kind of test it is');
+  await page.click(GUI + ' .card-test details.kind > summary');
+  t.ok('it stays on the list', await page.evaluate(() => location.hash.includes('/spec')), await page.evaluate(() => location.hash));
+  t.ok('every question is answered', await page.evaluate(sel =>
+    document.querySelectorAll(sel + ' .card-test details.kind[open] tr').length === 8, GUI));
+  t.ok('with why', await page.evaluate(sel => {
+    const row = [...document.querySelectorAll(sel + ' .card-test details.kind[open] tr')].find(r => r.querySelector('th').textContent === 'interaction');
+    return row && row.textContent.includes('GUI') && row.textContent.includes('it drives the built program') ? true : row && row.textContent;
+  }, GUI));
+}, { docs: ['SPECS.md#What kind of test each one is'] });
 
 test('the summary says what a repository is, where to start and how it is doing', async t => {
   const page = t.page;
@@ -191,7 +230,7 @@ test('a test command is found, and one tap runs it', async t => {
   t.ok('and says the result matches the tree', await page.evaluate(() => !!document.querySelector('.overview .checks .stale.fresh')));
 });
 
-test('the tests read as sentences, folded by level and by file', async t => {
+test('the tests read as sentences, folded by how they interact and by file', async t => {
   const page = t.page;
   await t.open('#/summary');
   await page.waitForSelector('.overview [data-card=areas] tr.area');
@@ -206,13 +245,12 @@ test('the tests read as sentences, folded by level and by file', async t => {
   await t.inView('.overview .suite .item');
   t.step('tap a test file in the overview');
   await page.click('.overview .suite .item');
-  await page.waitForSelector('.spec details.level');
+  await page.waitForSelector('.spec details.group');
   t.ok('the overview leads to the tests', await page.evaluate(() => location.hash.includes('/spec')), await page.evaluate(() => location.hash));
-  // The unit tests, the last level: twenty-one, too many to show at once, so the level starts
-  // folded, a row a finger tall, and opens to its files, the long one folded and the short one
-  // open.
-  const UNIT = '.spec details.level:last-of-type';
-  t.ok('a long level starts folded', await page.evaluate(sel => {
+  // The tests that interact with nothing, the last group: twenty-one, too many to show at once,
+  // so the group starts folded, a row a finger tall, and opens to its files, each folded.
+  const UNIT = '.spec details.group:last-of-type';
+  t.ok('a long group starts folded', await page.evaluate(sel => {
     const d = document.querySelector(sel);
     return d && !d.open && !d.querySelector('.card-test') ? true : 'open: ' + (d && d.open);
   }, UNIT));
@@ -221,7 +259,7 @@ test('the tests read as sentences, folded by level and by file', async t => {
     return h >= 44 ? true : 'height ' + h;
   }, UNIT));
   await t.inView(UNIT + ' > summary');
-  t.step('open the level');
+  t.step('open the group');
   await page.click(UNIT + ' > summary');
   await page.waitForSelector(UNIT + ' details.fold');
   t.ok('it opens to its files, each folded', await page.evaluate(sel => {

@@ -1,0 +1,15 @@
+    fn editing() {
+        let mut p = Prompt::new(PromptKind::Search, "search", "héllo");
+        p.backspace();
+        assert_eq!(p.text, "héll");
+        p.left();
+        p.left();
+        p.insert('X');
+        assert_eq!(p.text, "héXll");
+        p.home();
+        p.delete();
+        assert_eq!(p.text, "éXll");
+        p.end();
+        p.delete_word();
+        assert_eq!(p.text, "");
+    }

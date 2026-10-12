@@ -599,7 +599,7 @@ fn scratch_repo() -> tempfile::TempDir {
     write(
         "src/review.rs",
         "pub fn parse_review() {}\n\npub fn write_review() {}\n\n#[cfg(test)]\nmod tests {\n    \
-         #[test]\n    fn a_review_round_trips() {\n        assert!(true);\n    }\n}\n",
+         #[test]\n    fn a_review_round_trips() {\n        super::parse_review();\n        assert!(true);\n    }\n}\n",
     );
     write(
         "src/main.rs",

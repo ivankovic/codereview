@@ -7,7 +7,8 @@
 //! with the recording its last run left behind, and everything else in the tool is reached
 //! from there.
 //!
-//! A test is end to end when its path says so (the rules in `spec`), when its file drives
+//! A test is end to end when it runs the program and drives it through the interface a person
+//! uses (the `classify` module's Dynamic and GUI): when its path says so, when its file drives
 //! the software from outside — a browser driver, a pseudo-terminal, the built binary — or when
 //! a recording names it, which settles it. The test that only hands another file's tests to a
 //! runner is named by their recordings as their runner, and is left out: it is not a
@@ -24,8 +25,48 @@ use serde::{Deserialize, Serialize};
 use crate::analysis::Staleness;
 use crate::recording::Recording;
 use crate::session::Session;
-use crate::spec::Level;
 use crate::testsuite::TestCase;
+
+/// Words in a test's path that make it end to end: the drivers and the directory names those
+/// suites conventionally live in.
+const END_TO_END_WORDS: &[&str] = &[
+    "e2e",
+    "browser",
+    "playwright",
+    "cypress",
+    "selenium",
+    "puppeteer",
+    "webdriver",
+    "headless",
+];
+
+/// Why a test's path says it is end to end, if it does. Only a file of nothing but tests can:
+/// `src/browser.rs` is a module, and the tests beside its code are not end to end whatever it
+/// is called.
+pub fn path_says(test: &TestCase) -> Option<String> {
+    if !test_only(&test.path) {
+        return None;
+    }
+    let joined = test.path.to_lowercase();
+    if ["end_to_end", "end-to-end", "endtoend"]
+        .iter()
+        .any(|w| joined.contains(w))
+    {
+        return Some("its path says end to end".into());
+    }
+    // Any word of a directory, but of the file's own name only the first or a dotted part:
+    // `browser.rs` and `login.e2e.ts` say it, a fixture named `css_playwright_selector.rs`
+    // does not.
+    let (dirs, name) = test.path.rsplit_once('/').unwrap_or(("", &test.path));
+    let mut parts = name.split('.');
+    let lead = parts.next().map(crate::spec::words).unwrap_or_default();
+    crate::spec::words(dirs)
+        .into_iter()
+        .chain(lead.into_iter().take(1))
+        .chain(parts.map(str::to_lowercase))
+        .find(|w| END_TO_END_WORDS.contains(&w.as_str()))
+        .map(|w| format!("its path says {w}"))
+}
 
 /// What in a test file shows that it drives the software from outside, and what it drives.
 /// Spelled as the code spells them: these are the libraries' and the build tool's own names.
@@ -110,13 +151,13 @@ fn test_file_text(root: &Path, path: &str) -> String {
 }
 
 /// What each test file drives, read once per file.
-struct Drivers<'a> {
+pub(crate) struct Drivers<'a> {
     root: &'a Path,
     seen: HashMap<String, Option<&'static str>>,
 }
 
 impl<'a> Drivers<'a> {
-    fn new(root: &'a Path) -> Self {
+    pub(crate) fn new(root: &'a Path) -> Self {
         Self {
             root,
             seen: HashMap::new(),
@@ -125,10 +166,9 @@ impl<'a> Drivers<'a> {
 
     /// Why `test` is end to end, if it is: its path, what its file drives, or that it left a
     /// recording, in that order.
-    fn why(&mut self, test: &TestCase, recorded: bool) -> Option<String> {
-        let (level, level_why) = crate::spec::level(test);
-        if level == Level::EndToEnd {
-            return Some(level_why);
+    pub(crate) fn why(&mut self, test: &TestCase, recorded: bool) -> Option<String> {
+        if let Some(why) = path_says(test) {
+            return Some(why);
         }
         let root = self.root;
         let driven = *self.seen.entry(test.path.clone()).or_insert_with(|| {
@@ -140,24 +180,6 @@ impl<'a> Drivers<'a> {
             (Some(what), _) => Some(format!("it drives {what}")),
             (None, true) => Some("it left a recording".to_string()),
             (None, false) => None,
-        }
-    }
-}
-
-/// Moves the tests that drive the software, or left a recording of doing so, to the end-to-end
-/// level of the specification, so that it and the opening agree on what is end to end. A
-/// security test stays where it is: there, security is the heading a reviewer reads first.
-pub fn promote(root: &Path, tests: &mut [crate::spec::SpecTest]) {
-    let recordings = crate::recording::find(root);
-    let mut drivers = Drivers::new(root);
-    for t in tests {
-        if matches!(t.level, Level::Security | Level::EndToEnd) {
-            continue;
-        }
-        let recorded = recordings.iter().any(|r| names(r, &t.test));
-        if let Some(why) = drivers.why(&t.test, recorded) {
-            t.level = Level::EndToEnd;
-            t.why = why;
         }
     }
 }
@@ -211,7 +233,7 @@ impl Opening {
 }
 
 /// Whether recording `r` is of `test`.
-fn names(r: &Recording, test: &TestCase) -> bool {
+pub(crate) fn names(r: &Recording, test: &TestCase) -> bool {
     r.file == test.path
         && (r.test == test.name
             || r.test == test.label
@@ -239,7 +261,7 @@ pub fn of(session: &Session, tests: Vec<TestCase>) -> Opening {
             continue;
         }
         let at = recordings.iter().position(|r| names(r, &test));
-        let (level, _) = crate::spec::level(&test);
+        let security = crate::spec::security(&test).is_some();
         let Some(why) = drivers.why(&test, at.is_some()) else {
             continue;
         };
@@ -248,7 +270,7 @@ pub fn of(session: &Session, tests: Vec<TestCase>) -> Opening {
             recordings[i].clone()
         });
         out.push(EndToEnd {
-            security: level == Level::Security,
+            security,
             test,
             why,
             recording,
@@ -412,11 +434,10 @@ pub fn detail(session: &mut Session, file: &str, name: &str) -> Option<Detail> {
                 .flat_map(|f| f.tests)
                 .collect();
             let coverage = session.coverage();
-            let mut annotated = crate::spec::annotate(tests, Some(&coverage));
-            promote(&root, &mut annotated);
+            let annotated = crate::spec::annotate(&root, tests, Some(&coverage));
             let mut found: Vec<Smaller> = annotated
                 .into_iter()
-                .filter(|t| matches!(t.level, Level::Unit | Level::Integration | Level::Security))
+                .filter(|t| !t.end_to_end)
                 .filter_map(|t| {
                     let mut shared: Vec<String> = t
                         .reaches

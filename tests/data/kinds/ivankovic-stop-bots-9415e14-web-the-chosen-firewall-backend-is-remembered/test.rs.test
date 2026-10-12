@@ -1,0 +1,19 @@
+async fn the_chosen_firewall_backend_is_remembered() {
+    let (app, password, _tmp, db_path) = app_with_db();
+    let (cookie, csrf) = login(&app, &password).await;
+
+    act(
+        &app,
+        &cookie,
+        &csrf,
+        "/render-firewall",
+        "backend=iptables&apply=1",
+    )
+    .await;
+
+    let db = Db::open(&db_path).unwrap();
+    assert_eq!(
+        stop_bots::firewall::stored_backend(&db).unwrap(),
+        stop_bots::firewall::FirewallBackend::Iptables
+    );
+}

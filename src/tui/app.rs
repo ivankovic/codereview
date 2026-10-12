@@ -12,7 +12,7 @@ use crate::notes::Note;
 use crate::repo::{ChangedFile, Commit, FileStatus};
 use crate::review::{self, Comment};
 use crate::session::{DiffTarget, Session};
-use crate::spec::{Level, Stretch, TestChange, What};
+use crate::spec::{Stretch, TestChange, What};
 use crate::theme::Theme;
 mod end_to_end;
 mod one_test;
@@ -406,23 +406,23 @@ impl App {
             }
         };
         let mut viewer = Viewer::new(view, &self.theme.syntax);
-        if let Some(entry) = self.session.status.get(path) {
-            if let Some(status) = entry.unstaged.or(entry.staged) {
-                let file = ChangedFile {
-                    status,
-                    path: path.to_string(),
-                    old_path: entry.old_path.clone(),
-                };
-                let target = if entry.unstaged.is_some() {
-                    DiffTarget::Working
-                } else {
-                    DiffTarget::Staged
-                };
-                if let Ok(diff) = self.session.diff(&target, &file) {
-                    if diff.after.line_count() == viewer.line_count() {
-                        viewer.line_ops = Some(diff.after.line_ops);
-                    }
-                }
+        if let Some(entry) = self.session.status.get(path)
+            && let Some(status) = entry.unstaged.or(entry.staged)
+        {
+            let file = ChangedFile {
+                status,
+                path: path.to_string(),
+                old_path: entry.old_path.clone(),
+            };
+            let target = if entry.unstaged.is_some() {
+                DiffTarget::Working
+            } else {
+                DiffTarget::Staged
+            };
+            if let Ok(diff) = self.session.diff(&target, &file)
+                && diff.after.line_count() == viewer.line_count()
+            {
+                viewer.line_ops = Some(diff.after.line_ops);
             }
         }
         self.viewer = Some(viewer);
@@ -433,10 +433,10 @@ impl App {
         let Some(path) = self.viewer.as_ref().map(|v| v.path.clone()) else {
             return;
         };
-        if let Ok(view) = self.session.file_view(&path) {
-            if let Some(viewer) = &mut self.viewer {
-                viewer.set_comments(view.comments);
-            }
+        if let Ok(view) = self.session.file_view(&path)
+            && let Some(viewer) = &mut self.viewer
+        {
+            viewer.set_comments(view.comments);
         }
         self.refresh_diff_comments();
     }
@@ -508,12 +508,12 @@ impl App {
 
     /// Records where the cursor is, so `Ctrl-o` can come back.
     fn push_jump(&mut self) {
-        if let Some(v) = &self.viewer {
-            if let Some(line) = v.current_line() {
-                self.jumps.push((v.path.clone(), line, v.column()));
-                if self.jumps.len() > 100 {
-                    self.jumps.remove(0);
-                }
+        if let Some(v) = &self.viewer
+            && let Some(line) = v.current_line()
+        {
+            self.jumps.push((v.path.clone(), line, v.column()));
+            if self.jumps.len() > 100 {
+                self.jumps.remove(0);
             }
         }
     }
@@ -733,14 +733,14 @@ impl App {
     /// for the repository on screen, `OVERVIEW.md` every few seconds.
     pub fn tick(&mut self, active: bool) -> bool {
         let mut changed = self.agent.tick();
-        if let Some(rx) = &self.warming {
-            if let Ok(index) = rx.try_recv() {
-                self.session.install_index(index);
-                self.warming = None;
-                // What was shown from OVERVIEW.md, or not at all, while the index was built.
-                self.refresh_end_to_end(true);
-                changed = true;
-            }
+        if let Some(rx) = &self.warming
+            && let Ok(index) = rx.try_recv()
+        {
+            self.session.install_index(index);
+            self.warming = None;
+            // What was shown from OVERVIEW.md, or not at all, while the index was built.
+            self.refresh_end_to_end(true);
+            changed = true;
         }
         changed |= self.advance_playback();
         changed |= self.watch_base_run();
@@ -1438,10 +1438,10 @@ impl App {
             self.outline = Some(Outline::new(&path, symbols));
         }
         let following = !(self.focus_tree && self.sidebar == Sidebar::Outline);
-        if let (Some(o), Some(line)) = (&mut self.outline, v.current_line()) {
-            if following {
-                o.follow(line);
-            }
+        if let (Some(o), Some(line)) = (&mut self.outline, v.current_line())
+            && following
+        {
+            o.follow(line);
         }
     }
 

@@ -871,13 +871,11 @@ fn clip(spans: Vec<Span<'static>>, hscroll: usize, width: usize) -> Vec<Span<'st
             *first = Span::styled(rest, first.style);
         }
     }
-    if truncated_right {
-        if let Some(last) = out.last_mut() {
-            let mut s: String = last.content.chars().collect();
-            s.pop();
-            s.push('…');
-            *last = Span::styled(s, last.style);
-        }
+    if truncated_right && let Some(last) = out.last_mut() {
+        let mut s: String = last.content.chars().collect();
+        s.pop();
+        s.push('…');
+        *last = Span::styled(s, last.style);
     }
     out
 }

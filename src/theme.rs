@@ -43,10 +43,10 @@ impl<'de> Deserialize<'de> for Paint {
             return i.parse().map(Paint::Ansi).map_err(serde::de::Error::custom);
         }
         let hex = text.strip_prefix('#').unwrap_or(&text);
-        if hex.len() == 6 {
-            if let Ok(v) = u32::from_str_radix(hex, 16) {
-                return Ok(Paint::Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8));
-            }
+        if hex.len() == 6
+            && let Ok(v) = u32::from_str_radix(hex, 16)
+        {
+            return Ok(Paint::Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8));
         }
         Err(serde::de::Error::custom(format!("not a colour: {text}")))
     }

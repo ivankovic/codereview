@@ -1,0 +1,17 @@
+fn an_invite_is_only_made_for_a_holder_the_ca_would_issue_to() {
+    let dir = crate::test_dir();
+    let ca = ca(dir.path());
+    ca.issue(ANNA_PHONE, Key::Generate, NOW, ca::DEFAULT_CLIENT_VALIDITY)
+        .unwrap();
+    ca.revoke(Target::Holder(ANNA_PHONE), Reason::Retired, NOW)
+        .unwrap();
+    let folder = dir.path().join("invites");
+    assert!(
+        make(&ca, &folder, ANNA_PHONE, "k.example.org", NOW)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("retired")
+    );
+    assert!(ca.ledger().unwrap().invites.is_empty());
+}

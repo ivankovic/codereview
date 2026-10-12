@@ -101,7 +101,7 @@ fn a_test_leads_to_the_code_it_ran_and_what_documents_it() {
     t.wait_for("src/review.rs  2 lines, 2 only this test");
     t.wait_for("Surviving a restart — README.md:");
     t.wait_for("a guess: shares");
-    t.wait_for("a review round trips · unit · src/review.rs");
+    t.wait_for("a review round trips · api · src/review.rs");
     t.step("open the code it ran");
     t.keys("j");
     t.keys("j");
@@ -255,17 +255,53 @@ fn uncommitted_changes_are_listed_and_open_as_a_diff() {
 }
 
 #[test]
-fn the_tests_read_as_a_specification_by_level() {
+fn the_tests_read_as_a_specification_grouped_by_how_they_interact() {
     let mut t = term!();
-    t.documents("SPECS.md#What a repository opens on");
+    t.documents("SPECS.md#What kind of test each one is");
     t.leave_the_tests();
     t.step("open the specification");
     t.keys("P");
     t.wait_for("specification 2 tests");
-    t.wait_for("End to end 1");
+    t.wait_for("How does the test interact with it?");
+    t.wait_for("GUI 1");
     t.wait_for("a review survives a restart");
-    t.wait_for("Unit 1");
+    t.wait_for("API 1");
     t.wait_for("a review round trips");
+}
+
+#[test]
+fn c_groups_the_specification_by_the_next_question() {
+    let mut t = term!();
+    t.documents("SPECS.md#What kind of test each one is");
+    t.leave_the_tests();
+    t.step("open the specification");
+    t.keys("P");
+    t.wait_for("How does the test interact with it?");
+    t.step("group the tests by the next question");
+    t.keys("c");
+    t.wait_for("Is the test performing a numerical measurement?");
+    t.wait_for("No measurement 2");
+}
+
+#[test]
+fn k_answers_every_question_for_the_test_under_the_cursor() {
+    let mut t = term!();
+    t.documents("SPECS.md#What kind of test each one is");
+    t.leave_the_tests();
+    t.step("open the specification and find the unit test");
+    t.keys("P");
+    t.wait_for("API 1");
+    t.keys("/");
+    t.keys("round trips");
+    t.keys(ENTER);
+    t.wait_for("1 test matches");
+    t.keys("G");
+    t.step("ask what kind of test it is");
+    t.keys("K");
+    t.wait_for("what kind of test a review round trips is");
+    t.wait_for("Code — it names code from src/review.rs");
+    t.wait_for("API — it names code from src/review.rs");
+    t.wait_for("Real dependencies");
 }
 
 #[test]
@@ -285,6 +321,65 @@ fn q_steps_back_and_then_gives_the_terminal_back() {
     t.check("the terminal is back on its own screen", !alternate, || {
         "still on the alternate screen".into()
     });
+}
+
+/// Turns the scratch directory into a directory of checkouts: no repository of its own, and
+/// two below it.
+fn checkouts(root: &Path) {
+    std::fs::remove_dir_all(root.join(".git")).unwrap();
+    for name in ["alpha", "beta"] {
+        common::scratch_repo(&root.join(name));
+    }
+}
+
+#[test]
+fn a_directory_of_checkouts_opens_on_a_list_of_its_repositories() {
+    let mut t = term!(checkouts);
+    t.documents("SPECS.md#Several repositories");
+    t.wait_for("Select repository · 2");
+    t.wait_for(" 1 alpha");
+    t.wait_for(" 2 beta");
+    t.step("open the second repository");
+    t.keys("j");
+    t.keys(ENTER);
+    t.wait_for("repository 2: beta");
+    t.wait_for("end to end");
+    let screen = t.screen();
+    t.check(
+        "the list is gone",
+        !screen.contains("Select repository"),
+        || screen.clone(),
+    );
+}
+
+#[test]
+fn the_mouse_wheel_moves_through_the_list_of_repositories() {
+    let mut t = term!(checkouts);
+    t.documents("SPECS.md#Several repositories");
+    t.wait_for("Select repository · 2");
+    t.step("turn the wheel down a notch and open what it lands on");
+    // A wheel notch down, as a terminal reports it once mouse reporting is on (SGR).
+    t.keys("\x1b[<65;20;5M");
+    t.keys(ENTER);
+    t.wait_for("repository 2: beta");
+}
+
+#[test]
+fn q_from_a_repository_goes_back_to_the_list_of_repositories() {
+    let mut t = term!(checkouts);
+    t.documents("SPECS.md#Several repositories");
+    t.wait_for("Select repository · 2");
+    t.step("open the first repository");
+    t.keys(ENTER);
+    t.wait_for("end to end");
+    t.step("step back out of its tests and its files");
+    t.keys("q");
+    t.wait_for("files");
+    t.keys("q");
+    t.wait_for("Select repository · 2");
+    t.step("leave from the list");
+    t.keys("q");
+    t.exits();
 }
 
 /// What the last run of tests/e2e.rs left in `root`: its recording, and the lines of
@@ -324,4 +419,241 @@ fn the_e2e_command_says_what_uncommitted_work_left_untested() {
     t.wait_for("src/main.rs — 1 of 1 lines");
     t.wait_for("not recorded at");
     t.exits();
+}
+
+/// A dataset of one drawn test, where `codereview kinds label` looks for one by default.
+fn a_drawn_sample(root: &Path) {
+    use codereview::kinds::{DEFAULT_DATASET, Dataset, Sample, Status, options};
+    let dir = root.join(DEFAULT_DATASET);
+    std::fs::create_dir_all(dir.join("someone-alpha-0123456-lib-parses")).unwrap();
+    std::fs::write(
+        dir.join("someone-alpha-0123456-lib-parses/file.rs.test"),
+        "pub fn parse_review(s: &str) -> usize {\n    s.len()\n}\n\n#[test]\nfn parses() {\n    assert_eq!(parse_review(\"ab\"), 2);\n}\n",
+    )
+    .unwrap();
+    let dataset = Dataset {
+        dir,
+        samples: vec![Sample {
+            name: "someone-alpha-0123456-lib-parses".into(),
+            repository: "someone/alpha".into(),
+            commit: "0123456789abcdef0123456789abcdef01234567".into(),
+            path: "src/lib.rs".into(),
+            line: 6,
+            end: 8,
+            test: "parses".into(),
+            label: "parses".into(),
+            names: vec!["src/lib.rs".into()],
+            drives: String::new(),
+            files: vec![],
+            status: Status::Pending,
+            answers: vec![None; options().len()],
+            notes: String::new(),
+        }],
+    };
+    dataset.save().unwrap();
+}
+
+#[test]
+fn a_sampled_test_is_classified_by_hand_and_every_answer_saved() {
+    let mut t = term!(a_drawn_sample, &["kinds", "label"]);
+    t.documents("SPECS.md#A sample classified by hand");
+    t.wait_for("someone/alpha @ 0123456 · src/lib.rs:6–8 · pending");
+    t.wait_for("▌fn parses() {");
+    t.wait_for("What artifact is being tested?");
+    t.step("say it tests code, and nothing else");
+    t.keys("y");
+    t.keys("N");
+    t.wait_for("What artifact is being tested?  Code");
+    let csv = std::fs::read_to_string(
+        t.repo()
+            .join(codereview::kinds::DEFAULT_DATASET)
+            .join("kinds.csv"),
+    )
+    .unwrap();
+    t.check(
+        "kinds.csv has the answers",
+        csv.lines()
+            .nth(1)
+            .is_some_and(|row| row.contains(",yes,no,no,no,no,")),
+        || csv.clone(),
+    );
+    t.step("leave");
+    t.keys("q");
+    t.exits();
+}
+
+#[test]
+fn the_rules_answers_stay_hidden_until_asked_for() {
+    let mut t = term!(a_drawn_sample, &["kinds", "label"]);
+    t.documents("SPECS.md#A sample classified by hand");
+    t.wait_for("What artifact is being tested?");
+    let screen = t.screen();
+    t.check(
+        "the rules say nothing yet",
+        !screen.contains("rules y"),
+        || screen.clone(),
+    );
+    t.step("answer the first option, then show the rules");
+    t.keys("y");
+    t.keys("r");
+    t.wait_for("questions · rules shown (r)");
+    t.wait_for("[y] Code           rules y ✓");
+    t.step("back to the first option, to read why the rules said yes");
+    t.keys("k");
+    t.wait_for("rules: it names code from src/lib.rs");
+}
+
+/// Two checkouts beside the scratch repository's files: one of a GitHub repository with a
+/// test, one with no remote at all.
+fn checkouts_to_draw_from(root: &Path) {
+    let git = |dir: &Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+    };
+    let alpha = root.join("checkouts/alpha");
+    common::scratch_repo(&alpha);
+    git(
+        &alpha,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/someone/alpha.git",
+        ],
+    );
+    std::fs::write(
+        alpha.join("tests.rs"),
+        "#[test]\nfn checks_it() {\n    assert!(true);\n}\n",
+    )
+    .unwrap();
+    git(&alpha, &["add", "."]);
+    git(&alpha, &["commit", "-qm", "a test"]);
+    common::scratch_repo(&root.join("checkouts/elsewhere"));
+}
+
+#[test]
+fn tests_are_drawn_from_github_checkouts_into_the_dataset() {
+    let mut t = term!(
+        checkouts_to_draw_from,
+        &["kinds", "draw", "checkouts", "--count", "5", "--seed", "1"]
+    );
+    t.documents("SPECS.md#A sample classified by hand");
+    t.wait_for("passed over");
+    t.wait_for("its origin is not on GitHub");
+    t.wait_for("someone-alpha-");
+    t.wait_for("drew 1 of 1 tests in 1 repositories");
+    t.exits();
+    let dir = t.repo().join(codereview::kinds::DEFAULT_DATASET);
+    let csv = std::fs::read_to_string(dir.join("kinds.csv")).unwrap_or_default();
+    t.check(
+        "the CSV names the repository and the commit",
+        csv.contains(",someone/alpha,") && csv.contains(",tests.rs,"),
+        || csv.clone(),
+    );
+    let stored = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .any(|e| e.path().join("test.rs.test").is_file());
+    t.check("the test's text is stored beside it", stored, || {
+        format!(
+            "{:?}",
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .map(|e| e.path())
+                .collect::<Vec<_>>()
+        )
+    });
+}
+
+/// The drawn sample, classified by hand as testing nothing at all.
+fn a_finished_sample(root: &Path) {
+    use codereview::classify::Answer;
+    use codereview::kinds::{DEFAULT_DATASET, Dataset, Status};
+    a_drawn_sample(root);
+    let dir = root.join(DEFAULT_DATASET);
+    let mut dataset = Dataset::open(&dir).unwrap();
+    let sample = &mut dataset.samples[0];
+    sample
+        .answers
+        .iter_mut()
+        .for_each(|a| *a = Some(Answer::No));
+    sample.status = Status::Done;
+    dataset.save().unwrap();
+}
+
+#[test]
+fn the_rules_are_measured_against_the_samples_classified_by_hand() {
+    let mut t = term!(a_finished_sample, &["kinds", "agree", "--verbose"]);
+    t.documents("SPECS.md#A sample classified by hand");
+    t.wait_for("1 samples classified by hand");
+    t.wait_for("What artifact is being tested?");
+    t.wait_for("0/1   options: Code 0, Config 1");
+    t.wait_for("by hand Nothing, rules Code (it names code from src/lib.rs)");
+    t.exits();
+}
+
+/// Two drawn samples: the one above, and a second from another repository.
+fn two_drawn_samples(root: &Path) {
+    use codereview::kinds::{DEFAULT_DATASET, Dataset};
+    a_drawn_sample(root);
+    let dir = root.join(DEFAULT_DATASET);
+    let mut dataset = Dataset::open(&dir).unwrap();
+    let mut second = dataset.samples[0].clone();
+    second.name = "someone-beta-0123456-lib-prints".into();
+    second.repository = "someone/beta".into();
+    second.test = "prints".into();
+    second.label = "prints".into();
+    std::fs::create_dir_all(dir.join(&second.name)).unwrap();
+    std::fs::write(
+        dir.join(&second.name).join("file.rs.test"),
+        "pub fn print() {}\n\n\n\n\n#[test]\nfn prints() {\n    print();\n}\n",
+    )
+    .unwrap();
+    dataset.samples.push(second);
+    dataset.save().unwrap();
+}
+
+#[test]
+fn a_sample_set_aside_leads_to_the_next_one_pending() {
+    let mut t = term!(two_drawn_samples, &["kinds", "label"]);
+    t.documents("SPECS.md#A sample classified by hand");
+    t.wait_for("1/2 · 0 done · someone/alpha");
+    t.step("set the first sample aside");
+    t.keys("s");
+    t.wait_for("now skipped");
+    t.step("go to the next sample still pending");
+    t.keys("}");
+    t.wait_for("2/2 · 0 done · someone/beta");
+    t.wait_for("▌fn prints() {");
+}
+
+#[test]
+fn a_note_is_kept_with_the_sample() {
+    let mut t = term!(a_drawn_sample, &["kinds", "label"]);
+    t.documents("SPECS.md#A sample classified by hand");
+    t.wait_for("What artifact is being tested?");
+    t.step("write a note on the sample");
+    t.keys("e");
+    t.wait_for("Enter saves, Esc leaves it");
+    t.keys("calls a helper");
+    t.keys(ENTER);
+    t.wait_for("note saved");
+    t.wait_for("note: calls a helper");
+    let csv = std::fs::read_to_string(
+        t.repo()
+            .join(codereview::kinds::DEFAULT_DATASET)
+            .join("kinds.csv"),
+    )
+    .unwrap();
+    t.check(
+        "the note is in kinds.csv",
+        csv.trim_end().ends_with(",calls a helper"),
+        || csv.clone(),
+    );
 }

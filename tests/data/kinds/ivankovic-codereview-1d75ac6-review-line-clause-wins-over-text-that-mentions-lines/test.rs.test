@@ -1,0 +1,13 @@
+    fn line_clause_wins_over_text_that_mentions_lines() {
+        let c = parse_comment_line("- In a.rs: see on line 12: fix it", PENDING).unwrap();
+        assert_eq!((c.path.as_str(), c.line), ("a.rs", None));
+        assert_eq!(c.text, "see on line 12: fix it");
+        let c = parse_comment_line("- In a.rs on line 5: see on line 12: fix it", PENDING).unwrap();
+        assert_eq!((c.path.as_str(), c.line), ("a.rs", Some(5)));
+        assert_eq!(c.text, "see on line 12: fix it");
+        // A path with a colon followed by a space is not a path, so the bullet is left alone.
+        assert!(
+            parse_comment_line("- In note: a b on line 5: x", PENDING)
+                .is_some_and(|c| c.path == "note")
+        );
+    }

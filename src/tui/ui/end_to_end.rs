@@ -363,7 +363,10 @@ fn draw_stretch_detail(frame: &mut Frame, theme: &Theme, state: &EndToEndState, 
             )));
             lines.push(Line::from(Span::styled(
                 clip(
-                    &format!("{}:{} · {}", c.path, c.line, c.level_title()),
+                    &match c.tag() {
+                        Some(tag) => format!("{}:{} · {tag}", c.path, c.line),
+                        None => format!("{}:{}", c.path, c.line),
+                    },
                     width,
                 ),
                 dim,
@@ -1059,7 +1062,10 @@ fn draw_test_rows(frame: &mut Frame, theme: &Theme, state: &mut EndToEndTestStat
                             clip(
                                 &format!(
                                     " · {} · {}:{} · shares {}",
-                                    t.test.level.title().to_lowercase(),
+                                    t.test
+                                        .kind
+                                        .summary(crate::classify::Question::Interaction)
+                                        .to_lowercase(),
                                     t.test.test.path,
                                     t.test.test.line,
                                     t.shared.join(", ")

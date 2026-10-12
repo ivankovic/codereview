@@ -1,58 +1,32 @@
-//! The tests as a specification: what each one is, at which level it checks the system, and
-//! what a stretch of history did to them.
+//! The tests as a specification: what kind of test each one is, and what a stretch of history
+//! did to them.
 //!
 //! When an agent wrote the code, its tests are the one place where what the system is meant to
 //! do is written down and checked by a machine, so a reviewer starts there rather than in the
-//! code. Two things make that list worth more than a count. The first is the level: an
-//! end-to-end test that drives a browser says far more about whether the thing works than a
-//! hundred unit tests of its helpers, and a security test says something none of them do. The
-//! second is what happened to the tests lately. An agent that cannot make a test pass is
-//! tempted to make it stop asking — delete it, skip it, or loosen what it checks — and each of
-//! those is a line or two in a diff nobody reads closely. Here they come first.
+//! code. Two things make that list worth more than a count. The first is what kind of test
+//! each one is: an end-to-end test that drives a browser says far more about whether the thing
+//! works than a hundred tests of its helpers, a test that reads the documentation says
+//! something none of them do, and a test that mocks everything it touches says less than it
+//! looks. The kinds are the eight questions of the `classify` module, and the list is grouped
+//! by whichever one the reviewer is asking. A test about security is marked as such, whatever
+//! its kind. The second is what happened to the tests lately. An agent that cannot make a test
+//! pass is tempted to make it stop asking — delete it, skip it, or loosen what it checks — and
+//! each of those is a line or two in a diff nobody reads closely. Here they come first.
 //!
-//! Levels are read from where a test is and what it is called, by fixed rules that say which
-//! one decided, and nothing cleverer: a reviewer has to be able to see why a test is where it
-//! is. What happened to the tests is found by parsing every test file the stretch touched, as
-//! it was and as it is, and matching the tests up: by file and name, then by name alone for a
-//! test that moved file, then by body for one that was renamed.
+//! What happened to the tests is found by parsing every test file the stretch touched, as it
+//! was and as it is, and matching the tests up: by file and name, then by name alone for a test
+//! that moved file, then by body for one that was renamed.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::classify::{Kind, Question};
 use crate::session::Session;
 use crate::testsuite::{TestCase, testable};
-
-/// How much a test checks of the system at once, most first. Security is not a size but a
-/// purpose; it leads because a reviewer reads those first, whatever their size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Level {
-    Security,
-    EndToEnd,
-    Integration,
-    Unit,
-}
-
-impl Level {
-    pub const ALL: [Level; 4] = [
-        Level::Security,
-        Level::EndToEnd,
-        Level::Integration,
-        Level::Unit,
-    ];
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Level::Security => "Security",
-            Level::EndToEnd => "End to end",
-            Level::Integration => "Integration",
-            Level::Unit => "Unit",
-        }
-    }
-}
 
 /// Words that make a test a security test wherever they appear in its name or its path.
 /// Whole words only: `tokenizer` is not about tokens, and `token` itself is left out because
@@ -100,19 +74,6 @@ const SECURITY_WORDS: &[&str] = &[
     "exploit",
 ];
 
-/// Words in a test's path that make it end to end: the drivers and the directory names those
-/// suites conventionally live in.
-const END_TO_END_WORDS: &[&str] = &[
-    "e2e",
-    "browser",
-    "playwright",
-    "cypress",
-    "selenium",
-    "puppeteer",
-    "webdriver",
-    "headless",
-];
-
 /// The words of `text`, lowercase: split at anything that is not a letter or a digit, and
 /// at a change from lower case to upper case, so `signIn` and `sign_in` both give `sign`, `in`.
 pub(crate) fn words(text: &str) -> Vec<String> {
@@ -139,61 +100,26 @@ pub(crate) fn words(text: &str) -> Vec<String> {
     out
 }
 
-/// A test's level, and why it is at that level, in a few words.
-pub fn level(test: &TestCase) -> (Level, String) {
-    let named = words(&format!("{} {}", test.name, test.label));
-    let pathed = words(&test.path);
+/// Why a test is about security, if it is: a word of its name, or of its path, from
+/// [`SECURITY_WORDS`]. Security is a purpose rather than a kind, so it is a mark on a test of
+/// any kind.
+pub fn security(test: &TestCase) -> Option<String> {
     let pairs = |w: &[String]| {
         w.windows(2)
             .map(|p| format!("{}{}", p[0], p[1]))
             .collect::<Vec<_>>()
     };
     // "sign in" and "log in" are two words in a phrase and one in the vocabulary.
-    let security = |w: &[String]| {
-        w.iter()
-            .cloned()
-            .chain(pairs(w))
+    let find = |w: Vec<String>| {
+        let joined = pairs(&w);
+        w.into_iter()
+            .chain(joined)
             .find(|w| SECURITY_WORDS.contains(&w.as_str()))
     };
-    if let Some(word) = security(&named) {
-        return (Level::Security, format!("its name says {word}"));
+    if let Some(word) = find(words(&format!("{} {}", test.name, test.label))) {
+        return Some(format!("its name says {word}"));
     }
-    if let Some(word) = security(&pathed) {
-        return (Level::Security, format!("its path says {word}"));
-    }
-    // The rest is about suites, which live in files of their own: `src/browser.rs` is a
-    // module, and the tests beside its code are unit tests whatever it is called.
-    if !crate::e2e::test_only(&test.path) {
-        return (Level::Unit, "nothing says otherwise".into());
-    }
-    let joined = test.path.to_lowercase();
-    if ["end_to_end", "end-to-end", "endtoend"]
-        .iter()
-        .any(|w| joined.contains(w))
-    {
-        return (Level::EndToEnd, "its path says end to end".into());
-    }
-    if let Some(word) = pathed
-        .iter()
-        .find(|w| END_TO_END_WORDS.contains(&w.as_str()))
-    {
-        return (Level::EndToEnd, format!("its path says {word}"));
-    }
-    if pathed
-        .iter()
-        .any(|w| w == "integration" || w == "functional")
-    {
-        return (Level::Integration, "its path says integration".into());
-    }
-    // Cargo builds each file under a top-level `tests` directory as a crate of its own, which
-    // can reach only the public interface: integration, by the language's own definition.
-    if test.path.ends_with(".rs")
-        && (test.path.starts_with("tests/") || test.path.contains("/tests/"))
-        && !test.path.contains("/src/")
-    {
-        return (Level::Integration, "a Rust integration test".into());
-    }
-    (Level::Unit, "nothing says otherwise".into())
+    find(words(&test.path)).map(|word| format!("its path says {word}"))
 }
 
 /// What happened to a test, worst first.
@@ -239,7 +165,9 @@ impl What {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestChange {
     pub what: What,
-    pub level: Level,
+    /// Whether it is about security, by its name or path.
+    #[serde(default)]
+    pub security: bool,
     /// What the test says it checks, as it is now; as it was, for a removed one.
     pub label: String,
     /// Where it is now, or where it was, for a removed one.
@@ -253,8 +181,9 @@ pub struct TestChange {
 }
 
 impl TestChange {
-    pub fn level_title(&self) -> &'static str {
-        self.level.title()
+    /// What to mark it with beside its name: `security`, or nothing.
+    pub fn tag(&self) -> Option<&'static str> {
+        self.security.then_some("security")
     }
 }
 
@@ -303,7 +232,7 @@ pub fn compare(before: Vec<TestCase>, after: Vec<TestCase>) -> Vec<TestChange> {
     for old in before.into_iter().flatten() {
         out.push(TestChange {
             what: What::Removed,
-            level: level(&old).0,
+            security: security(&old).is_some(),
             label: old.label,
             path: old.path,
             line: old.line,
@@ -314,7 +243,7 @@ pub fn compare(before: Vec<TestCase>, after: Vec<TestCase>) -> Vec<TestChange> {
     for new in after.into_iter().flatten() {
         out.push(TestChange {
             what: What::Added,
-            level: level(&new).0,
+            security: security(&new).is_some(),
             label: new.label,
             path: new.path,
             line: new.line,
@@ -322,7 +251,9 @@ pub fn compare(before: Vec<TestCase>, after: Vec<TestCase>) -> Vec<TestChange> {
             checks: None,
         });
     }
-    out.sort_by(|a, b| (a.what, a.level, &a.path, a.line).cmp(&(b.what, b.level, &b.path, b.line)));
+    out.sort_by(|a, b| {
+        (a.what, !a.security, &a.path, a.line).cmp(&(b.what, !b.security, &b.path, b.line))
+    });
     out
 }
 
@@ -350,7 +281,7 @@ fn between(old: &TestCase, new: TestCase) -> Option<TestChange> {
     };
     Some(TestChange {
         what,
-        level: level(&new).0,
+        security: security(&new).is_some(),
         label: new.label,
         path: new.path,
         line: new.line,
@@ -483,14 +414,18 @@ pub fn changes(session: &Session, span: &Span) -> Result<Vec<TestChange>> {
     Ok(compare(before, after))
 }
 
-/// One test in the specification, with its level's reason, the files it names and the
-/// areas it counts towards.
+/// One test in the specification: what kind of test it is, the files it names and the areas
+/// it counts towards.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpecTest {
     #[serde(flatten)]
     pub test: TestCase,
-    pub level: Level,
-    pub why: String,
+    /// The eight questions, answered.
+    pub kind: Kind,
+    /// Whether it runs the program and drives it the way a person does.
+    pub end_to_end: bool,
+    /// Why it is about security, when it is.
+    pub security: Option<String>,
     /// The files outside test code that its body names; empty while the index is built, and
     /// for a test that drives the system from outside.
     #[serde(default)]
@@ -561,7 +496,7 @@ pub struct Coverage {
 }
 
 /// One part of the project, as the summary shows it: how much code is there, how much of it
-/// no test names, and how many tests of each level count towards it.
+/// no test names, and how many tests of each group count towards it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Area {
     pub name: String,
@@ -569,20 +504,20 @@ pub struct Area {
     pub files: usize,
     /// Of those, the ones no test names and that have no tests of their own.
     pub unreached: usize,
-    /// Tests counting towards it, by level, in [`Level::ALL`] order.
-    pub levels: Vec<usize>,
+    /// Tests counting towards it, by group, in the order of [`Spec::groups`].
+    pub counts: Vec<usize>,
     pub ignored: usize,
 }
 
 /// The areas of the project, with what the tests do for each. A test counts towards every
 /// area whose files it names, and towards its own area when it names none.
-pub fn areas(tests: &[SpecTest], coverage: Option<&Coverage>) -> Vec<Area> {
+pub fn areas(tests: &[SpecTest], coverage: Option<&Coverage>, groups: &[Group]) -> Vec<Area> {
     let mut out: BTreeMap<String, Area> = BTreeMap::new();
     let blank = |name: &str| Area {
         name: name.to_string(),
         files: 0,
         unreached: 0,
-        levels: vec![0; Level::ALL.len()],
+        counts: vec![0; groups.len()],
         ignored: 0,
     };
     let names = names_for(tests, coverage);
@@ -602,14 +537,13 @@ pub fn areas(tests: &[SpecTest], coverage: Option<&Coverage>) -> Vec<Area> {
         }
     }
     for test in tests {
-        let level = test.level;
-        let at = Level::ALL
-            .iter()
-            .position(|l| *l == level)
-            .expect("a level");
+        let summary = groups.first().map_or("", |g| test.kind.summary(g.question));
+        let at = groups.iter().position(|g| g.title == summary);
         for name in &test.areas {
             let area = out.entry(name.clone()).or_insert_with(|| blank(name));
-            area.levels[at] += 1;
+            if let Some(at) = at {
+                area.counts[at] += 1;
+            }
             area.ignored += usize::from(test.test.ignored);
         }
     }
@@ -624,8 +558,14 @@ fn names_for(tests: &[SpecTest], coverage: Option<&Coverage>) -> AreaNames {
     }
 }
 
-/// `tests` with their levels' reasons, what each names, and the areas it counts towards.
-pub fn annotate(tests: Vec<TestCase>, coverage: Option<&Coverage>) -> Vec<SpecTest> {
+/// `tests` with what kind of test each is, what each names, and the areas it counts towards.
+/// The files of the repository are read for the tests' lines; `coverage`, the symbol index's
+/// word on what each test names, is `None` while the index is built, which leaves what a test
+/// calls not classified.
+pub fn annotate(root: &Path, tests: Vec<TestCase>, coverage: Option<&Coverage>) -> Vec<SpecTest> {
+    let recordings = crate::recording::find(root);
+    let mut drivers = crate::e2e::Drivers::new(root);
+    let mut reader = crate::classify::Reader::new(root);
     let names = match coverage {
         Some(c) => AreaNames::new(c.code.iter().map(String::as_str)),
         None => AreaNames::new(tests.iter().map(|t| t.path.as_str())),
@@ -643,12 +583,23 @@ pub fn annotate(tests: Vec<TestCase>, coverage: Option<&Coverage>) -> Vec<SpecTe
             }
             areas.sort();
             areas.dedup();
-            let (level, why) = level(&test);
+            let recorded = recordings.iter().any(|r| crate::e2e::names(r, &test));
+            let drives = drivers.why(&test, recorded);
+            let (body, above) = reader.lines(&test);
+            let kind = crate::classify::classify(&crate::classify::Evidence {
+                test: &test,
+                body: &body,
+                above: &above,
+                names: coverage.map(|_| reaches.as_slice()),
+                drives: drives.as_deref(),
+                exists: &|p| root.join(p).is_file(),
+            });
             SpecTest {
                 home: names.of(&test.path),
+                end_to_end: kind.end_to_end(),
+                security: security(&test),
+                kind,
                 test,
-                level,
-                why,
                 reaches,
                 areas,
             }
@@ -662,35 +613,51 @@ pub struct SpecFile {
     pub tests: Vec<SpecTest>,
 }
 
-/// The tests of one level, by file.
+/// The tests that answer one question the same way, by file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
-    pub level: Level,
+    pub question: Question,
+    /// The answer they share: one of [`Question::summaries`].
     pub title: String,
+    /// What the tests in it are, in a sentence; empty when there is nothing to add.
+    pub says: String,
+    /// What it means that there are none.
+    pub none: String,
+    /// Whether having none is a finding.
+    pub finding: bool,
     pub files: Vec<SpecFile>,
     pub total: usize,
     pub ignored: usize,
 }
 
-/// Every test of the repository, grouped by level and then by file, every level present even
-/// when it has none: an empty "End to end" is a finding.
-pub fn groups(tests: Vec<SpecTest>) -> Vec<Group> {
-    let mut groups: Vec<Group> = Level::ALL
-        .iter()
-        .map(|&level| Group {
-            level,
-            title: level.title().to_string(),
-            files: Vec::new(),
-            total: 0,
-            ignored: 0,
+/// Every test of the repository, grouped by its answer to `by` and then by file. Every option
+/// of the question has a group, even an empty one, since no test driving the program is itself
+/// a finding; mixed, none and not classified appear only when some test is.
+pub fn groups(tests: Vec<SpecTest>, by: Question) -> Vec<Group> {
+    let options = by.options();
+    let mut groups: Vec<Group> = by
+        .summaries()
+        .into_iter()
+        .map(|title| {
+            let (says, none, finding) = crate::classify::describe(by, title);
+            Group {
+                question: by,
+                title: title.to_string(),
+                says: says.to_string(),
+                none: none.to_string(),
+                finding,
+                files: Vec::new(),
+                total: 0,
+                ignored: 0,
+            }
         })
         .collect();
     for test in tests {
-        let level = test.level;
-        let group = &mut groups[Level::ALL
-            .iter()
-            .position(|l| *l == level)
-            .expect("a level")];
+        let summary = test.kind.summary(by).to_string();
+        let group = groups
+            .iter_mut()
+            .find(|g| g.title == summary)
+            .expect("a summary of the question");
         group.total += 1;
         group.ignored += usize::from(test.test.ignored);
         match group.files.last_mut() {
@@ -701,12 +668,24 @@ pub fn groups(tests: Vec<SpecTest>) -> Vec<Group> {
             }),
         }
     }
+    groups.retain(|g| g.total > 0 || options.contains(&g.title.as_str()));
     groups
 }
 
-/// The specification as both front ends draw it.
+/// A question, as the front ends offer it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Asked {
+    pub question: Question,
+    pub title: String,
+    pub short: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Spec {
+    /// The question the tests are grouped by.
+    pub by: Question,
+    /// Every question there is to group by.
+    pub questions: Vec<Asked>,
     pub span: Span,
     /// What the stretch did to the tests, worst first.
     pub changes: Vec<TestChange>,
@@ -725,18 +704,28 @@ pub fn of(
     tests: Vec<TestCase>,
     coverage: Option<&Coverage>,
     stretch: &Stretch,
+    by: Question,
 ) -> Result<Spec> {
     let span = span(session, stretch)?;
     let changes = session.spec_changes(&span)?;
     let total = tests.len();
     let ignored = tests.iter().filter(|t| t.ignored).count();
-    let mut tests = annotate(tests, coverage);
-    crate::e2e::promote(session.root(), &mut tests);
+    let tests = annotate(session.root(), tests, coverage);
+    let grouped = groups(tests.clone(), by);
     Ok(Spec {
+        by,
+        questions: Question::ALL
+            .iter()
+            .map(|&question| Asked {
+                question,
+                title: question.title().to_string(),
+                short: question.short().to_string(),
+            })
+            .collect(),
         span,
         changes,
-        areas: areas(&tests, coverage),
-        groups: groups(tests),
+        areas: areas(&tests, coverage, &grouped),
+        groups: grouped,
         total,
         ignored,
     })
@@ -761,39 +750,47 @@ mod tests {
     }
 
     #[test]
-    fn a_level_says_why() {
-        let at = |path: &str, name: &str| level(&case(path, name));
+    fn security_is_a_mark_with_its_reason() {
+        let at = |path: &str, name: &str| security(&case(path, name));
         assert_eq!(
-            at("src/web/tests.rs", "a_password_opens_a_session").0,
-            Level::Security
-        );
-        assert_eq!(at("src/auth/mod.rs", "round_trips").0, Level::Security);
-        assert_eq!(
-            at("src/web/tests.rs", "a_sign_in_is_slowed").1,
-            "its name says signin"
-        );
-        // A word inside a longer one is not that word.
-        assert_eq!(at("src/lexer.rs", "tokenizer_splits").0, Level::Unit);
-        assert_eq!(
-            at("tests/browser.rs", "the_phone_layout_works").0,
-            Level::EndToEnd
-        );
-        assert_eq!(at("e2e/login.spec.ts", "x").0, Level::Security);
-        assert_eq!(at("e2e/cart.spec.ts", "adds an item").0, Level::EndToEnd);
-        assert_eq!(
-            at("tests/nginx_proxy.rs", "the_fixture_agrees").0,
-            Level::Integration
+            at("src/web/tests.rs", "a_password_opens_a_session").as_deref(),
+            Some("its name says password")
         );
         assert_eq!(
-            at("tests/integration/test_api.py", "test_get").0,
-            Level::Integration
+            at("src/auth/mod.rs", "round_trips").as_deref(),
+            Some("its path says auth")
         );
-        // Python's `tests` directory holds every kind; only Rust's is integration by rule.
-        assert_eq!(at("tests/test_parse.py", "test_empty").0, Level::Unit);
         assert_eq!(
-            at("src/diff.rs", "longest_chain").1,
-            "nothing says otherwise"
+            at("src/web/tests.rs", "a_sign_in_is_slowed").as_deref(),
+            Some("its name says signin")
         );
+        assert_eq!(at("src/lexer.rs", "tokenizer_splits"), None);
+        assert_eq!(at("e2e/cart.spec.ts", "adds an item"), None);
+    }
+
+    #[test]
+    fn a_path_says_end_to_end_only_in_a_file_of_tests() {
+        let at = |path: &str| crate::e2e::path_says(&case(path, "x"));
+        assert_eq!(at("e2e/cart.spec.ts").as_deref(), Some("its path says e2e"));
+        assert_eq!(
+            at("tests/browser.rs").as_deref(),
+            Some("its path says browser")
+        );
+        assert_eq!(
+            at("tests/end_to_end/login.py").as_deref(),
+            Some("its path says end to end")
+        );
+        assert_eq!(at("src/browser.rs"), None, "a module, not a suite");
+        assert_eq!(
+            at("tests/login.e2e.ts").as_deref(),
+            Some("its path says e2e")
+        );
+        assert_eq!(
+            at("src/test/fixtures/css_playwright_selector.rs"),
+            None,
+            "a fixture named after what it is about"
+        );
+        assert_eq!(at("tests/nginx_proxy.rs"), None);
     }
 
     #[test]
@@ -884,7 +881,9 @@ mod tests {
                 "src/tui/app.rs".into(),
             ],
         };
+        let dir = tempfile::tempdir().unwrap();
         let tests = annotate(
+            dir.path(),
             vec![
                 case("src/web/tests.rs", "api_round_trip"),
                 case("tests/browser.rs", "the_phone_layout_works"),
@@ -897,7 +896,10 @@ mod tests {
             ["tests"],
             "names nothing: counted where it is"
         );
-        let areas = areas(&tests, Some(&coverage));
+        let grouped = groups(tests.clone(), Question::Interaction);
+        let titles: Vec<&str> = grouped.iter().map(|g| g.title.as_str()).collect();
+        assert_eq!(titles, ["API", "GUI"], "no test is in a group of its own");
+        let areas = areas(&tests, Some(&coverage), &grouped);
         let row = |name: &str| areas.iter().find(|a| a.name == name).unwrap().clone();
         let web = row("web");
         assert_eq!(
@@ -905,25 +907,34 @@ mod tests {
             (3, 2),
             "web.rs is web's, and it and auth.rs are named by no test"
         );
-        assert_eq!(web.levels, [0, 0, 0, 1]);
+        assert_eq!(web.counts, [1, 0], "it names api.rs: it calls the code");
         let tui = row("tui");
         assert_eq!(
-            (tui.files, tui.unreached, tui.levels.iter().sum::<usize>()),
+            (tui.files, tui.unreached, tui.counts.iter().sum::<usize>()),
             (1, 1, 0)
         );
-        assert_eq!(row("tests").levels, [0, 1, 0, 0]);
+        assert_eq!(
+            row("tests").counts,
+            [0, 1],
+            "its path says browser: it drives the program"
+        );
     }
 
     #[test]
-    fn every_level_is_listed_even_empty() {
-        let groups = groups(annotate(
-            vec![case("src/a.rs", "x"), case("src/a.rs", "y")],
-            None,
-        ));
+    fn every_option_of_the_question_is_a_group_even_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let groups = groups(
+            annotate(
+                dir.path(),
+                vec![case("src/a.rs", "x"), case("src/a.rs", "y")],
+                Some(&Coverage::default()),
+            ),
+            Question::Interaction,
+        );
         let titles: Vec<&str> = groups.iter().map(|g| g.title.as_str()).collect();
-        assert_eq!(titles, ["Security", "End to end", "Integration", "Unit"]);
-        assert_eq!(groups[3].total, 2);
-        assert_eq!(groups[3].files.len(), 1);
+        assert_eq!(titles, ["API", "GUI", "No interaction"]);
+        assert_eq!(groups[2].total, 2, "they call nothing the index knows");
+        assert_eq!(groups[2].files.len(), 1);
         assert_eq!(groups[1].total, 0);
     }
 
@@ -963,12 +974,26 @@ mod tests {
         let session = Session::open_with_config(dir.path(), Some(config)).unwrap();
         let tests = crate::symbols::tests_of("lib.rs", "#[test]\nfn checks_two_things() {}\n");
 
-        let last = of(&session, tests.clone(), None, &Stretch::LastCommit).unwrap();
+        let last = of(
+            &session,
+            tests.clone(),
+            None,
+            &Stretch::LastCommit,
+            Question::Interaction,
+        )
+        .unwrap();
         assert!(last.span.label.contains("loosen"), "{}", last.span.label);
         let seen: Vec<_> = last.changes.iter().map(|c| (c.what, c.checks)).collect();
         assert_eq!(seen, [(What::Weakened, Some((2, 1)))]);
 
-        let now = of(&session, tests.clone(), None, &Stretch::Uncommitted).unwrap();
+        let now = of(
+            &session,
+            tests.clone(),
+            None,
+            &Stretch::Uncommitted,
+            Question::Interaction,
+        )
+        .unwrap();
         let seen: Vec<_> = now
             .changes
             .iter()
@@ -978,12 +1003,26 @@ mod tests {
 
         // The week covers both, and the first commit had no parent to compare with: from the
         // start, everything that is there now is new, and nothing was removed.
-        let week = of(&session, tests.clone(), None, &Stretch::Week).unwrap();
+        let week = of(
+            &session,
+            tests.clone(),
+            None,
+            &Stretch::Week,
+            Question::Interaction,
+        )
+        .unwrap();
         let seen: Vec<_> = week.changes.iter().map(|c| c.what).collect();
         assert_eq!(seen, [What::Added]);
 
         let first = session.repo.log(None, None, 1, 1).unwrap()[0].hash.clone();
-        let drill = of(&session, tests, None, &Stretch::Commit(first)).unwrap();
+        let drill = of(
+            &session,
+            tests,
+            None,
+            &Stretch::Commit(first),
+            Question::Interaction,
+        )
+        .unwrap();
         assert!(drill.span.label.contains("first"));
         assert_eq!(drill.changes.len(), 2, "both added by the root commit");
         assert!(drill.changes.iter().all(|c| c.what == What::Added));

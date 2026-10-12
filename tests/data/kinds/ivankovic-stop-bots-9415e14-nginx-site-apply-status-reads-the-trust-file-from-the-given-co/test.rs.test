@@ -1,0 +1,22 @@
+    fn site_apply_status_reads_the_trust_file_from_the_given_conf_d() {
+        let dir = tempfile::tempdir().unwrap();
+        let conf_d = dir.path().join("conf.d");
+        fs::create_dir_all(&conf_d).unwrap();
+        let path = dir.path().join("site.conf");
+        fs::write(&path, "server {\n    server_name a.example;\n}\n").unwrap();
+        let config = cfg_trusted(&["BadBot"]);
+        apply_block_for_site(&path, dir.path(), "a.example", &config).unwrap();
+
+        assert_eq!(
+            site_apply_status(&path, "a.example", &config, &conf_d),
+            SiteApplyStatus::Stale,
+            "the block is applied but the trust file it reads is not there yet"
+        );
+
+        fs::write(conf_d.join("stop-bots-trusted.conf"), trust_body()).unwrap();
+        assert_eq!(
+            site_apply_status(&path, "a.example", &config, &conf_d),
+            SiteApplyStatus::UpToDate,
+            "with the file in place the site is applied"
+        );
+    }

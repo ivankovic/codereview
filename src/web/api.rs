@@ -393,6 +393,9 @@ pub(super) struct SpecQuery {
     /// One commit, against its parent: the drill-down from the log. Wins over `stretch`.
     #[serde(default)]
     commit: Option<String>,
+    /// The question to group the tests by; `interaction` by default.
+    #[serde(default)]
+    by: Option<crate::classify::Question>,
 }
 
 /// The stretch of history a query names: one commit, or `week` (the default), `last` or
@@ -426,6 +429,7 @@ pub(super) struct SpecResponse {
 /// the index is built the list comes from `OVERVIEW.md`, the same way the overview's does.
 pub(super) async fn get_spec(state: Ctx, Query(q): Query<SpecQuery>) -> ApiResult<SpecResponse> {
     let stretch = stretch_of(&q)?;
+    let by = q.by.unwrap_or(crate::classify::Question::Interaction);
     let warming = state.warming.load(std::sync::atomic::Ordering::Relaxed);
     Ok(Json(
         with_session(&state, move |s| {
@@ -439,12 +443,12 @@ pub(super) async fn get_spec(state: Ctx, Query(q): Query<SpecQuery>) -> ApiResul
                     None => Vec::new(),
                 };
                 return Ok(SpecResponse {
-                    spec: crate::spec::of(s, tests, None, &stretch)?,
+                    spec: crate::spec::of(s, tests, None, &stretch, by)?,
                     as_of: Some(as_of),
                 });
             }
             Ok(SpecResponse {
-                spec: s.spec(&stretch)?,
+                spec: s.spec(&stretch, by)?,
                 as_of: None,
             })
         })
@@ -649,25 +653,24 @@ pub(super) async fn get_file(state: Ctx, Query(q): Query<FileQuery>) -> ApiResul
             &web_syntax(s),
         ));
         let mut line_ops = None;
-        if q.rev.as_deref().unwrap_or("").is_empty() {
-            if let Some(entry) = s.status.get(&q.path) {
-                if let Some(status) = entry.unstaged.or(entry.staged) {
-                    let file = ChangedFile {
-                        status,
-                        path: q.path.clone(),
-                        old_path: entry.old_path.clone(),
-                    };
-                    let target = if entry.unstaged.is_some() {
-                        DiffTarget::Working
-                    } else {
-                        DiffTarget::Staged
-                    };
-                    if let Ok(d) = s.diff(&target, &file) {
-                        if d.after.line_count() == lines.lines.len() {
-                            line_ops = Some(d.after.line_ops);
-                        }
-                    }
-                }
+        if q.rev.as_deref().unwrap_or("").is_empty()
+            && let Some(entry) = s.status.get(&q.path)
+            && let Some(status) = entry.unstaged.or(entry.staged)
+        {
+            let file = ChangedFile {
+                status,
+                path: q.path.clone(),
+                old_path: entry.old_path.clone(),
+            };
+            let target = if entry.unstaged.is_some() {
+                DiffTarget::Working
+            } else {
+                DiffTarget::Staged
+            };
+            if let Ok(d) = s.diff(&target, &file)
+                && d.after.line_count() == lines.lines.len()
+            {
+                line_ops = Some(d.after.line_ops);
             }
         }
         Ok(FileResponse {
@@ -1237,10 +1240,10 @@ pub(super) async fn post_analysis_run(
             s.save_check(&check)?;
         }
         let mut runs = checks.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(existing) = runs.get(&check.name) {
-            if existing.lock().unwrap_or_else(|e| e.into_inner()).running {
-                anyhow::bail!(Conflict(format!("{} is already running", check.name)));
-            }
+        if let Some(existing) = runs.get(&check.name)
+            && existing.lock().unwrap_or_else(|e| e.into_inner()).running
+        {
+            anyhow::bail!(Conflict(format!("{} is already running", check.name)));
         }
         let started = crate::analysis::start(&check, s.root())?;
         runs.insert(check.name.clone(), started.clone());

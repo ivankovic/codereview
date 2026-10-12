@@ -1,0 +1,27 @@
+fn a_tampered_signing_request_is_refused_and_nothing_is_issued() {
+    let dir = crate::test_dir();
+    let ca = new_ca(dir.path());
+    let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let pem = CertificateParams::default()
+        .serialize_request(&key)
+        .unwrap()
+        .pem()
+        .unwrap();
+    // The last line of base64 encodes the end of the signature; change its first character.
+    let mut lines: Vec<String> = pem.lines().map(str::to_owned).collect();
+    let last = lines.len() - 2;
+    let first = lines[last].remove(0);
+    lines[last].insert(0, if first == 'A' { 'B' } else { 'A' });
+    let request = lines.join("\n");
+    let error = ca
+        .issue(
+            Holder::Agent("backup"),
+            Key::Request(&request),
+            NOW,
+            DEFAULT_CLIENT_VALIDITY,
+        )
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("signing request"), "{error}");
+    assert_eq!(ca.ledger().unwrap().certificates().count(), 0);
+}

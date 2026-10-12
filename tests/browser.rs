@@ -139,10 +139,10 @@ fn gather_coverage(
             continue;
         }
         let profile = profiles.join(format!("{slug}.profraw"));
-        if profile.is_file() {
-            if let Some(more) = lcov_of(&[profile], env!("CARGO_BIN_EXE_codereview")) {
-                lcov.extend(more);
-            }
+        if profile.is_file()
+            && let Some(more) = lcov_of(&[profile], env!("CARGO_BIN_EXE_codereview"))
+        {
+            lcov.extend(more);
         }
         if !lcov.is_empty() {
             std::fs::write(dir.join("coverage.lcov"), lcov).unwrap();

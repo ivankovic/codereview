@@ -89,10 +89,10 @@ pub fn anchor(comment: &Comment, lines: &[&str]) -> Anchored {
         return placed(first, AnchorState::Exact);
     };
     let matches = |text: &str| anchor_text(text).as_deref() == Some(anchor.as_str());
-    if let Some(current) = first.checked_sub(1).and_then(|i| lines.get(i)) {
-        if matches(current) {
-            return placed(first, AnchorState::Exact);
-        }
+    if let Some(current) = first.checked_sub(1).and_then(|i| lines.get(i))
+        && matches(current)
+    {
+        return placed(first, AnchorState::Exact);
     }
     let candidates: Vec<usize> = lines
         .iter()

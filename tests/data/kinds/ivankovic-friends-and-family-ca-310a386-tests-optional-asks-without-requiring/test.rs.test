@@ -1,0 +1,12 @@
+fn optional_asks_without_requiring() {
+    let (_dir, nginx) = folder(&[]);
+    let planned = plan(BOOKS, 0, Mode::Optional, &nginx).unwrap();
+    assert!(
+        planned.contains("    ssl_verify_client optional;\n"),
+        "{planned}"
+    );
+    assert_eq!(
+        sites_in(Path::new("x.conf"), &planned, &nginx).unwrap()[0].mode,
+        Mode::Optional
+    );
+}

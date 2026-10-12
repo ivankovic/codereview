@@ -21,6 +21,7 @@ pub mod acp;
 pub mod agent;
 pub mod analysis;
 pub mod anchor;
+pub mod classify;
 pub mod claude;
 pub mod config;
 pub mod diff;
@@ -30,6 +31,7 @@ pub mod facts;
 #[cfg(test)]
 mod fakes;
 pub mod highlight;
+pub mod kinds;
 pub mod markdown;
 pub mod media;
 pub mod notes;

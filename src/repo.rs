@@ -553,6 +553,22 @@ impl Repo {
         Ok(String::from_utf8_lossy(&out).trim().to_string())
     }
 
+    /// The names at the top of the tree at `rev`: where a licence file is.
+    pub fn top_level(&self, rev: &str) -> Result<Vec<String>> {
+        Self::check_rev(rev)?;
+        let out = self.git(&["ls-tree", "--name-only", rev])?;
+        Ok(String::from_utf8_lossy(&out)
+            .lines()
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// The `owner/name` of the GitHub repository `origin` points at, if it points at one.
+    pub fn github_name(&self) -> Option<String> {
+        let out = self.git(&["remote", "get-url", "origin"]).ok()?;
+        github_name(String::from_utf8_lossy(&out).trim())
+    }
+
     /// Whether `path` is in the commit HEAD names and the working tree holds it unchanged: the
     /// one case where a line number in the file on disk is also one in a commit.
     pub fn committed_as_is(&self, path: &str) -> bool {
@@ -720,6 +736,19 @@ fn complaint(output: &std::process::Output) -> String {
 
 /// Whether git would call this a binary file: a NUL byte in the first 8 KiB, which is its
 /// own rule. Text is what this tool can show, diff and index; the rest is skipped.
+/// The `owner/name` a GitHub remote URL names, in any of the forms git accepts:
+/// `https://github.com/o/n.git`, `git@github.com:o/n.git`, `ssh://git@github.com/o/n`.
+pub fn github_name(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("git@github.com:")
+        .or_else(|| url.split_once("github.com/").map(|(_, r)| r))?;
+    let rest = rest.trim_end_matches('/').trim_end_matches(".git");
+    let mut parts = rest.split('/');
+    let (owner, name) = (parts.next()?, parts.next()?);
+    (parts.next().is_none() && !owner.is_empty() && !name.is_empty())
+        .then(|| format!("{owner}/{name}"))
+}
+
 pub fn is_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8192).any(|b| *b == 0)
 }
@@ -850,10 +879,10 @@ fn parse_blame(bytes: &[u8]) -> Vec<BlameLine> {
     let mut current: Option<String> = None;
     for line in text.lines() {
         if line.starts_with('\t') {
-            if let Some(hash) = &current {
-                if let Some(info) = commits.get(hash) {
-                    lines.push(info.clone());
-                }
+            if let Some(hash) = &current
+                && let Some(info) = commits.get(hash)
+            {
+                lines.push(info.clone());
             }
             continue;
         }
@@ -881,10 +910,10 @@ fn parse_blame(bytes: &[u8]) -> Vec<BlameLine> {
         match key {
             "author" => info.author = value.to_string(),
             "author-time" => {
-                if let Ok(secs) = value.parse::<i64>() {
-                    if let Some(dt) = chrono::DateTime::from_timestamp(secs, 0) {
-                        info.date = dt.format("%Y-%m-%d").to_string();
-                    }
+                if let Ok(secs) = value.parse::<i64>()
+                    && let Some(dt) = chrono::DateTime::from_timestamp(secs, 0)
+                {
+                    info.date = dt.format("%Y-%m-%d").to_string();
                 }
             }
             "summary" => info.summary = value.to_string(),
@@ -899,6 +928,24 @@ mod tests {
     use super::*;
 
     /// A symlink in the checkout must not become a way to read the rest of the machine.
+    #[test]
+    fn a_github_remote_names_its_repository() {
+        for url in [
+            "https://github.com/ivankovic/omnidiff.git",
+            "https://github.com/ivankovic/omnidiff",
+            "git@github.com:ivankovic/omnidiff.git",
+            "ssh://git@github.com/ivankovic/omnidiff.git",
+        ] {
+            assert_eq!(
+                github_name(url).as_deref(),
+                Some("ivankovic/omnidiff"),
+                "{url}"
+            );
+        }
+        assert_eq!(github_name("https://gitlab.com/a/b.git"), None);
+        assert_eq!(github_name("https://github.com/a"), None);
+    }
+
     #[test]
     fn a_symlink_out_of_the_tree_is_refused() {
         let dir = tempfile::tempdir().unwrap();

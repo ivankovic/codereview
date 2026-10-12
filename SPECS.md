@@ -165,7 +165,13 @@ twice is opened once, in first-seen order, and nothing named means the current d
 `-C`), resolved the same way. The TUI keeps one full app per repository (tree, viewer, screens,
 agent) and shows one at a time; with more than one open, a strip on the top line names them with
 their number, a `?` while that repository's agent waits for permission, a spinner while it works,
-and the pending comment count. `gt` and `gT` cycle, `W` opens a picker (j/k, Enter, 1-9). Agents
+and the pending comment count. `gt` and `gT` cycle, `W` opens a picker (j/k, Enter, 1-9). Started
+on a directory of checkouts, the TUI opens on a "Select repository" screen instead of on the first
+repository: the same list, a row each with the number, name, branch, pending comment count, what
+its agent is doing and where it is, filling the terminal with nothing of any repository behind it.
+Enter or a number opens one, on what a repository opens on; `q` there, from its last screen, comes
+back to the list rather than quitting, and `q` on the list quits. Ctrl-C quits from anywhere. The
+branches are read when the list opens, not on every draw. Agents
 in the other repositories keep running and are polled every tick. A theme or diff layout saved in
 one app is adopted by the others without another write of the config file, so no app later saves
 a stale copy. The web server holds one session and one agent per repository; every `/api` call
@@ -362,15 +368,17 @@ Both front ends open a repository on its end-to-end tests. A test is one when it
 that holds nothing but tests — under a `tests`, `test`, `e2e`, `end_to_end`, `__tests__`, `spec`,
 `specs`, `integration` or `functional` directory, or named `*.test.*`, `*.spec.*`, `*.e2e.*`,
 `*_test.go`, `*_test.py` or `test_*` — and either its path says end to end (`e2e`, `end_to_end`,
-`browser`, `playwright`, `cypress`, `selenium`, `puppeteer`, `webdriver`, `headless`), or the file
-drives the software from outside: it names a browser driver (puppeteer, Playwright, Selenium,
-WebDriver, Cypress, chromedp, fantoccini, thirtyfour, headless_chrome), a pseudo-terminal
-(portable_pty, expectrl, rexpect, pexpect, node-pty) or the built program (`CARGO_BIN_EXE_`,
-assert_cmd), counting the files a Rust test pulls in with `#[path = "..."]`. A test a recording
-names is one in any case. Code with its unit tests beside it is never one, whatever it is called
-or mentions. Each says why it counts, in a few words. The specification's levels follow the same
-rules, so its End to end level and the opening list the same tests; a test whose name or path is
-about security stays under Security there, and carries a security mark in the opening.
+`browser`, `playwright`, `cypress`, `selenium`, `puppeteer`, `webdriver`, `headless`) in a
+directory name, or as the first word or a dotted part of the file's name, so that a fixture named
+after what it is about is not one; or the file drives the software from outside: it names a
+browser driver (puppeteer, Playwright, Selenium, WebDriver, Cypress, chromedp, fantoccini,
+thirtyfour, headless_chrome), a pseudo-terminal (portable_pty, expectrl, rexpect, pexpect,
+node-pty) or the built program (`CARGO_BIN_EXE_`, assert_cmd), counting the files a Rust test
+pulls in with `#[path = "..."]`. A test a recording names is one in any case. Code with its unit
+tests beside it is never one, whatever it is called or mentions. Each says why it counts, in a
+few words. These are the rules by which a test interacts through the GUI in the classification
+below, so its GUI group and the opening list the same tests; a test whose name or path is about
+security carries a security mark in both.
 
 A recording is matched to its test by file and by name, as written or as its phrase. A test that a
 recording names as its runner (`run_by`) is left out: it hands another file's tests to a runner
@@ -402,6 +410,140 @@ appears to be — a web page (HTML or a web framework in its manifests), a termi
 terminal UI library), or a command (an entry point) — and the agent is offered the job of writing
 the first ones, with a request that spells out the recording format above so that each new test
 leaves a recording to watch. The request is the same in both front ends.
+
+## What kind of test each one is
+
+Every test is classified by the eight questions of "What Types of Automated Tests do Developers
+Write?" (Ivanković, Rimanić, Budiselić, Petrović, Fraser and Just, AST 2025), in place of unit,
+integration and system levels, which that paper found nobody agrees on. Each question has options,
+and each option is answered on its own as yes, no or inconclusive, with why in a few words:
+
+1. What artifact is being tested: Code, Config, Data, Documentation, Hardware.
+2. Is the test executing the artifact: Dynamic, Static.
+3. How does the test interact with it: API, GUI.
+4. Is the test performing a numerical measurement: Build-time, Run-time.
+5. How are outputs analyzed: As is, Post-processed.
+6. What assertions are done on the output: Existence, Constrained, Exact match.
+7. What assertions are done on the implementation or protocol: Existence, Constrained, Exact
+   match.
+8. How does the test handle dependencies: Mocks, Fakes.
+
+A question is summarised the way the paper does: Not classified when any option is inconclusive;
+otherwise the one option that holds, a word for several (Multiple artifacts, Both dynamic and
+static, Both API and GUI, Both build-time and run-time, Both, Mixed, Both fakes and mocks), or a
+word for none (Nothing, Neither, No interaction, No measurement, Not analyzed, No assertions, Real
+dependencies). The reason given for a summary is that of the options that hold, or of the one that
+could not be decided, or of the first that does not hold.
+
+The answers are read, never run: from the test's own lines and the four above them, the files of
+code its body names (the symbol index's word, as for areas below), and the end-to-end rules above.
+
+- Code holds when the test names code of the repository, drives the program, calls an HTTP API,
+  reads a source file of the repository, or runs a linter or formatter; it is no when the test
+  names no code and reads files of the repository instead, and inconclusive when it does neither,
+  or before the index is built.
+- Config, Data and Documentation hold when the test reads such a file of the repository, by its
+  name: Markdown, reStructuredText, AsciiDoc, a README or anything under `docs` is
+  documentation; CSV, TSV, JSON lines, Parquet, SQL, a database, or anything under `testdata`,
+  `fixtures` or `data` is data; TOML, YAML, INI, `.cfg`, `.conf`, `.env`, a service unit, a
+  Dockerfile, a Makefile, `package.json`, `tsconfig.json`, a `*.config.*` file or anything under
+  `.github` is configuration. A file counts when its name is a string on a line that reads a file
+  (and does not write or create one), the file exists in the repository, and either the read takes
+  the name directly or the test anchors its paths at the repository (`CARGO_MANIFEST_DIR`,
+  `__dirname`, `__file__`, `import.meta`, a root variable). A file the test wrote into a scratch
+  directory under the same name is what the program did, and has no such anchor. Hardware is
+  always no.
+- Dynamic holds when the test names code, drives the program or calls an HTTP API; Static when it
+  reads a file of the repository as it is or runs a linter.
+- API holds when the test names code of the repository or calls an HTTP API; GUI when it drives
+  the program by the end-to-end rules above: a browser, a terminal, or the built program on its
+  command line, which counts as the interface a person uses. A test is end to end exactly when it
+  is Dynamic and GUI.
+- Run-time holds when the test reads a clock (or memory) and compares a duration; Build-time when
+  it compares the size of something under `target`, `dist`, `build` or a binary.
+- Output assertions are read by their spelling: exact for equality (`assert_eq!`, `toEqual`,
+  `assertEqual`, Python's `==`, testify's `Equal`, snapshots), existence for presence (`is_some`,
+  `exists`, `toBeDefined`, `assertIsNotNone`, `NotNil`), constrained for any other condition
+  (`assert!`, `assert_ne!`, `toContain`, `assertIn`, comparisons, and the checks of a harness:
+  `check`, `wait_for`, `t.ok`). As is holds when there are any and nothing is done to the output
+  first; Post-processed when the test masks, normalises, redacts, replaces or sorts, which leaves
+  As is inconclusive, since some checks may still look at the raw output.
+- Protocol assertions: exact for a call expected with exact arguments or an exact count
+  (`toHaveBeenCalledWith`, `assert_called_once_with`, `.times(n)`); constrained for a bound on
+  the count; existence for a call or failure expected at all (`toHaveBeenCalled`,
+  `should_panic`, `assertRaises`, `pytest.raises`, `toThrow`, `is_err`), and for code the test
+  calls being unwrapped, which asserts that it does not fail.
+- Mocks hold for a mocking library (mockall, `unittest.mock`, `jest.fn`, `vi.fn`, sinon, gomock,
+  nock); Fakes for a name with fake, stub, dummy or in-memory in it.
+
+A test whose name or path has a word about security in it (password, auth, CSRF, sign in,
+permission and so on, as whole words) carries a security mark with that reason, whatever its kind.
+
+Both front ends group the specification by one question, how the test interacts with what it
+tests to begin with, and list every option of it as a group even when empty; mixed, none and Not
+classified appear only when some test is. A group says what its tests are, and an empty GUI group
+says, as a finding, that nothing shows the program working the way someone would use it. The
+areas count each test towards its group. In the terminal, `c` groups by the next question and `K`
+lists all eight answers for the test under the cursor, with why; the status line gives the
+cursor's test its answer to the current question and the reason. On the page, a select above the
+tests picks the question and is kept in the address (`by=`), and each test's card has its kind,
+end to end or how it interacts, which opens in place to the eight answers with why. Tests elsewhere
+— a file's tests, the smaller tests of an end-to-end one — are labelled end to end or by how they
+interact, and the changes a stretch made carry only the security mark.
+
+## A sample classified by hand
+
+The paper's classification was built against a sample of tests people had classified by hand,
+kept as the rules' test; `codereview kinds` keeps one for the rules above. A dataset is a
+directory, `tests/data/kinds` unless `--dataset` names another: `kinds.csv`, a row per sample,
+and a directory per sample, laid out as omnidiff lays out its fixtures.
+
+`kinds draw` takes checkouts, or directories of checkouts such as `~/src` (a directory that is
+not the top of a checkout is read for the checkouts directly below it), and draws `--count`
+tests (20 unless told) at random among all their tests, every test as likely as every other,
+with at most `--per-repository` (5) from any one repository, those already in the dataset
+counting. A checkout whose `origin` is not on GitHub, or that has no commits, is passed over
+and said so; a test is read at the checkout's HEAD, from the files the working tree holds as
+committed, so a file changed or untracked there is left out. A test already in the dataset, by
+repository, file and name, is not drawn again. `--seed` makes a draw repeatable over the same
+checkouts; without one a seed is picked and printed. Each sample's directory, named from the
+repository, the short commit, the file and the test, holds the file verbatim as
+`file.<ext>.test` and the test's own lines as `test.<ext>.test` — the suffix keeps them from
+being read as this repository's code or tests — and a README giving the repository's GitHub
+URL, the full commit, the file, the lines and the test, saying that the content is not
+codereview's and stays under the source's licence, and naming the licence file at the top of
+the repository at that commit with its first line, or saying there is none.
+
+The CSV's columns are the sample's directory name, the repository as `owner/name`, the full
+commit, the file, the first and last line, the test as written and as a phrase, then what the
+rules need beyond the text, read from the checkout when it was drawn — the files of code the
+test names, by the symbol index (code only), why it drives the program if it does, and the
+files of the repository its strings name — then its status (pending, done or skipped), a column
+per option of the eight questions (`artifact.code` to `dependencies.fakes`) holding yes, no,
+inconclusive or nothing yet, and a note. Lists are separated by semicolons; fields are quoted
+the usual way. Columns are found by name, so an option missing from an older file is
+unanswered. The file is rewritten whole through a temporary one on every change.
+
+`kinds label` opens the samples in the terminal, at the one named or the first pending: a
+header with which sample of how many, how many are done, the repository at the short commit,
+the file and lines and the status; the file, highlighted, scrolled to the test, its lines
+marked; and the eight questions with their options. `y`, `n` and `i` answer the option under
+the cursor (holds, does not, cannot be told) and move to the next, `Space` cycles an answer
+and `x` clears it, `N` answers every unanswered option of the question no and moves to the
+next question, `j`/`k` and `Tab`/`Shift-Tab` move by option and by question. A question fully
+answered shows its summary. A sample with every option answered is done; `s` sets one aside
+as skipped or takes it back. `]` and `[` move between samples and `}` goes to the next one
+pending; `Ctrl-d`/`Ctrl-u` scroll the file, which is shown whole when it fits, and `z`
+returns to the test; `e` writes a note, shown in the title of the file's pane; `?` lists the
+keys. Every answer is saved as it is given. The rules' answers are hidden until
+`r` shows them beside each option, with whether the two agree, and the status line gives the
+rules' reason for the option under the cursor; they are worked out from the sample alone, so
+no checkout is needed.
+
+`kinds agree` runs the rules on every finished sample from what it keeps and prints, for each
+question, on how many the summary is the same and, per option, how often the answers are;
+`--verbose` lists each sample where the summaries differ, the person's and the rules', with
+the rules' reason.
 
 ## What a stretch of history did
 
@@ -453,7 +595,8 @@ of the size of one object per segment; the page unpacks them on arrival.
 
 ## Terminal UI
 
-Screens form a stack; `q` or `Esc` pops one, and quits from the explorer. The explorer has a side
+Screens form a stack; `q` or `Esc` pops one, and quits from the explorer (or, started on a
+directory of checkouts, goes back to the repository list). The explorer has a side
 panel — the file tree (folding, filter, status letters, pending-comment counts for files and
 directories; past the tenth file of a directory the rest fold behind `… N more`, except the
 changed, the commented on and the one under the cursor, and nothing folds under a filter),
@@ -525,9 +668,9 @@ at the first line it ran, with every line it ran marked by a bar in the gutter a
 line naming the test on a marked line; the mark lasts while that file stays open and through a
 refresh, and a file opened any other way has none. The documentation it names, or the closest
 sections as a guess with the words they share, each opening at its heading. The smaller tests
-that name a file it ran or live in one, with their level and the files they share, each opening
-at its source. A screen opened while the symbols are still being read says so and fills in when
-they are. `q` goes back to the list. The terminal end-to-end tests name the section they
+that name a file it ran or live in one, with how they interact and the files they share, each
+opening at its source. A screen opened while the symbols are still being read says so and fills
+in when they are. `q` goes back to the list. The terminal end-to-end tests name the section they
 demonstrate (`documents`), and under `cargo llvm-cov` each writes the coverage of its own run.
 
 Both screens mark a stretch of history, the last 7 days to begin with; `w` moves on to the last
@@ -698,8 +841,10 @@ test the repository defines, found by reading it rather than running it, counted
 file, each file folded until it is opened and each test a phrase that opens its line — a Rust
 `#[test]` function, a pytest `test*` function or `Test*` class method in a file pytest collects,
 a Go `TestXxx` in a `_test.go` file, a JavaScript or TypeScript `it` or `test` call in a test
-file, named with its `describe` blocks — with the ones marked to skip marked. Last, the files the
-rest of the tree leans on most that no test code names: test code being a test, a `#[cfg(test)]`
+file, named with its `describe` blocks — with the ones marked to skip marked. A file whose own
+extension is not one of those languages, such as a copy of another project's source kept as test
+data (`after.rs.test`), holds no tests, though it is highlighted as its language. Last, the files
+the rest of the tree leans on most that no test code names: test code being a test, a `#[cfg(test)]`
 module — a file of its own when declared as `#[cfg(test)] mod name;` — or a whole test file,
 and naming being the rule what it leans on uses, so that a file's imports do not make what they
 import look tested. A file with tests of its own is tested, and
@@ -753,7 +898,7 @@ rewrites line numbers, `def`, `refs` and `symbols` query the index, `e2e` lists 
 tests with how their last recorded runs went (`--json` for all of it; `--test NAME` for one of
 them, with its steps, the code it ran, its documentation and the tests below it; `--stretch`
 for what a stretch did, with `--record` to record the tests at its base first, and with `--test`
-for one test before and after), and `agent`
-sends one
+for one test before and after), `kinds` draws, labels and measures a sample of tests classified
+by hand (`draw`, `label`, `agree`; see above), and `agent` sends one
 prompt and streams the answer to stdout (permission requests are asked on the terminal, or
 auto-allowed with `--yes`). `-C DIR` selects the repository.

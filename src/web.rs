@@ -425,10 +425,10 @@ pub fn run(
         if state.auth.is_password() {
             println!("sign in with the password behind CODEREVIEW_PASSWORD_HASH");
         }
-        if serve.open_browser {
-            if let Err(e) = open::that(&url) {
-                eprintln!("could not open a browser: {e}");
-            }
+        if serve.open_browser
+            && let Err(e) = open::that(&url)
+        {
+            eprintln!("could not open a browser: {e}");
         }
         watch_repositories(state.clone(), !checkouts.is_empty());
         warm_and_keep(state.clone(), checkouts);
@@ -894,10 +894,10 @@ async fn index(
     if let Some(api_token) = signed_in(&state, &headers) {
         return Html(page_for(&api_token)).into_response();
     }
-    if let (Some(given), Some(want)) = (q.t.as_deref(), state.auth.token()) {
-        if constant_eq(given, want) {
-            return start_session(&state);
-        }
+    if let (Some(given), Some(want)) = (q.t.as_deref(), state.auth.token())
+        && constant_eq(given, want)
+    {
+        return start_session(&state);
     }
     if state.auth.is_password() {
         return (StatusCode::OK, Html(login_page(None))).into_response();

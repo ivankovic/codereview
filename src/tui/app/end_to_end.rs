@@ -764,12 +764,12 @@ impl App {
                 return;
             }
         };
-        if let Some((commit, run)) = &self.base_run {
-            if run.lock().unwrap_or_else(|e| e.into_inner()).running {
-                let short: String = commit.chars().take(7).collect();
-                self.info(format!("the tests are already being recorded at {short}"));
-                return;
-            }
+        if let Some((commit, run)) = &self.base_run
+            && run.lock().unwrap_or_else(|e| e.into_inner()).running
+        {
+            let short: String = commit.chars().take(7).collect();
+            self.info(format!("the tests are already being recorded at {short}"));
+            return;
         }
         if base.command.is_none() {
             self.info(

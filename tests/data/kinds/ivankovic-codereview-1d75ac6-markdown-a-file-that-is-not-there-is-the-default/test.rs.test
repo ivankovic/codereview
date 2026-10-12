@@ -1,0 +1,7 @@
+    fn a_file_that_is_not_there_is_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let count = |text: &str| text.lines().count();
+        assert_eq!(load(dir.path(), "NOPE.md", count).unwrap(), 0);
+        save(dir.path(), "THERE.md", "a\nb\n").unwrap();
+        assert_eq!(load(dir.path(), "THERE.md", count).unwrap(), 2);
+    }

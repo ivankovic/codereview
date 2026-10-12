@@ -1,0 +1,23 @@
+fn the_fixture_and_the_document_agree() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let site = std::fs::read_to_string(root.join("tests/nginx/site.conf")).unwrap();
+    let doc = std::fs::read_to_string(root.join("docs/deploy.md")).unwrap();
+    for directive in [
+        "log_format noquery",
+        "$uri $server_protocol",
+        "limit_req_zone",
+        "limit_req_status 429",
+        "server_tokens off",
+        "ssl_protocols TLSv1.2 TLSv1.3",
+        "add_header Strict-Transport-Security",
+        "proxy_set_header X-Forwarded-Proto",
+        "client_max_body_size 1m",
+        "proxy_pass http://127.0.0.1:",
+    ] {
+        assert!(site.contains(directive), "the fixture lost {directive:?}");
+        assert!(
+            doc.contains(directive),
+            "docs/deploy.md no longer has {directive:?}, which the proxy test exercises"
+        );
+    }
+}

@@ -1,0 +1,12 @@
+    fn replace_ranges_keeps_the_cursor_and_search_but_drops_the_cross_highlight() {
+        let mut state = state_with_three_search_matches_on_rows_1_4_and_8();
+        state.cursor_row = 4;
+        state.cursor_col = 2;
+        state.highlight_destination = Some(TextRange::new(0, 0, 0, 1));
+
+        state.replace_ranges(vec![range_match(TextOperation::Insert, 0, 5)], 10);
+
+        assert_eq!((state.cursor_row, state.cursor_col), (4, 2));
+        assert_eq!(state.search_matches.len(), 3);
+        assert_eq!(state.highlight_destination, None);
+    }

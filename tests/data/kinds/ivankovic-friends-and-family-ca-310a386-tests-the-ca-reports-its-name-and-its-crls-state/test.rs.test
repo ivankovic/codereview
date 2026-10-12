@@ -1,0 +1,21 @@
+fn the_ca_reports_its_name_and_its_crls_state() {
+    let dir = crate::test_dir();
+    let created = new_ca(dir.path());
+    let ca = Ca::open(&Store::new(dir.path())).unwrap();
+    assert_eq!((created.name(), ca.name()), ("Test family", "Test family"));
+    assert_eq!(
+        ca.crl_status().unwrap(),
+        CrlStatus {
+            number: 1,
+            next_update: NOW + CRL_VALIDITY
+        }
+    );
+    ca.refresh_crl(NOW + Duration::days(3)).unwrap();
+    assert_eq!(
+        ca.crl_status().unwrap(),
+        CrlStatus {
+            number: 2,
+            next_update: NOW + Duration::days(3) + CRL_VALIDITY
+        }
+    );
+}

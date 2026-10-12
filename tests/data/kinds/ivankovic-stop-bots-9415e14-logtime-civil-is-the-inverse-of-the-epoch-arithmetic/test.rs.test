@@ -1,0 +1,5 @@
+    fn civil_is_the_inverse_of_the_epoch_arithmetic() {
+        assert_eq!(civil(SEP_28), (2026, 9, 28, 6, 33, 1));
+        assert_eq!(civil(0), (1970, 1, 1, 0, 0, 0));
+        assert_eq!(civil(-1), (1969, 12, 31, 23, 59, 59));
+    }

@@ -67,18 +67,18 @@ fn theme(name: &str) -> &'static Theme {
 fn syntax_for(path: &str, first_line: &str) -> Option<&'static SyntaxReference> {
     let set = syntax_set();
     let name = path.rsplit('/').next().unwrap_or(path);
-    if let Some(ext) = name.rsplit('.').next().filter(|e| *e != name) {
-        if let Some(s) = set.find_syntax_by_extension(ext) {
-            return Some(s);
-        }
+    if let Some(ext) = name.rsplit('.').next().filter(|e| *e != name)
+        && let Some(s) = set.find_syntax_by_extension(ext)
+    {
+        return Some(s);
     }
     if let Some(s) = set.find_syntax_by_extension(name) {
         return Some(s);
     }
-    if name.eq_ignore_ascii_case("makefile") || name.ends_with(".mk") {
-        if let Some(s) = set.find_syntax_by_name("Makefile") {
-            return Some(s);
-        }
+    if (name.eq_ignore_ascii_case("makefile") || name.ends_with(".mk"))
+        && let Some(s) = set.find_syntax_by_name("Makefile")
+    {
+        return Some(s);
     }
     set.find_syntax_by_first_line(first_line)
 }

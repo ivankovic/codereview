@@ -3,6 +3,7 @@
 pub mod agent_panel;
 pub mod app;
 pub mod diff_view;
+pub mod kinds;
 pub mod outline;
 pub mod prompt;
 pub mod style;
@@ -38,6 +39,9 @@ pub fn run(opened: crate::session::Opened) -> Result<()> {
         }
     }
     ws.opens_on_tests = true;
+    if !opened.checkouts.is_empty() {
+        ws.open_home();
+    }
     ws.watch(opened.checkouts);
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -120,8 +124,8 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, ws: &mut Workspace) -> Re
                 ws.tick();
             }
             Event::Mouse(m) => match m.kind {
-                MouseEventKind::ScrollDown => ws.app_mut().scroll_main(3),
-                MouseEventKind::ScrollUp => ws.app_mut().scroll_main(-3),
+                MouseEventKind::ScrollDown if !ws.scroll_picker(1) => ws.app_mut().scroll_main(3),
+                MouseEventKind::ScrollUp if !ws.scroll_picker(-1) => ws.app_mut().scroll_main(-3),
                 _ => {}
             },
             _ => {}
@@ -566,7 +570,10 @@ mod tests {
             ..Default::default()
         };
         let mut app = App::new(session, Some("a.rs".into()));
-        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        // Tall enough that the whole turn fits however many rows the scratch repository's path
+        // wraps to: under a long TMPDIR (a Portage build) a 24-row panel scrolled the first log
+        // line out of view.
+        let mut term = Terminal::new(TestBackend::new(100, 48)).unwrap();
         // Ask about the current line before the agent has started: the prompt is queued.
         press(&mut app, &[KeyCode::Char('a')]);
         for ch in "what is this?".chars() {
@@ -1049,7 +1056,7 @@ mod tests {
             "{screen}"
         );
         assert!(
-            screen.contains("saving works · unit · src/unit.rs:2 · shares src/review.rs"),
+            screen.contains("saving works · api · src/unit.rs:2 · shares src/review.rs"),
             "{screen}"
         );
 
@@ -1170,12 +1177,24 @@ mod tests {
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("specification"), "{screen}");
         assert!(screen.contains("last 7 days"), "{screen}");
-        assert!(screen.contains("Security 1"), "{screen}");
-        assert!(screen.contains("a wrong password is refused"), "{screen}");
         assert!(
-            screen.contains("No test drives the whole system"),
-            "an empty end-to-end level is said: {screen}"
+            screen.contains("How does the test interact with it?"),
+            "{screen}"
         );
+        assert!(screen.contains("No interaction 1"), "{screen}");
+        assert!(
+            screen.contains("a wrong password is refused · security"),
+            "security is a mark: {screen}"
+        );
+        assert!(
+            screen.contains("No test drives the program"),
+            "an empty GUI group is said: {screen}"
+        );
+        // c: grouped by the next question.
+        press(&mut app, &[KeyCode::Char('c')]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("(c: by measurement)"), "{screen}");
+        assert!(screen.contains("No measurement 1"), "{screen}");
 
         // s: the last commit, then uncommitted work, where the test asks less.
         press(&mut app, &[KeyCode::Char('s')]);
@@ -1351,9 +1370,9 @@ mod tests {
         assert!(screen.contains("▸ one.rs 15"), "{screen}");
         assert!(!rows(&app).iter().any(|r| matches!(r, SpecRow::Change(..))));
 
-        // The tests as they are: the unit level is folded, and opens to files, then tests.
+        // The tests as they are: the largest group is folded, and opens to files, then tests.
         assert_eq!(tests(&app), 0, "thirty tests start folded");
-        let unit = fold(&app, "Unit");
+        let unit = fold(&app, "No interaction");
         go_to(&mut app, unit);
         press(&mut app, &[KeyCode::Enter]);
         let one = rows(&app)
@@ -1420,6 +1439,67 @@ mod tests {
             .to_string();
         assert!(strip.contains("2 second"), "{strip}");
         assert!(!ws.find_new(), "found once");
+    }
+
+    #[test]
+    fn a_directory_of_checkouts_opens_on_the_repository_list() {
+        use super::workspace::Workspace;
+        let parent = tempfile::tempdir().unwrap();
+        for name in ["alpha", "beta"] {
+            let dir = parent.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            std::process::Command::new("git")
+                .args(["init", "-q", "-b", "trunk"])
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+        }
+        let config = parent.path().join("config.toml");
+        let opened =
+            crate::session::open_targets(parent.path(), &[], Some(config), |_| {}).unwrap();
+        let mut ws = Workspace::new(opened.targets);
+        ws.open_home();
+        ws.watch(opened.checkouts);
+        let mut term = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        let screen = draw_ws(&mut term, &mut ws);
+        assert!(screen.contains("Select repository · 2"), "{screen}");
+        assert!(screen.contains(" 1 alpha trunk"), "{screen}");
+        assert!(screen.contains(" 2 beta  trunk"), "{screen}");
+        assert!(
+            !screen.contains("gt/gT"),
+            "no strip over the list: {screen}"
+        );
+        // Esc has nothing to close onto; Enter opens the highlighted one.
+        ws.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(ws.selecting);
+        ws.handle_key(key('j'));
+        ws.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!ws.selecting);
+        assert_eq!(ws.active, 1);
+        let screen = draw_ws(&mut term, &mut ws);
+        assert!(!screen.contains("Select repository"), "{screen}");
+        // `q` from its last screen comes back to the list, on the one just left.
+        ws.handle_key(key('q'));
+        assert!(ws.selecting);
+        assert_eq!(ws.picker, Some(1));
+        assert!(!ws.quit());
+        // A number opens one directly, even the only one; Ctrl-C quits from inside it.
+        ws.handle_key(key('1'));
+        assert_eq!(ws.active, 0);
+        ws.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(ws.quit());
+        // `q` on the list quits.
+        let opened = crate::session::open_targets(
+            parent.path(),
+            &[],
+            Some(parent.path().join("config.toml")),
+            |_| {},
+        )
+        .unwrap();
+        let mut ws = Workspace::new(opened.targets);
+        ws.open_home();
+        ws.handle_key(key('q'));
+        assert!(ws.quit());
     }
 
     #[test]

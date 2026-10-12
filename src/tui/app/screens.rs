@@ -6,6 +6,7 @@
 //! having to be made public for them.
 
 use super::*;
+use crate::classify::Question;
 use std::collections::HashMap;
 
 pub struct LogState {
@@ -63,6 +64,8 @@ pub struct LocationsState {
 /// the whole page and Enter opens or closes whatever it is on.
 pub struct SpecState {
     pub stretch: Stretch,
+    /// The question the tests are grouped by; `c` steps to the next.
+    pub by: Question,
     pub span: crate::spec::Span,
     pub total: usize,
     pub ignored: usize,
@@ -103,25 +106,6 @@ pub enum SpecRow {
 
 /// A group small enough to read whole: its fold starts open, and it is not split further.
 const SMALL: usize = 12;
-
-/// What a level's empty section says: an absent security or end-to-end suite is a finding.
-fn level_says(level: Level) -> (&'static str, &'static str) {
-    match level {
-        Level::Security => (
-            "Tests whose name or path is about signing in, secrets, permissions or attacks.",
-            "No test is named for security: nothing here says what an attacker cannot do.",
-        ),
-        Level::EndToEnd => (
-            "Tests that drive the whole system the way a person would: through a browser, or a real server.",
-            "No test drives the whole system: nothing here shows it working the way someone would use it.",
-        ),
-        Level::Integration => (
-            "Tests that reach the system through its public interface.",
-            "None found.",
-        ),
-        Level::Unit => ("Everything else: one piece at a time.", "None found."),
-    }
-}
 
 /// Items grouped by a key, in the order the keys sort.
 fn grouped<T: Clone>(items: &[T], key: impl Fn(&T) -> String) -> Vec<(String, Vec<T>)> {
@@ -283,8 +267,10 @@ pub fn spec_rows(state: &SpecState) -> Vec<SpecRow> {
         )),
         None => {
             rows.push(SpecRow::Heading(
-                "Tests by area: security, end to end, integration, unit; files no test names"
-                    .into(),
+                format!(
+                    "Tests by area, by {}; files no test names",
+                    state.by.short()
+                ),
                 false,
             ));
             rows.extend(spec.areas.iter().cloned().map(SpecRow::Area));
@@ -333,7 +319,7 @@ pub fn spec_rows(state: &SpecState) -> Vec<SpecRow> {
         for group in &spec.groups {
             let these: Vec<_> = hits
                 .iter()
-                .filter(|t| t.level == group.level)
+                .filter(|t| t.kind.summary(state.by) == group.title)
                 .cloned()
                 .collect();
             if these.is_empty() {
@@ -348,25 +334,25 @@ pub fn spec_rows(state: &SpecState) -> Vec<SpecRow> {
         return rows;
     }
 
+    rows.push(SpecRow::Text(String::new(), false));
+    rows.push(SpecRow::Heading(state.by.title().to_string(), false));
     for group in &spec.groups {
         let tests: Vec<_> = pool
             .iter()
-            .filter(|t| t.level == group.level)
+            .filter(|t| t.kind.summary(state.by) == group.title)
             .cloned()
             .collect();
+        let (says, none, finding) = crate::classify::describe(state.by, &group.title);
         rows.push(SpecRow::Text(String::new(), false));
         if tests.is_empty() {
             rows.push(SpecRow::Heading(format!("{} 0", group.title), false));
             match area {
                 Some(a) => rows.push(SpecRow::Text(format!("None counts towards {a}."), false)),
-                None => {
-                    let finding = matches!(group.level, Level::Security | Level::EndToEnd);
-                    rows.push(SpecRow::Text(level_says(group.level).1.into(), finding));
-                }
+                None => rows.push(SpecRow::Text(none.into(), finding)),
             }
             continue;
         }
-        let key = format!("level:{}", group.title);
+        let key = format!("group:{}", group.title);
         let open = state.is_open(&key, tests.len() <= SMALL);
         rows.push(SpecRow::Fold {
             key: key.clone(),
@@ -380,7 +366,9 @@ pub fn spec_rows(state: &SpecState) -> Vec<SpecRow> {
         if !open {
             continue;
         }
-        rows.push(SpecRow::Text(level_says(group.level).0.into(), false));
+        if !says.is_empty() {
+            rows.push(SpecRow::Text(says.into(), false));
+        }
         match area {
             Some(_) => state.by_file(&mut rows, &tests, &key, 1),
             None => state.by_area(&mut rows, &tests, &key, 1),
@@ -394,7 +382,16 @@ impl App {
     /// replaced, so cycling stretches does not pile screens up, and keeps its folds and its
     /// search.
     pub(super) fn push_spec(&mut self, stretch: Stretch) {
-        let spec = self.session.spec(&stretch);
+        let by = match self.screen() {
+            Screen::Spec(s) => s.by,
+            _ => Question::Interaction,
+        };
+        self.push_spec_by(stretch, by);
+    }
+
+    /// The specification for `stretch`, grouped by `by`.
+    fn push_spec_by(&mut self, stretch: Stretch, by: Question) {
+        let spec = self.session.spec(&stretch, by);
         let Some(spec) = self.report(spec) else {
             return;
         };
@@ -404,6 +401,7 @@ impl App {
         };
         let mut state = SpecState {
             stretch,
+            by,
             span: spec.span.clone(),
             total: spec.total,
             ignored: spec.ignored,
@@ -478,6 +476,32 @@ impl App {
                     .collect();
                 self.push_locations(format!("what {} names", t.test.label), hits);
             }
+            // The next of the eight questions to group the tests by.
+            KeyCode::Char('c') => {
+                let (stretch, by) = (state.stretch.clone(), state.by.next());
+                self.push_spec_by(stretch, by);
+                self.info(format!("grouped by: {}", by.title()));
+            }
+            // Every question, answered for the test under the cursor.
+            KeyCode::Char('K') => {
+                let Some(SpecRow::Test(t, _)) = state.rows.current().cloned() else {
+                    self.info("K says what kind of test one is; put the cursor on a test");
+                    return;
+                };
+                let hits = t
+                    .kind
+                    .answers
+                    .iter()
+                    .map(|a| Hit {
+                        path: t.test.path.clone(),
+                        line: t.test.line,
+                        column: 0,
+                        label: a.question.short().to_string(),
+                        text: format!("{} — {}", a.summary, a.reason),
+                    })
+                    .collect();
+                self.push_locations(format!("what kind of test {} is", t.test.label), hits);
+            }
             KeyCode::Char('s') => {
                 if matches!(state.stretch, Stretch::Commit(_)) {
                     self.info("this is one commit; L and the log pick another");
@@ -548,12 +572,12 @@ impl App {
                     Some(SpecRow::Fold { open: true, .. }) => Some(at),
                     _ => parent,
                 };
-                if let Some(i) = target {
-                    if let SpecRow::Fold { key, .. } = &state.rows.items[i] {
-                        state.open.insert(key.clone(), false);
-                        state.rows.cursor = i;
-                        state.rebuild();
-                    }
+                if let Some(i) = target
+                    && let SpecRow::Fold { key, .. } = &state.rows.items[i]
+                {
+                    state.open.insert(key.clone(), false);
+                    state.rows.cursor = i;
+                    state.rebuild();
                 }
             }
             KeyCode::Char('o') => match state.rows.current().cloned() {
@@ -590,7 +614,11 @@ impl App {
                 path: t.test.path.clone(),
                 line: t.test.line,
                 column: 0,
-                label: t.level.title().to_lowercase(),
+                label: if t.end_to_end {
+                    "end to end".to_string()
+                } else {
+                    t.kind.summary(Question::Interaction).to_lowercase()
+                },
                 text: t.test.label,
             })
             .collect::<Vec<_>>();
@@ -922,11 +950,11 @@ impl App {
                     return;
                 }
                 KeyCode::Char('H') => {
-                    if state.focus_files {
-                        if let Some(f) = state.files.current() {
-                            let path = f.path.clone();
-                            self.push_log(Some(path));
-                        }
+                    if state.focus_files
+                        && let Some(f) = state.files.current()
+                    {
+                        let path = f.path.clone();
+                        self.push_log(Some(path));
                     }
                     return;
                 }
@@ -938,10 +966,8 @@ impl App {
         // field from the screen stack, so neither has to take the screen apart to get it.
         let mut failed = None;
         if let Some(Screen::Log(state)) = self.screens.last_mut() {
-            if load_more {
-                if let Err(e) = Self::load_more_commits(&mut self.session, state) {
-                    failed = Some(e);
-                }
+            if load_more && let Err(e) = Self::load_more_commits(&mut self.session, state) {
+                failed = Some(e);
             }
             if let Err(e) = Self::load_commit_files(&mut self.session, state) {
                 failed = failed.or(Some(e));

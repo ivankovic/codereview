@@ -1,0 +1,3 @@
+fn invariants() -> Result<()> {
+    assert_ground_truth_invariants("java-defects4j-cli-26-optionbuilder")
+}

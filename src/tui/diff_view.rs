@@ -453,31 +453,31 @@ impl DiffView {
                 end += 1;
             }
             for (k, r) in self.rows[start..end].iter().enumerate() {
-                if let Some(b) = r.before {
-                    if out.len() < height {
-                        out.push(self.side_line(
-                            theme,
-                            false,
-                            Some(b),
-                            width,
-                            highlight,
-                            start + k == self.cursor,
-                        ));
-                    }
+                if let Some(b) = r.before
+                    && out.len() < height
+                {
+                    out.push(self.side_line(
+                        theme,
+                        false,
+                        Some(b),
+                        width,
+                        highlight,
+                        start + k == self.cursor,
+                    ));
                 }
             }
             for (k, r) in self.rows[start..end].iter().enumerate() {
-                if let Some(a) = r.after {
-                    if out.len() < height {
-                        out.push(self.side_line(
-                            theme,
-                            true,
-                            Some(a),
-                            width,
-                            highlight,
-                            start + k == self.cursor,
-                        ));
-                    }
+                if let Some(a) = r.after
+                    && out.len() < height
+                {
+                    out.push(self.side_line(
+                        theme,
+                        true,
+                        Some(a),
+                        width,
+                        highlight,
+                        start + k == self.cursor,
+                    ));
                 }
             }
             ri = end;

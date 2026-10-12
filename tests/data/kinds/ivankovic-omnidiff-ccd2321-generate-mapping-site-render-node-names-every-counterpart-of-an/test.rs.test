@@ -1,0 +1,62 @@
+    fn render_node_names_every_counterpart_of_an_all_to_all_member_and_badges_it() {
+        let before_source = "fn main() {\n    foo();\n}\n";
+        let after_source = "fn main() {\n    foo();\n    foo();\n}\n";
+        let before_tree = parse_rust(before_source);
+        let after_tree = parse_rust(after_source);
+        let before_root = before_tree.root_node();
+        let after_root = after_tree.root_node();
+        let mapping =
+            duplicated_statement_mapping(before_root, before_source, after_root, after_source);
+        let caches = rebuild_caches_for_mapping(&mapping, before_root, after_root);
+        let groups = resolve_groups(&mapping, before_root, after_root);
+        assert_eq!((groups[0].before.len(), groups[0].after.len()), (1, 2));
+
+        let before_html = render_node(
+            before_root,
+            before_source.as_bytes(),
+            'b',
+            &caches,
+            &groups,
+            &HashMap::new(),
+            true,
+        );
+        let after_statements = foo_statements(after_root, after_source.as_bytes());
+        // Both copies, not just the one the projection paired the original with.
+        let expected_match = format!(
+            r#"data-match="a-{} a-{}""#,
+            after_statements[0].id(),
+            after_statements[1].id()
+        );
+        assert!(
+            before_html.contains(&expected_match),
+            "expected {expected_match} in {before_html}"
+        );
+        assert!(
+            before_html.contains(r#" group-all" id="b-"#),
+            "the member carries the group class: {before_html}"
+        );
+        assert!(
+            before_html.contains(r#"<span class="group-badge group-all" title="all-to-all group: each of the 1 before nodes corresponds to each of the 2 after nodes">all 1:2</span>"#),
+            "{before_html}"
+        );
+
+        let after_html = render_node(
+            after_root,
+            after_source.as_bytes(),
+            'a',
+            &caches,
+            &groups,
+            &HashMap::new(),
+            true,
+        );
+        let original = foo_statements(before_root, before_source.as_bytes())[0];
+        // Each copy is matched (neither is the "leftover"), and both point back at the original.
+        assert_eq!(
+            after_html
+                .matches(&format!(r#"data-match="b-{}""#, original.id()))
+                .count(),
+            2,
+            "{after_html}"
+        );
+        assert!(!after_html.contains("status-inserted"), "{after_html}");
+    }

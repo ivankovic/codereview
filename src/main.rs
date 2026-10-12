@@ -15,7 +15,7 @@
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -140,12 +140,52 @@ enum Command {
     Refs { name: String },
     /// Definitions whose name contains the query.
     Symbols { query: String },
+    /// A sample of tests classified by hand, to measure the test classification against.
+    Kinds {
+        /// The dataset directory, with `kinds.csv` and a directory per sample.
+        #[arg(long, default_value = codereview::kinds::DEFAULT_DATASET, global = true)]
+        dataset: PathBuf,
+        #[command(subcommand)]
+        action: KindsAction,
+    },
     /// Send one prompt to the configured ACP agent and print its answer.
     Agent {
         prompt: String,
         /// Answer every permission request with the first allow option instead of asking.
         #[arg(long)]
         yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum KindsAction {
+    /// Draw tests at random from checkouts of GitHub repositories into the dataset: each with
+    /// its repository, commit and file, its text, and where it came from.
+    Draw {
+        /// Checkouts, or directories of checkouts such as ~/src.
+        #[arg(required = true)]
+        sources: Vec<PathBuf>,
+        /// Tests to add.
+        #[arg(long, default_value_t = 20)]
+        count: usize,
+        /// The seed of the draw; the same seed over the same checkouts draws the same tests.
+        /// Without it one is picked and printed.
+        #[arg(long)]
+        seed: Option<u64>,
+        /// At most this many samples from any one repository.
+        #[arg(long, default_value_t = 5)]
+        per_repository: usize,
+    },
+    /// Classify the samples by hand, in the terminal; every answer is saved as it is given.
+    Label {
+        /// The sample to open on; the first one not finished otherwise.
+        name: Option<String>,
+    },
+    /// How the classification's rules agree with the samples classified by hand.
+    Agree {
+        /// List every sample where they differ.
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -213,6 +253,7 @@ fn main() -> Result<()> {
         Some(Command::Def { name }) => definitions(&from, &name),
         Some(Command::Refs { name }) => references(&from, &name),
         Some(Command::Symbols { query }) => symbols(&from, &query),
+        Some(Command::Kinds { dataset, action }) => kinds(&from.join(dataset), action),
         Some(Command::Agent { prompt, yes }) => agent_once(&from, &prompt, yes),
     }
 }
@@ -785,6 +826,81 @@ fn list(from: &std::path::Path, all: bool, path: Option<&str>, json: bool) -> Re
         );
     }
     Ok(())
+}
+
+/// `codereview kinds`: draw a sample, label it, or say how the rules agree with it.
+fn kinds(dataset: &Path, action: KindsAction) -> Result<()> {
+    use codereview::kinds::{Dataset, Draw, agreement, draw};
+    match action {
+        KindsAction::Draw {
+            sources,
+            count,
+            seed,
+            per_repository,
+        } => {
+            let seed = seed.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(1, |d| d.as_secs())
+            });
+            let mut set = Dataset::open(dataset)?;
+            let how = Draw {
+                count,
+                seed,
+                per_repository,
+            };
+            let drawn = draw(&mut set, &sources, &how)?;
+            for skipped in &drawn.passed_over {
+                eprintln!("passed over {skipped}");
+            }
+            for name in &drawn.added {
+                println!("{name}");
+            }
+            eprintln!(
+                "drew {} of {} tests in {} repositories into {} (seed {seed}); {} samples now",
+                drawn.added.len(),
+                drawn.candidates,
+                drawn.repositories,
+                dataset.display(),
+                set.samples.len()
+            );
+            Ok(())
+        }
+        #[cfg(feature = "tui")]
+        KindsAction::Label { name } => codereview::tui::kinds::run(dataset, name.as_deref()),
+        #[cfg(not(feature = "tui"))]
+        KindsAction::Label { .. } => bail!("built without the tui feature"),
+        KindsAction::Agree { verbose } => {
+            let set = Dataset::open(dataset)?;
+            let rows = agreement(&set)?;
+            let finished = rows.first().map_or(0, |r| r.finished);
+            if finished == 0 {
+                println!("no sample is finished yet; label some with `codereview kinds label`");
+                return Ok(());
+            }
+            println!("{finished} samples classified by hand\n");
+            for row in &rows {
+                let options: Vec<String> = row
+                    .options
+                    .iter()
+                    .map(|(o, n)| format!("{o} {n}"))
+                    .collect();
+                println!(
+                    "{:<62} {:>3}/{:<3} options: {}",
+                    row.question.title(),
+                    row.agree,
+                    row.finished,
+                    options.join(", ")
+                );
+                if verbose {
+                    for (sample, person, rules, why) in &row.differ {
+                        println!("    {sample}: by hand {person}, rules {rules} ({why})");
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -50,10 +50,10 @@ const STOP: &[&str] = &[
 /// A word as it is compared: lower case, with a plural or a tense taken off.
 fn stem(word: &str) -> String {
     for suffix in ["ing", "ed", "es", "s"] {
-        if word.len() > suffix.len() + 3 {
-            if let Some(rest) = word.strip_suffix(suffix) {
-                return rest.to_string();
-            }
+        if word.len() > suffix.len() + 3
+            && let Some(rest) = word.strip_suffix(suffix)
+        {
+            return rest.to_string();
         }
     }
     word.to_string()

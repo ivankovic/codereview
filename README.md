@@ -19,6 +19,12 @@ line they were left on and finding it again after edits.
   declared anywhere — how it is doing, down to how many review comments have lost the lines
   they were left on, and its tests: what they say the system does, file by file, whether the
   last run is about the code on disk, and which of the files everything leans on no test names.
+- **Classify every test** by the eight questions of [What Types of Automated Tests do
+  Developers Write?](https://homes.cs.washington.edu/~rjust/publ/test_type_analysis_ast_2025.pdf)
+  instead of unit and integration levels: what it tests (code, configuration, data,
+  documentation), whether it runs it, through an API or the interface a person uses, what it
+  measures, how it checks the output and the calls, and whether it mocks or fakes what it
+  depends on. Each answer says why, and the tests can be grouped by any of the questions.
 - **Explore** the working tree with syntax highlighting, change markers against HEAD, and blame;
   pictures are shown as pictures, in the browser and in a terminal that can draw them.
 - **Comment** on a line or a range. Comments go to `REVIEW.md`, pending or completed, in the
@@ -53,7 +59,7 @@ cargo install codereview                  # terminal UI
 cargo install codereview --features web   # terminal and browser UI
 ```
 
-You need a Rust toolchain (edition 2024, rustc 1.85 or later), a C compiler for the tree-sitter
+You need a Rust toolchain (edition 2024, rustc 1.90 or later), a C compiler for the tree-sitter
 grammars, and `git` on `PATH`.
 
 ## License
@@ -66,8 +72,8 @@ AGPL-3.0-only. Copyright 2026 Marko Ivankovic.
 codereview                    # terminal UI in the current repository
 codereview src/main.rs        # ... opened at a file
 codereview ~/src/a ~/src/b    # several repositories; gt/gT and W switch between them
-codereview ~/src              # a directory of checkouts: every repository below it, and
-                              # any cloned or created there later, within seconds
+codereview ~/src              # a directory of checkouts: opens on a list of every repository
+                              # below it, and any cloned or created there later, within seconds
 codereview web                # browser UI on a random loopback port, opens your browser
 codereview web ~/src/a ~/src/b   # ... serving several; a dropdown in the header switches
 codereview list               # pending comments, with their current line numbers
@@ -88,6 +94,9 @@ codereview def total          # where `total` is defined
 codereview refs total         # every place `total` occurs
 codereview symbols pars       # definitions whose name contains "pars"
 codereview agent "Summarise the pending comments in REVIEW.md"   # one prompt, answer on stdout
+codereview kinds draw ~/src --count 20   # sample tests from GitHub checkouts into tests/data/kinds
+codereview kinds label        # classify the sample by hand, in the terminal
+codereview kinds agree        # how the classification's rules agree with the hand-classified
 ```
 
 `-C DIR` runs against another repository; positional paths are relative to it. `web` also
@@ -112,6 +121,7 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 | `E` | end-to-end tests, what it opens on: `Space` plays, `Enter` a test on its own, `s` source |
 | `w` `b` | end-to-end screens: the stretch marked; record the tests at its base to compare |
 | `U` | the tests that name the open file |
+| `P` | the specification, every test by its kind: `c` the next question, `K` a test's answers |
 | `B` | blame column |
 | `t` | colour scheme picker, previewed live and saved |
 | `h` `l` `w` `b` `0` `$` | move the column cursor |
@@ -126,7 +136,7 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 | `l` | in the agent panel: show or hide the backend's log lines |
 | `/` `> <` | search, next and previous match |
 | `o` | open the line in `$EDITOR` |
-| `q` `Esc` | back |
+| `q` `Esc` | back; from the last screen, quit, or the repository list on a directory of checkouts |
 
 In a diff: `n`/`p` step through hunks, `]`/`[` through the files of the same commit, `v` cycles
 between automatic, side-by-side and unified layout, `c` comments on the after-side line.

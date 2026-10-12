@@ -1122,26 +1122,42 @@ fn the_specification_and_what_a_stretch_did_to_it() {
     let now = get("/api/spec?stretch=uncommitted");
     assert_eq!(now["span"]["label"], "uncommitted work");
     assert_eq!(now["changes"][0]["what"], "added");
-    assert_eq!(now["changes"][0]["level"], "security");
-    assert_eq!(now["groups"][0]["level"], "security");
-    assert_eq!(now["groups"][0]["total"], 1);
-    let test = &now["groups"][0]["files"][0]["tests"][0];
-    assert_eq!(test["label"], "a wrong password is refused");
-    assert_eq!(test["why"], "its name says password");
+    assert_eq!(now["changes"][0]["security"], true);
+    assert_eq!(now["by"], "interaction");
+    assert_eq!(now["questions"].as_array().unwrap().len(), 8);
+    let titles: Vec<&str> = now["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["API", "GUI", "No interaction"]);
     assert_eq!(
         now["groups"][1]["total"], 0,
         "no end-to-end tests, and it says so"
     );
+    let test = &now["groups"][2]["files"][0]["tests"][0];
+    assert_eq!(test["label"], "a wrong password is refused");
+    assert_eq!(test["security"], "its name says password");
+    assert_eq!(test["end_to_end"], false);
+    let interaction = &test["kind"]["answers"][2];
+    assert_eq!(interaction["question"], "interaction");
+    assert_eq!(interaction["summary"], "No interaction");
+    assert_eq!(interaction["options"][1]["option"], "GUI");
+    assert_eq!(interaction["options"][1]["answer"], "no");
     // It names no code, so it counts towards where it is; and the file holding it lists it.
     assert_eq!(test["areas"][0], "tests");
-    assert_eq!(test["level"], "security");
     let area = now["areas"]
         .as_array()
         .unwrap()
         .iter()
         .find(|a| a["name"] == "tests")
         .unwrap();
-    assert_eq!(area["levels"][0], 1);
+    assert_eq!(area["counts"][2], 1);
+    // Grouped by another question.
+    let by = get("/api/spec?stretch=uncommitted&by=artifact");
+    assert_eq!(by["by"], "artifact");
+    assert_eq!(by["groups"][0]["title"], "Code");
     let of = get("/api/tests_of?path=tests/login.rs");
     assert_eq!(of[0]["label"], "a wrong password is refused");
     assert_eq!(get("/api/tests_of?path=a.rs").as_array().unwrap().len(), 0);

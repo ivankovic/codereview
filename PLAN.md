@@ -142,7 +142,10 @@ phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
      read code.
    - Unit and integration tests are not dropped. They hang below the end-to-end tests that
      reach the same code, and code reached only by them is marked so. Security stays a mark on
-     a test, at any level, rather than a view of its own.
+     a test, of any kind, rather than a view of its own. Unit and integration were later dropped
+     as levels altogether (2026-10-11) for the eight questions of "What Types of Automated Tests
+     do Developers Write?" (AST 2025), which describe what a test does rather than how big it
+     is, and are precise enough to be read off the test.
 
    The unit of review is the **repository**, with a stretch of history — uncommitted work, the
    last commit, the last week — marked within it; any commit in the log drills down to the
@@ -208,13 +211,17 @@ src/media.rs       which files are pictures, by name
 src/symbols.rs     tree-sitter symbol index: definitions, occurrences, search, what the tree
                    leans on and what no test names
 src/testsuite.rs   the tests a repository defines, found in the same parse, per language
-src/spec.rs        the tests as a specification: each one's level, and what a stretch of
+src/classify.rs    what kind of test each one is: the paper's eight questions, answered
+src/kinds.rs       a sample of tests drawn from GitHub checkouts and classified by hand: the
+                   CSV, the stored tests, and how the rules agree with it
+src/spec.rs        the tests as a specification: grouped by kind, and what a stretch of
                    history did to them
 src/acp.rs         Agent Client Protocol client
 src/claude.rs      Claude Code driven through its own streaming protocol
 src/agent.rs       the agent as the front ends see it, either backend
 src/fakes.rs       in-process stand-ins for both backends, tests only
 src/tui.rs, src/tui/  Ratatui front end (feature `tui`); workspace.rs holds one app per repository,
-                   outline.rs the side panel listing what the open file defines
+                   outline.rs the side panel listing what the open file defines, kinds.rs
+                   the screen a sample of tests is classified by hand on
 src/web.rs, src/web/  axum server and the embedded page (feature `web`)
 ```
