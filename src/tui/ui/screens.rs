@@ -396,7 +396,7 @@ pub(super) fn draw_locations(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// The specification: what a stretch did to the tests, the ones that now ask less in the
-/// colour of a deletion, then every test grouped by its answer to one of the eight questions,
+/// colour of a deletion, then every test grouped by its answer to one of the nine questions,
 /// each with why on the cursor.
 pub(super) fn draw_spec(frame: &mut Frame, app: &mut App, area: Rect) {
     use crate::spec::What;
@@ -500,7 +500,7 @@ pub(super) fn draw_spec(frame: &mut Frame, app: &mut App, area: Rect) {
                 };
                 let mut spans = vec![Span::raw(format!("  {:<14}", a.name))];
                 for (group, n) in state.spec.groups.iter().zip(&a.counts) {
-                    let label: String = group.title.to_lowercase().chars().take(6).collect();
+                    let label: String = group.title.to_lowercase().chars().take(7).collect();
                     spans.push(Span::styled(format!(" {label}"), dim));
                     spans.push(cell(*n));
                 }

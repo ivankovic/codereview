@@ -8,7 +8,7 @@
 //! the dataset directory, holding the file verbatim as `file.<ext>.test` and the test's own
 //! lines as `test.<ext>.test` — the `.test` suffix keeps them from being read as code or tests
 //! of this repository — beside a README saying where they came from and under which licence.
-//! `kinds.csv` indexes them, one row per sample, with every option of the eight questions as a
+//! `kinds.csv` indexes them, one row per sample, with every option of the nine questions as a
 //! column a person fills in from the labelling screen.
 //!
 //! A sample also keeps what the rules need beyond the text, worked out from the checkout when
@@ -70,9 +70,9 @@ pub fn options() -> Vec<(Question, &'static str)> {
         .collect()
 }
 
-/// The column an option is answered in: `interaction.gui`, `output_assertions.exact_match`.
+/// The column an option is answered in: `interaction.gui_tui`, `output_assertions.exact_match`.
 pub fn column(question: Question, option: &str) -> String {
-    let word = |s: &str| s.to_lowercase().replace([' ', '-'], "_");
+    let word = |s: &str| s.to_lowercase().replace([' ', '-', '/'], "_");
     format!("{}.{}", word(question.short()), word(option))
 }
 
@@ -376,7 +376,11 @@ fn parse(text: &str) -> Result<Vec<Sample>> {
             names: list(get("names")),
             drives: get("drives").to_string(),
             files: list(get("files")),
-            status: Status::parse(get("status")).with_context(|| format!("row {}", n + 2))?,
+            // A question added since it was finished leaves it pending again.
+            status: match Status::parse(get("status")).with_context(|| format!("row {}", n + 2))? {
+                Status::Done if answers.iter().any(Option::is_none) => Status::Pending,
+                status => status,
+            },
             answers,
             notes: get("notes").to_string(),
         });
@@ -835,6 +839,43 @@ mod tests {
     }
 
     #[test]
+    fn a_sample_finished_before_a_question_was_added_is_pending_again() {
+        let sample = Sample {
+            name: "a-b".into(),
+            repository: "o/n".into(),
+            commit: "abc".into(),
+            path: "src/a.rs".into(),
+            line: 3,
+            end: 9,
+            test: "t".into(),
+            label: "t".into(),
+            names: vec![],
+            drives: String::new(),
+            files: vec![],
+            status: Status::Done,
+            answers: vec![Some(Answer::No); options().len()],
+            notes: String::new(),
+        };
+        let text = write(std::slice::from_ref(&sample));
+        assert_eq!(parse(&text).unwrap()[0].status, Status::Done);
+        // The file as it was before malformed input was asked about.
+        let older: String = text
+            .lines()
+            .map(|line| {
+                let cells: Vec<&str> = line.split(',').collect();
+                let keep = cells.len() - 4;
+                let mut kept = cells[..keep].to_vec();
+                kept.push(cells[cells.len() - 1]);
+                kept.join(",") + "\n"
+            })
+            .collect();
+        assert!(!older.contains("malformed_input"), "{older}");
+        let read = &parse(&older).unwrap()[0];
+        assert_eq!(read.status, Status::Pending);
+        assert_eq!(read.answers.iter().filter(|a| a.is_none()).count(), 3);
+    }
+
+    #[test]
     fn a_csv_round_trips_with_awkward_text() {
         let mut answers = vec![None; options().len()];
         answers[0] = Some(Answer::Yes);
@@ -980,7 +1021,7 @@ mod tests {
             per_repository: 5,
         };
         draw(&mut dataset, &[parent.path().to_path_buf()], &how).unwrap();
-        // The person answers as the rules do, except that they call it GUI as well.
+        // The person answers as the rules do, except that they call it GUI/TUI as well.
         let kind = dataset.replay(&dataset.samples[0]).unwrap();
         let mut answers = Vec::new();
         for (q, o) in options() {
@@ -991,7 +1032,7 @@ mod tests {
                 .find(|s| s.option == o)
                 .unwrap()
                 .answer;
-            answers.push(Some(if (q, o) == (Question::Interaction, "GUI") {
+            answers.push(Some(if (q, o) == (Question::Interaction, "GUI/TUI") {
                 Answer::Yes
             } else {
                 rules
@@ -1007,9 +1048,13 @@ mod tests {
         assert_eq!((interaction.agree, interaction.finished), (0, 1));
         assert_eq!(
             interaction.options,
-            [("API".to_string(), 1), ("GUI".to_string(), 0)]
+            [
+                ("API".to_string(), 1),
+                ("GUI/TUI".to_string(), 0),
+                ("CLI".to_string(), 1)
+            ]
         );
-        assert_eq!(interaction.differ[0].1, "Both API and GUI");
+        assert_eq!(interaction.differ[0].1, "Several interfaces");
         let artifact = agreement
             .iter()
             .find(|a| a.question == Question::Artifact)

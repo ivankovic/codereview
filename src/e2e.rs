@@ -8,7 +8,7 @@
 //! from there.
 //!
 //! A test is end to end when it runs the program and drives it through the interface a person
-//! uses (the `classify` module's Dynamic and GUI): when its path says so, when its file drives
+//! uses (the `classify` module's Dynamic, and GUI/TUI or CLI): when its path says so, when its file drives
 //! the software from outside — a browser driver, a pseudo-terminal, the built binary — or when
 //! a recording names it, which settles it. The test that only hands another file's tests to a
 //! runner is named by their recordings as their runner, and is left out: it is not a

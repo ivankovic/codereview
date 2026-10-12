@@ -1124,26 +1124,27 @@ fn the_specification_and_what_a_stretch_did_to_it() {
     assert_eq!(now["changes"][0]["what"], "added");
     assert_eq!(now["changes"][0]["security"], true);
     assert_eq!(now["by"], "interaction");
-    assert_eq!(now["questions"].as_array().unwrap().len(), 8);
+    assert_eq!(now["questions"].as_array().unwrap().len(), 9);
     let titles: Vec<&str> = now["groups"]
         .as_array()
         .unwrap()
         .iter()
         .map(|g| g["title"].as_str().unwrap())
         .collect();
-    assert_eq!(titles, ["API", "GUI", "No interaction"]);
+    assert_eq!(titles, ["API", "GUI/TUI", "CLI", "No interaction"]);
     assert_eq!(
-        now["groups"][1]["total"], 0,
+        now["groups"][1]["total"].as_u64().unwrap() + now["groups"][2]["total"].as_u64().unwrap(),
+        0,
         "no end-to-end tests, and it says so"
     );
-    let test = &now["groups"][2]["files"][0]["tests"][0];
+    let test = &now["groups"][3]["files"][0]["tests"][0];
     assert_eq!(test["label"], "a wrong password is refused");
     assert_eq!(test["security"], "its name says password");
     assert_eq!(test["end_to_end"], false);
     let interaction = &test["kind"]["answers"][2];
     assert_eq!(interaction["question"], "interaction");
     assert_eq!(interaction["summary"], "No interaction");
-    assert_eq!(interaction["options"][1]["option"], "GUI");
+    assert_eq!(interaction["options"][1]["option"], "GUI/TUI");
     assert_eq!(interaction["options"][1]["answer"], "no");
     // It names no code, so it counts towards where it is; and the file holding it lists it.
     assert_eq!(test["areas"][0], "tests");
@@ -1153,7 +1154,7 @@ fn the_specification_and_what_a_stretch_did_to_it() {
         .iter()
         .find(|a| a["name"] == "tests")
         .unwrap();
-    assert_eq!(area["counts"][2], 1);
+    assert_eq!(area["counts"][3], 1);
     // Grouped by another question.
     let by = get("/api/spec?stretch=uncommitted&by=artifact");
     assert_eq!(by["by"], "artifact");

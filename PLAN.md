@@ -211,7 +211,8 @@ src/media.rs       which files are pictures, by name
 src/symbols.rs     tree-sitter symbol index: definitions, occurrences, search, what the tree
                    leans on and what no test names
 src/testsuite.rs   the tests a repository defines, found in the same parse, per language
-src/classify.rs    what kind of test each one is: the paper's eight questions, answered
+src/classify.rs    what kind of test each one is: the paper's eight questions and one on
+                   malformed input, answered
 src/kinds.rs       a sample of tests drawn from GitHub checkouts and classified by hand: the
                    CSV, the stored tests, and how the rules agree with it
 src/spec.rs        the tests as a specification: grouped by kind, and what a stretch of

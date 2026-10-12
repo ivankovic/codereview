@@ -1187,8 +1187,8 @@ mod tests {
             "security is a mark: {screen}"
         );
         assert!(
-            screen.contains("No test drives the program"),
-            "an empty GUI group is said: {screen}"
+            screen.contains("No test drives a screen of the program"),
+            "an empty GUI/TUI group is said: {screen}"
         );
         // c: grouped by the next question.
         press(&mut app, &[KeyCode::Char('c')]);

@@ -1776,7 +1776,7 @@ function renderRunCard(card, checks) {
   card.onclick = () => document.querySelector('#content .testing')?.scrollIntoView({ behavior: 'smooth' });
 }
 
-// A test's answer to one of the eight questions of the classification (see `classify.rs`).
+// A test's answer to one of the nine questions of the classification (see `classify.rs`).
 const answerOf = (t, question) => ((t.kind && t.kind.answers) || []).find(a => a.question === question);
 // What kind of test it is, in a word or two: end to end, or how it reaches what it tests.
 const kindName = t => t.end_to_end ? 'end to end' : ((answerOf(t, 'interaction') || {}).summary || 'test').toLowerCase();
@@ -1788,7 +1788,7 @@ function renderAreasCard(card, spec) {
   const rows = spec.areas.map(a => `<tr class="area" data-area="${esc(a.name)}"><td>${esc(a.name)}</td>`
     + a.counts.map(n => `<td class="${n ? '' : 'zero'}">${n}</td>`).join('')
     + `<td class="${a.unreached ? 'gap' : 'zero'}">${a.files ? a.unreached + ' of ' + a.files : ''}</td></tr>`).join('');
-  const heads = spec.groups.map(g => `<th title="${esc(g.title)}">${esc(g.title.toLowerCase().slice(0, 6))}</th>`).join('');
+  const heads = spec.groups.map(g => `<th title="${esc(g.title)}">${esc(g.title.toLowerCase().slice(0, 7))}</th>`).join('');
   const asked = (spec.questions || []).find(q => q.question === spec.by);
   card.innerHTML = `<h3>Tests by area</h3>${asked ? `<div class="dim">${esc(asked.title)}</div>` : ''}<table class="areas"><tr><th>area</th>${heads}<th title="files of code that no test names">untested</th></tr>${rows}</table>`
     + (spec.as_of ? '<div class="dim asof">From OVERVIEW.md, by where the tests are; reading the repository…</div>' : '');
@@ -1843,7 +1843,7 @@ function renderSuite(into, inv, link) {
 
 // ----- specification --------------------------------------------------------------------------
 
-// What the tests say the system does, grouped by one of the eight questions of the
+// What the tests say the system does, grouped by one of the nine questions of the
 // classification, and what a stretch of history did to them.
 // The repository is what is reviewed: the stretch is only what is marked in it, the last week
 // unless another is picked, or one commit when the log sent us here.
@@ -2471,7 +2471,7 @@ function renderSpec(content, spec, p) {
   const tools = document.createElement('section');
   const questions = (spec.questions || []).map(q => `<option value="${q.question}"${q.question === spec.by ? ' selected' : ''}>${esc(q.title)}</option>`).join('');
   tools.innerHTML = `<h3>The tests as they are</h3>
-    <label class="by">grouped by <select class="question" title="the eight questions of “What Types of Automated Tests do Developers Write?”">${questions}</select></label>
+    <label class="by">grouped by <select class="question" title="the eight questions of “What Types of Automated Tests do Developers Write?”, and one on malformed input">${questions}</select></label>
     <input type="search" class="find" placeholder="search ${pool.length} ${pool.length === 1 ? 'test' : 'tests'} by their words" value="${esc(state.specQuery || '')}">
     <div class="chips"><button data-area="" class="${p.area ? '' : 'on'}">All ${all.length}</button>${names.map(a => `<button data-area="${esc(a)}" class="${p.area === a ? 'on' : ''}">${esc(a)} ${count[a] || 0}</button>`).join('')}</div>`;
   tools.querySelectorAll('[data-area]').forEach(b => b.onclick = () => showSpec({ ...p, area: b.dataset.area || undefined }));
@@ -3311,7 +3311,7 @@ const HELP = `
 <tr><td><kbd>End to end</kbd></td><td>what the repository opens on: every test that drives it the way a person does, each with the recording its last run left, whether it passed, and how far the code has moved since. Tap a step to go to that moment of the recording; the file name opens the test</td></tr>
 <tr><td><kbd>Ask the agent to write the first ones</kbd></td><td>where there are none: the agent writes them, each leaving a recording</td></tr></table>
 <h3>Spec</h3><table>
-<tr><td><kbd>Spec</kbd></td><td>every test as a sentence, grouped by one of eight questions about what kind of test it is; a test's kind opens to all eight answers and why</td></tr>
+<tr><td><kbd>Spec</kbd></td><td>every test as a sentence, grouped by one of nine questions about what kind of test it is; a test's kind opens to all nine answers and why</td></tr>
 <tr><td><kbd>last 7 days</kbd> <kbd>last commit</kbd> <kbd>uncommitted</kbd></td><td>what that stretch did to the tests, the ones that now ask less first: removed, skipped, fewer assertions</td></tr>
 <tr><td><kbd>Tests in this commit</kbd></td><td>in the log: the same for one commit</td></tr></table>
 <h3>Changes</h3><table>

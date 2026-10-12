@@ -1,5 +1,9 @@
-//! The labelling screen: one sampled test at a time, its file beside the eight questions, each
+//! The labelling screen: one sampled test at a time, its file beside the nine questions, each
 //! option answered by a key and saved at once. What `codereview kinds label` opens.
+//!
+//! The file can be read as well as looked at: `c` (or `/`, to search at once) moves the keys to
+//! it, with a line cursor, paging, sideways scrolling and search, so that a helper the test
+//! calls further down the file can be found and read before the questions are answered.
 //!
 //! The rules' own answers are hidden until asked for (`r`), so that they do not lead the
 //! person whose answers they are to be measured against; shown, each option says whether the
@@ -26,6 +30,16 @@ use crate::tui::ui::title_block;
 /// How wide the questions are.
 const PANEL: u16 = 50;
 
+/// How far `h` and `l` scroll the file sideways.
+const SIDEWAYS: usize = 8;
+
+/// Which pane the keys go to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Questions,
+    Code,
+}
+
 pub struct Labeller {
     pub dataset: Dataset,
     /// The sample on screen.
@@ -34,6 +48,16 @@ pub struct Labeller {
     pub cursor: usize,
     /// The first line of the file on screen, 0-based.
     pub scroll: usize,
+    /// Which pane the keys go to.
+    pub focus: Focus,
+    /// The line of the file under its cursor, 0-based, while it has the keys.
+    pub line: usize,
+    /// How many columns of the file are scrolled off to the left.
+    pub sideways: usize,
+    /// The search being typed, while it is.
+    pub typing: Option<String>,
+    /// The last search, which `n` and `N` repeat.
+    pub pattern: String,
     /// Whether the rules' answers are shown.
     pub reveal: bool,
     /// The note being written, while it is.
@@ -102,6 +126,11 @@ impl Labeller {
             at,
             cursor: 0,
             scroll: 0,
+            focus: Focus::Questions,
+            line: 0,
+            sideways: 0,
+            typing: None,
+            pattern: String::new(),
             reveal: false,
             note: None,
             help: false,
@@ -135,10 +164,125 @@ impl Labeller {
         self.centre();
     }
 
-    /// Scrolls the file so that the test starts a few lines down.
+    /// Scrolls the file so that the test starts a few lines down, with the file's cursor on
+    /// its first line.
     fn centre(&mut self) {
         let line = self.dataset.samples[self.at].line;
         self.scroll = line.saturating_sub(4);
+        self.line = line
+            .saturating_sub(1)
+            .min(self.lines.len().saturating_sub(1));
+        self.sideways = 0;
+    }
+
+    /// Puts the file's cursor on `line`, scrolling so that it is in sight.
+    fn move_to(&mut self, line: usize) {
+        self.line = line.min(self.lines.len().saturating_sub(1));
+        if self.line < self.scroll {
+            self.scroll = self.line;
+        } else if self.line >= self.scroll + self.height {
+            self.scroll = self.line + 1 - self.height.max(1);
+        }
+    }
+
+    /// Whether `line` of the file matches `pattern`: ignoring case unless the pattern has a
+    /// capital in it.
+    fn matches(line: &str, pattern: &str) -> bool {
+        if pattern.chars().any(char::is_uppercase) {
+            line.contains(pattern)
+        } else {
+            line.to_lowercase().contains(&pattern.to_lowercase())
+        }
+    }
+
+    /// Moves the file's cursor to the next line matching the last search, or the previous one,
+    /// wrapping at the ends.
+    fn find(&mut self, forward: bool) {
+        if self.pattern.is_empty() || self.lines.is_empty() {
+            return;
+        }
+        let n = self.lines.len();
+        let found = (1..=n)
+            .map(|i| {
+                if forward {
+                    (self.line + i) % n
+                } else {
+                    (self.line + n - i % n) % n
+                }
+            })
+            .find(|&i| Self::matches(&self.lines[i], &self.pattern));
+        match found {
+            Some(i) => {
+                let wrapped = if forward {
+                    i <= self.line
+                } else {
+                    i >= self.line
+                };
+                self.move_to(i);
+                let count = self
+                    .lines
+                    .iter()
+                    .filter(|l| Self::matches(l, &self.pattern))
+                    .count();
+                let at = self.lines[..=i]
+                    .iter()
+                    .filter(|l| Self::matches(l, &self.pattern))
+                    .count();
+                self.message = Some(format!(
+                    "/{}: {at} of {count}{}",
+                    self.pattern,
+                    if wrapped { ", from the other end" } else { "" }
+                ));
+            }
+            None => self.message = Some(format!("/{}: not in the file", self.pattern)),
+        }
+    }
+
+    /// A key while the file has the keys; `false` when it is not one of the file's, so that
+    /// the keys that work everywhere still do.
+    fn code_key(&mut self, key: KeyEvent) -> bool {
+        if let Some(typing) = &mut self.typing {
+            match key.code {
+                KeyCode::Enter => {
+                    self.pattern = std::mem::take(typing);
+                    self.typing = None;
+                    self.find(true);
+                }
+                KeyCode::Esc => self.typing = None,
+                KeyCode::Backspace => {
+                    typing.pop();
+                }
+                KeyCode::Char(c) => typing.push(c),
+                _ => {}
+            }
+            return true;
+        }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let page = (self.height / 2).max(1);
+        match key.code {
+            KeyCode::Char('c') if ctrl => return false,
+            KeyCode::Esc | KeyCode::Char('c') => self.focus = Focus::Questions,
+            KeyCode::Char('j') | KeyCode::Down => self.move_to(self.line + 1),
+            KeyCode::Char('k') | KeyCode::Up => self.move_to(self.line.saturating_sub(1)),
+            KeyCode::Char('d') if ctrl => self.move_to(self.line + page),
+            KeyCode::Char('u') if ctrl => self.move_to(self.line.saturating_sub(page)),
+            KeyCode::PageDown => self.move_to(self.line + page),
+            KeyCode::PageUp => self.move_to(self.line.saturating_sub(page)),
+            KeyCode::Char('g') | KeyCode::Home => self.move_to(0),
+            KeyCode::Char('G') | KeyCode::End => self.move_to(usize::MAX),
+            KeyCode::Char('l') | KeyCode::Right => self.sideways += SIDEWAYS,
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.sideways = self.sideways.saturating_sub(SIDEWAYS)
+            }
+            KeyCode::Char('0') => self.sideways = 0,
+            KeyCode::Char('/') => self.typing = Some(String::new()),
+            KeyCode::Char('n') => self.find(true),
+            KeyCode::Char('N') => self.find(false),
+            KeyCode::Char('z') => self.centre(),
+            KeyCode::Char('q' | '?' | ']' | '[' | '}' | 'r' | 'e') => return false,
+            _ => {}
+        }
+        true
     }
 
     fn save(&mut self) {
@@ -182,6 +326,7 @@ impl Labeller {
     fn go_to(&mut self, at: usize) {
         if at < self.dataset.samples.len() && at != self.at {
             self.at = at;
+            self.typing = None;
             self.load();
         }
     }
@@ -208,6 +353,9 @@ impl Labeller {
         }
         if self.help {
             self.help = false;
+            return;
+        }
+        if self.focus == Focus::Code && self.code_key(key) {
             return;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -290,6 +438,11 @@ impl Labeller {
             }
             KeyCode::Char('r') => self.reveal = !self.reveal,
             KeyCode::Char('z') => self.centre(),
+            KeyCode::Char('c') => self.focus = Focus::Code,
+            KeyCode::Char('/') => {
+                self.focus = Focus::Code;
+                self.typing = Some(String::new());
+            }
             KeyCode::Char('e') => self.note = Some(self.dataset.samples[self.at].notes.clone()),
             _ => {}
         }
@@ -339,13 +492,20 @@ impl Labeller {
 
     fn draw_code(&mut self, frame: &mut Frame, area: Rect) {
         let s = &self.dataset.samples[self.at];
+        let reading = self.focus == Focus::Code;
         // The note goes with the test it is about, where it is always in sight.
-        let title = if s.notes.is_empty() {
-            format!(" {} ", s.label)
-        } else {
-            format!(" {} · note: {} ", s.label, s.notes)
-        };
-        let block = title_block(&self.theme, title.into(), false);
+        let mut title = format!(" {} ", s.label);
+        if !s.notes.is_empty() {
+            title.push_str(&format!("· note: {} ", s.notes));
+        }
+        if reading {
+            title.push_str(&format!(
+                "· line {} of {} ",
+                self.line + 1,
+                self.lines.len()
+            ));
+        }
+        let block = title_block(&self.theme, title.into(), reading);
         let inner = block.inner(area);
         frame.render_widget(block, area);
         self.height = inner.height as usize;
@@ -358,27 +518,48 @@ impl Labeller {
         let width = self.lines.len().to_string().len();
         let dim = style::dim(&self.theme);
         let mark = style::accent(&self.theme);
-        let lines: Vec<Line> = (self.scroll..self.lines.len())
-            .take(inner.height as usize)
+        let cursor = style::cursor(&self.theme);
+        let shown = || (self.scroll..self.lines.len()).take(inner.height as usize);
+        let found =
+            |i: usize| !self.pattern.is_empty() && Self::matches(&self.lines[i], &self.pattern);
+        // The numbers and the test's mark stay put while the code scrolls sideways.
+        let gutter: Vec<Line> = shown()
             .map(|i| {
                 let number = i + 1;
                 let inside = (s.line..=s.end).contains(&number);
-                let mut spans = vec![
-                    Span::styled(format!("{number:>width$} "), dim),
-                    Span::styled(if inside { "▌" } else { " " }, mark),
-                ];
-                match self.highlighted.get(i) {
-                    Some(segments) => spans.extend(
-                        segments
-                            .iter()
-                            .map(|seg| style::segment_span(seg, true, None)),
-                    ),
-                    None => spans.push(self.lines[i].clone().into()),
+                let mut number_style = if found(i) { mark.bold() } else { dim };
+                if reading && i == self.line {
+                    number_style = number_style.patch(cursor);
                 }
-                Line::from(spans)
+                Line::from(vec![
+                    Span::styled(format!("{number:>width$} "), number_style),
+                    Span::styled(if inside { "▌" } else { " " }, mark),
+                ])
             })
             .collect();
-        frame.render_widget(Paragraph::new(lines), inner);
+        let code: Vec<Line> = shown()
+            .map(|i| {
+                let line: Line = match self.highlighted.get(i) {
+                    Some(segments) => segments
+                        .iter()
+                        .map(|seg| style::segment_span(seg, true, None))
+                        .collect::<Vec<_>>()
+                        .into(),
+                    None => self.lines[i].clone().into(),
+                };
+                if reading && i == self.line {
+                    line.patch_style(cursor)
+                } else {
+                    line
+                }
+            })
+            .collect();
+        let [left, right] =
+            Layout::horizontal([Constraint::Length(width as u16 + 2), Constraint::Fill(1)])
+                .areas(inner);
+        frame.render_widget(Paragraph::new(gutter), left);
+        let sideways = self.sideways.min(u16::MAX as usize) as u16;
+        frame.render_widget(Paragraph::new(code).scroll((0, sideways)), right);
     }
 
     fn draw_questions(&self, frame: &mut Frame, area: Rect) {
@@ -388,7 +569,7 @@ impl Labeller {
         } else {
             " questions "
         };
-        let block = title_block(&self.theme, title.into(), true);
+        let block = title_block(&self.theme, title.into(), self.focus == Focus::Questions);
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let dim = style::dim(&self.theme);
@@ -449,10 +630,13 @@ impl Labeller {
             }
             if i == self.cursor {
                 cursor_row = lines.len();
-                spans = spans
-                    .into_iter()
-                    .map(|sp| sp.patch_style(style::cursor(&self.theme)))
-                    .collect();
+                // While the file has the keys the option keeps its place, unlit.
+                if self.focus == Focus::Questions {
+                    spans = spans
+                        .into_iter()
+                        .map(|sp| sp.patch_style(style::cursor(&self.theme)))
+                        .collect();
+                }
             }
             lines.push(spans.into());
         }
@@ -473,11 +657,25 @@ impl Labeller {
                 "  Enter saves, Esc leaves it".dim(),
             ]
             .into()
+        } else if let Some(typing) = &self.typing {
+            vec![
+                " search ".reversed(),
+                format!(" /{typing}▏").into(),
+                "  Enter finds, Esc leaves it".dim(),
+            ]
+            .into()
         } else if let Some(message) = &self.message {
             vec![" label ".reversed(), format!(" {message}").into()].into()
         } else if let Some(why) = self.rules_why() {
             // What the rules said of the option under the cursor, once shown.
             vec![" label ".reversed(), format!(" rules: {why}").dim()].into()
+        } else if self.focus == Focus::Code {
+            vec![
+                " file ".reversed(),
+                " j k line  Ctrl-d Ctrl-u page  g G ends  h l 0 sideways  / search  n N again  z test  Esc questions"
+                    .dim(),
+            ]
+            .into()
         } else {
             vec![
                 " label ".reversed(),
@@ -522,6 +720,17 @@ impl Labeller {
             ),
             ("e", "a note on the sample"),
             ("Ctrl-d Ctrl-u  z", "scroll the file; back to the test"),
+            ("c  /", "read the file: its keys below; / searches at once"),
+            (
+                "  j k  Ctrl-d Ctrl-u",
+                "the file's cursor by a line; half a page",
+            ),
+            ("  g G  h l 0", "the top or the end; sideways, and back"),
+            (
+                "  / n N",
+                "search, ignoring case unless it has a capital; again",
+            ),
+            ("  Esc  c", "back to the questions"),
             ("q", "quit; every answer is already saved"),
         ];
         let width = 76.min(area.width);
@@ -681,5 +890,59 @@ mod tests {
         assert_eq!(saved.samples[0].status, Status::Skipped);
         l.handle_key(key('q'));
         assert!(l.quit);
+    }
+
+    #[test]
+    fn the_file_is_read_with_a_cursor_and_searched() {
+        let (_dir, dataset) = dataset();
+        let mut l = Labeller::new(dataset, Theme::default(), None).unwrap();
+        let mut term = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        screen(&mut term, &mut l);
+        l.handle_key(key('c'));
+        assert_eq!(l.focus, Focus::Code);
+        assert_eq!(l.line, 3, "on the test's first line");
+        let s = screen(&mut term, &mut l);
+        assert!(s.contains("line 4 of 6"), "{s}");
+        assert!(s.contains("Esc questions"), "{s}");
+
+        // j and k move the file's cursor, not the questions'.
+        l.handle_key(key('j'));
+        assert_eq!((l.line, l.cursor), (4, 0));
+        l.handle_key(key('g'));
+        assert_eq!(l.line, 0);
+        l.handle_key(key('G'));
+        assert_eq!(l.line, 5);
+
+        // A search finds the helper, from the other end of the file.
+        l.handle_key(key('/'));
+        for c in "helper".chars() {
+            l.handle_key(key(c));
+        }
+        let s = screen(&mut term, &mut l);
+        assert!(s.contains("/helper▏"), "{s}");
+        l.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(l.line, 0);
+        let s = screen(&mut term, &mut l);
+        assert!(s.contains("/helper: 1 of 1, from the other end"), "{s}");
+
+        // n is the next match here, not an answer.
+        l.handle_key(key('n'));
+        assert!(l.dataset.samples[0].answers.iter().all(Option::is_none));
+
+        // Sideways, and back.
+        l.handle_key(key('l'));
+        assert_eq!(l.sideways, SIDEWAYS);
+        l.handle_key(key('0'));
+        assert_eq!(l.sideways, 0);
+
+        l.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(l.focus, Focus::Questions);
+        assert!(!l.quit, "Esc leaves the file, not the screen");
+        l.handle_key(key('y'));
+        assert_eq!(l.dataset.samples[0].answers[0], Some(Answer::Yes));
+
+        // / from the questions searches at once.
+        l.handle_key(key('/'));
+        assert_eq!((l.focus, l.typing.as_deref()), (Focus::Code, Some("")));
     }
 }

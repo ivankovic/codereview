@@ -19,7 +19,7 @@ mod harness;
 
 use std::path::Path;
 
-use harness::{DOWN, ENTER};
+use harness::{DOWN, ENTER, ESC};
 
 #[test]
 fn a_repository_opens_on_its_end_to_end_tests_and_plays_a_recording() {
@@ -263,8 +263,9 @@ fn the_tests_read_as_a_specification_grouped_by_how_they_interact() {
     t.keys("P");
     t.wait_for("specification 2 tests");
     t.wait_for("How does the test interact with it?");
-    t.wait_for("GUI 1");
+    t.wait_for("GUI/TUI 1");
     t.wait_for("a review survives a restart");
+    t.wait_for("CLI 0");
     t.wait_for("API 1");
     t.wait_for("a review round trips");
 }
@@ -596,6 +597,32 @@ fn the_rules_are_measured_against_the_samples_classified_by_hand() {
     t.wait_for("0/1   options: Code 0, Config 1");
     t.wait_for("by hand Nothing, rules Code (it names code from src/lib.rs)");
     t.exits();
+}
+
+#[test]
+fn the_file_of_a_sample_is_read_and_searched_while_labelling() {
+    let mut t = term!(a_drawn_sample, &["kinds", "label"]);
+    t.documents("SPECS.md#A sample classified by hand");
+    t.wait_for("What artifact is being tested?");
+    t.step("move to the file, to read the test");
+    t.keys("c");
+    t.wait_for("line 6 of 8");
+    t.wait_for("Esc questions");
+    t.step("search for the function the test calls");
+    t.keys("/parse_review");
+    t.wait_for("/parse_review▏");
+    t.keys(ENTER);
+    t.wait_for("/parse_review: 2 of 2");
+    t.wait_for("line 7 of 8");
+    t.step("search again, for where it is defined");
+    t.keys("n");
+    t.wait_for("/parse_review: 1 of 2, from the other end");
+    t.wait_for("line 1 of 8");
+    t.step("back to the questions, and answer one");
+    t.keys(ESC);
+    t.wait_for("y n i answer");
+    t.keys("y");
+    t.wait_for("[y] Code");
 }
 
 /// Two drawn samples: the one above, and a second from another repository.

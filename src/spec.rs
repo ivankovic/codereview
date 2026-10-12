@@ -7,7 +7,7 @@
 //! each one is: an end-to-end test that drives a browser says far more about whether the thing
 //! works than a hundred tests of its helpers, a test that reads the documentation says
 //! something none of them do, and a test that mocks everything it touches says less than it
-//! looks. The kinds are the eight questions of the `classify` module, and the list is grouped
+//! looks. The kinds are the nine questions of the `classify` module, and the list is grouped
 //! by whichever one the reviewer is asking. A test about security is marked as such, whatever
 //! its kind. The second is what happened to the tests lately. An agent that cannot make a test
 //! pass is tempted to make it stop asking — delete it, skip it, or loosen what it checks — and
@@ -420,7 +420,7 @@ pub fn changes(session: &Session, span: &Span) -> Result<Vec<TestChange>> {
 pub struct SpecTest {
     #[serde(flatten)]
     pub test: TestCase,
-    /// The eight questions, answered.
+    /// The nine questions, answered.
     pub kind: Kind,
     /// Whether it runs the program and drives it the way a person does.
     pub end_to_end: bool,
@@ -898,7 +898,11 @@ mod tests {
         );
         let grouped = groups(tests.clone(), Question::Interaction);
         let titles: Vec<&str> = grouped.iter().map(|g| g.title.as_str()).collect();
-        assert_eq!(titles, ["API", "GUI"], "no test is in a group of its own");
+        assert_eq!(
+            titles,
+            ["API", "GUI/TUI", "CLI"],
+            "no test is in a group of its own"
+        );
         let areas = areas(&tests, Some(&coverage), &grouped);
         let row = |name: &str| areas.iter().find(|a| a.name == name).unwrap().clone();
         let web = row("web");
@@ -907,7 +911,7 @@ mod tests {
             (3, 2),
             "web.rs is web's, and it and auth.rs are named by no test"
         );
-        assert_eq!(web.counts, [1, 0], "it names api.rs: it calls the code");
+        assert_eq!(web.counts, [1, 0, 0], "it names api.rs: it calls the code");
         let tui = row("tui");
         assert_eq!(
             (tui.files, tui.unreached, tui.counts.iter().sum::<usize>()),
@@ -915,7 +919,7 @@ mod tests {
         );
         assert_eq!(
             row("tests").counts,
-            [0, 1],
+            [0, 1, 0],
             "its path says browser: it drives the program"
         );
     }
@@ -932,9 +936,9 @@ mod tests {
             Question::Interaction,
         );
         let titles: Vec<&str> = groups.iter().map(|g| g.title.as_str()).collect();
-        assert_eq!(titles, ["API", "GUI", "No interaction"]);
-        assert_eq!(groups[2].total, 2, "they call nothing the index knows");
-        assert_eq!(groups[2].files.len(), 1);
+        assert_eq!(titles, ["API", "GUI/TUI", "CLI", "No interaction"]);
+        assert_eq!(groups[3].total, 2, "they call nothing the index knows");
+        assert_eq!(groups[3].files.len(), 1);
         assert_eq!(groups[1].total, 0);
     }
 

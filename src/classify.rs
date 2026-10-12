@@ -1,5 +1,6 @@
 //! What kind of test each one is, by the eight questions of "What Types of Automated Tests do
-//! Developers Write?" (Ivanković, Rimanić, Budiselić, Petrović, Fraser and Just, AST 2025).
+//! Developers Write?" (Ivanković, Rimanić, Budiselić, Petrović, Fraser and Just, AST 2025), and
+//! a ninth of our own: whether it feeds the code malformed input, and how that input was made.
 //!
 //! The paper set out to sort tests into unit, integration and system tests and found that
 //! nobody, its own authors included, agreed on what those meant. What it settled on instead is
@@ -24,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::testsuite::TestCase;
 
-/// One of the paper's eight questions.
+/// One of the paper's eight questions, or the ninth, on malformed input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Question {
@@ -36,13 +37,14 @@ pub enum Question {
     OutputAssertions,
     ProtocolAssertions,
     Dependencies,
+    MalformedInput,
 }
 
 /// What a question is summarised as when one of its options could not be decided.
 pub const NOT_CLASSIFIED: &str = "Not classified";
 
 impl Question {
-    pub const ALL: [Question; 8] = [
+    pub const ALL: [Question; 9] = [
         Question::Artifact,
         Question::Execution,
         Question::Interaction,
@@ -51,6 +53,7 @@ impl Question {
         Question::OutputAssertions,
         Question::ProtocolAssertions,
         Question::Dependencies,
+        Question::MalformedInput,
     ];
 
     /// As the paper asks it.
@@ -66,6 +69,7 @@ impl Question {
                 "What assertions are done on the implementation or protocol?"
             }
             Question::Dependencies => "How does the test handle dependencies?",
+            Question::MalformedInput => "Is the test using malformed input?",
         }
     }
 
@@ -80,6 +84,7 @@ impl Question {
             Question::OutputAssertions => "output assertions",
             Question::ProtocolAssertions => "protocol assertions",
             Question::Dependencies => "dependencies",
+            Question::MalformedInput => "malformed input",
         }
     }
 
@@ -88,13 +93,14 @@ impl Question {
         match self {
             Question::Artifact => &["Code", "Config", "Data", "Documentation", "Hardware"],
             Question::Execution => &["Dynamic", "Static"],
-            Question::Interaction => &["API", "GUI"],
+            Question::Interaction => &["API", "GUI/TUI", "CLI"],
             Question::Measurement => &["Build-time", "Run-time"],
             Question::Outputs => &["As is", "Post-processed"],
             Question::OutputAssertions | Question::ProtocolAssertions => {
                 &["Existence", "Constrained", "Exact match"]
             }
             Question::Dependencies => &["Mocks", "Fakes"],
+            Question::MalformedInput => &["Targeted attack", "Heuristic", "Random"],
         }
     }
 
@@ -108,6 +114,7 @@ impl Question {
             Question::Outputs => "Not analyzed",
             Question::OutputAssertions | Question::ProtocolAssertions => "No assertions",
             Question::Dependencies => "Real dependencies",
+            Question::MalformedInput => "Well-formed input",
         }
     }
 
@@ -116,11 +123,12 @@ impl Question {
         match self {
             Question::Artifact => "Multiple artifacts",
             Question::Execution => "Both dynamic and static",
-            Question::Interaction => "Both API and GUI",
+            Question::Interaction => "Several interfaces",
             Question::Measurement => "Both build-time and run-time",
             Question::Outputs => "Both",
             Question::OutputAssertions | Question::ProtocolAssertions => "Mixed",
             Question::Dependencies => "Both fakes and mocks",
+            Question::MalformedInput => "Several kinds",
         }
     }
 
@@ -174,10 +182,15 @@ pub fn describe(question: Question, summary: &str) -> (&'static str, &'static st
             NONE,
             false,
         ),
-        (Question::Interaction, "GUI") => (
-            "Tests that drive the program the way a person does: a browser, a terminal, its command line. These are the end-to-end tests.",
-            "No test drives the program: nothing here shows it working the way someone would use it.",
+        (Question::Interaction, "GUI/TUI") => (
+            "Tests that drive a screen of the program the way a person does, in a browser or a terminal. With those on its command line, these are the end-to-end tests.",
+            "No test drives a screen of the program: nothing here shows it working the way someone would see it.",
             true,
+        ),
+        (Question::Interaction, "CLI") => (
+            "Tests that run the built program on its command line and read what it prints. With those that drive a screen, these are the end-to-end tests.",
+            NONE,
+            false,
         ),
         (Question::Measurement, "Build-time") => {
             ("Tests that measure something built.", NONE, false)
@@ -222,6 +235,26 @@ pub fn describe(question: Question, summary: &str) -> (&'static str, &'static st
         (Question::Dependencies, "Real dependencies") => {
             ("Tests that use the real thing throughout.", NONE, false)
         }
+        (Question::MalformedInput, "Targeted attack") => (
+            "Tests that feed the code input made to break it: tampered, forged or injected.",
+            NONE,
+            false,
+        ),
+        (Question::MalformedInput, "Heuristic") => (
+            "Tests that feed the code input someone chose to be wrong: invalid, truncated, corrupt.",
+            "No test feeds the code input that is wrong: nothing shows it refusing what it should.",
+            true,
+        ),
+        (Question::MalformedInput, "Random") => (
+            "Tests that generate their input: fuzzing and property tests.",
+            NONE,
+            false,
+        ),
+        (Question::MalformedInput, "Well-formed input") => (
+            "Tests that give the code only what it expects.",
+            NONE,
+            false,
+        ),
         (_, NOT_CLASSIFIED) => (
             "Tests some option of which could not be decided from their text.",
             NONE,
@@ -319,7 +352,9 @@ impl Kind {
 
     /// An end-to-end test: one that runs the program and drives it the way a person does.
     pub fn end_to_end(&self) -> bool {
-        self.holds(Question::Execution, "Dynamic") && self.holds(Question::Interaction, "GUI")
+        self.holds(Question::Execution, "Dynamic")
+            && (self.holds(Question::Interaction, "GUI/TUI")
+                || self.holds(Question::Interaction, "CLI"))
     }
 }
 
@@ -707,6 +742,90 @@ fn fakes(body: &str) -> Option<String> {
     )
 }
 
+/// Input made to break the code: a word of the test's name saying it was tampered with or
+/// forged, or a payload of a known attack in its body.
+fn attack(test: &TestCase, body: &str) -> Option<String> {
+    const WORDS: &[&str] = &[
+        "tamper",
+        "tampered",
+        "tampering",
+        "forged",
+        "forge",
+        "forgery",
+        "spoof",
+        "spoofed",
+        "malicious",
+        "attack",
+        "attacker",
+        "evil",
+        "hostile",
+        "injection",
+        "inject",
+        "injected",
+        "traversal",
+        "xss",
+        "csrf",
+        "ssrf",
+        "smuggling",
+        "replay",
+        "replayed",
+        "overflow",
+        "exploit",
+    ];
+    static PAYLOAD: OnceLock<Regex> = OnceLock::new();
+    let name = crate::spec::words(&format!("{} {}", test.name, test.label));
+    if let Some(word) = name.iter().find(|w| WORDS.contains(&w.as_str())) {
+        return Some(format!("its name says {word}"));
+    }
+    first(
+        regex(
+            &PAYLOAD,
+            r#"\.\./\.\./|<script|javascript:|' OR '|' OR 1|; DROP TABLE|%00|\\x00|\$\{jndi:"#,
+        ),
+        body,
+    )
+    .map(|w| format!("it sends {w}"))
+}
+
+/// Input someone chose to be wrong: a word of the test's name saying so.
+fn heuristic(test: &TestCase) -> Option<String> {
+    const WORDS: &[&str] = &[
+        "invalid",
+        "malformed",
+        "bad",
+        "broken",
+        "corrupt",
+        "corrupted",
+        "garbage",
+        "junk",
+        "bogus",
+        "nonsense",
+        "unparsable",
+        "unparseable",
+        "truncated",
+        "illegal",
+        "wrong",
+        "garbled",
+        "mangled",
+    ];
+    let name = crate::spec::words(&format!("{} {}", test.name, test.label));
+    name.iter()
+        .find(|w| WORDS.contains(&w.as_str()))
+        .map(|w| format!("its name says {w}"))
+}
+
+/// Input generated for the test: a fuzzer or a property-based testing library.
+fn generated(body: &str, above: &str) -> Option<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    first(
+        regex(
+            &RE,
+            r"\bproptest!|\bprop_compose!|#\[quickcheck\]|\bquickcheck\b|\barbitrary::|\bArbitrary\b|\bfuzz_target!|\bbolero::|@given\b|\bhypothesis\b|\bfc\.(?:assert|property)\b|\bfast-check\b|\bf\.Fuzz\(|\btesting/quick\b|\bfuzz(?:er|ers|ing|ed)?\b",
+        ),
+        &format!("{above}\n{body}"),
+    )
+}
+
 /// Whether a test in `test` can call code in `file` directly: the same language, and for a
 /// Rust test outside `src`, built as a crate of its own, not the binary's own files.
 fn callable(test: &str, file: &str) -> bool {
@@ -820,12 +939,27 @@ pub fn classify(e: &Evidence) -> Kind {
             "the symbol index is not built yet",
         ),
     };
+    // The built program run on its command line is the CLI; anything else that drives the
+    // program from outside — a browser, a terminal, a path or a recording that says so — a
+    // screen of it.
+    let on_the_command_line = drives
+        .as_deref()
+        .is_some_and(|w| w.contains("the built program"));
     let interaction = vec![
         api,
         yes_no(
-            "GUI",
-            drives.clone(),
-            "it drives no browser, terminal or built program",
+            "GUI/TUI",
+            drives.clone().filter(|_| !on_the_command_line),
+            if on_the_command_line {
+                "it drives no browser or terminal; it runs the built program"
+            } else {
+                "it drives no browser or terminal"
+            },
+        ),
+        yes_no(
+            "CLI",
+            drives.clone().filter(|_| on_the_command_line),
+            "it runs no built program on its command line",
         ),
     ];
 
@@ -923,6 +1057,24 @@ pub fn classify(e: &Evidence) -> Kind {
         ),
     ];
 
+    let malformed_input = vec![
+        yes_no(
+            "Targeted attack",
+            attack(e.test, e.body),
+            "nothing in it is made to break the code",
+        ),
+        yes_no(
+            "Heuristic",
+            heuristic(e.test),
+            "its name says nothing of input that is wrong",
+        ),
+        yes_no(
+            "Random",
+            generated(e.body, e.above).map(|w| format!("it generates input with {w}")),
+            "it generates no input",
+        ),
+    ];
+
     let answers = [
         (Question::Artifact, artifact),
         (Question::Execution, execution),
@@ -932,6 +1084,7 @@ pub fn classify(e: &Evidence) -> Kind {
         (Question::OutputAssertions, output_assertions),
         (Question::ProtocolAssertions, protocol_assertions),
         (Question::Dependencies, dependencies),
+        (Question::MalformedInput, malformed_input),
     ]
     .into_iter()
     .map(|(question, options)| Answered {
@@ -1029,10 +1182,16 @@ mod tests {
                 .collect();
             summarise(Question::Interaction, &options)
         };
-        assert_eq!(s(&[Answer::Yes, Answer::No]), "API");
-        assert_eq!(s(&[Answer::Yes, Answer::Yes]), "Both API and GUI");
-        assert_eq!(s(&[Answer::No, Answer::No]), "No interaction");
-        assert_eq!(s(&[Answer::Yes, Answer::Inconclusive]), NOT_CLASSIFIED);
+        assert_eq!(s(&[Answer::Yes, Answer::No, Answer::No]), "API");
+        assert_eq!(
+            s(&[Answer::Yes, Answer::Yes, Answer::No]),
+            "Several interfaces"
+        );
+        assert_eq!(s(&[Answer::No, Answer::No, Answer::No]), "No interaction");
+        assert_eq!(
+            s(&[Answer::Yes, Answer::Inconclusive, Answer::No]),
+            NOT_CLASSIFIED
+        );
         assert_eq!(Question::Artifact.summaries().last(), Some(&NOT_CLASSIFIED));
     }
 
@@ -1068,13 +1227,28 @@ mod tests {
             Some(&[]),
             Some("it drives a pseudo-terminal"),
         );
-        assert_eq!(k.summary(Question::Interaction), "GUI");
+        assert_eq!(k.summary(Question::Interaction), "GUI/TUI");
         assert_eq!(
-            k.why(Question::Interaction, "GUI"),
+            k.why(Question::Interaction, "GUI/TUI"),
             "it drives a pseudo-terminal"
         );
         assert_eq!(k.summary(Question::Execution), "Dynamic");
         assert_eq!(k.summary(Question::OutputAssertions), "Constrained");
+        assert!(k.end_to_end());
+    }
+
+    #[test]
+    fn a_test_that_runs_the_built_program_is_end_to_end_on_its_command_line() {
+        let k = kind(
+            "fn lists() {\n    let out = Command::new(env!(\"CARGO_BIN_EXE_x\")).output().unwrap();\n    assert!(out.status.success());\n}",
+            Some(&[]),
+            Some("it drives the built program"),
+        );
+        assert_eq!(k.summary(Question::Interaction), "CLI");
+        assert_eq!(
+            k.why(Question::Interaction, "GUI/TUI"),
+            "it drives no browser or terminal; it runs the built program"
+        );
         assert!(k.end_to_end());
     }
 
@@ -1138,7 +1312,7 @@ mod tests {
             Some(&rust),
             Some("its path says browser"),
         );
-        assert_eq!(k.summary(Question::Interaction), "GUI");
+        assert_eq!(k.summary(Question::Interaction), "GUI/TUI");
         // A Rust test outside src is a crate of its own: the binary's files are out of reach.
         let main = vec!["src/main.rs".to_string()];
         let k = kind(
@@ -1173,5 +1347,51 @@ mod tests {
             None,
         );
         assert_eq!(k.summary(Question::Measurement), "Run-time");
+    }
+
+    #[test]
+    fn malformed_input_is_told_by_how_it_was_made() {
+        let named = |name: &str, body: &str| {
+            let mut test = case("tests/t.rs", 1, body.lines().count());
+            test.name = name.into();
+            test.label = name.replace('_', " ");
+            classify(&Evidence {
+                test: &test,
+                body,
+                above: "",
+                names: Some(&[]),
+                drives: None,
+                exists: &|_| false,
+            })
+        };
+        let k = named(
+            "a_tampered_signing_request_is_refused",
+            "fn x() {\n    assert!(sign(req).is_err());\n}",
+        );
+        assert_eq!(k.summary(Question::MalformedInput), "Targeted attack");
+        assert_eq!(
+            k.why(Question::MalformedInput, "Targeted attack"),
+            "its name says tampered"
+        );
+        let k = named(
+            "serves_files",
+            "fn x() {\n    get(\"/static/../../etc/passwd\");\n}",
+        );
+        assert_eq!(k.summary(Question::MalformedInput), "Targeted attack");
+        let k = named(
+            "rejects_an_unparsable_command",
+            "fn x() {\n    assert!(parse(\"{\").is_err());\n}",
+        );
+        assert_eq!(k.summary(Question::MalformedInput), "Heuristic");
+        let k = named(
+            "round_trips",
+            "proptest! {\n    fn x(s in \".*\") {\n        assert_eq!(parse(&print(&s)), s);\n    }\n}",
+        );
+        assert_eq!(k.summary(Question::MalformedInput), "Random");
+        let k = named(
+            "fuzzy_matching_ranks_closer_first",
+            "fn x() {\n    assert_eq!(rank(\"ab\"), 1);\n}",
+        );
+        assert_eq!(k.summary(Question::MalformedInput), "Well-formed input");
     }
 }

@@ -476,7 +476,7 @@ impl App {
                     .collect();
                 self.push_locations(format!("what {} names", t.test.label), hits);
             }
-            // The next of the eight questions to group the tests by.
+            // The next of the nine questions to group the tests by.
             KeyCode::Char('c') => {
                 let (stretch, by) = (state.stretch.clone(), state.by.next());
                 self.push_spec_by(stretch, by);

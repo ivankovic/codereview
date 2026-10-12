@@ -376,9 +376,10 @@ thirtyfour, headless_chrome), a pseudo-terminal (portable_pty, expectrl, rexpect
 node-pty) or the built program (`CARGO_BIN_EXE_`, assert_cmd), counting the files a Rust test
 pulls in with `#[path = "..."]`. A test a recording names is one in any case. Code with its unit
 tests beside it is never one, whatever it is called or mentions. Each says why it counts, in a
-few words. These are the rules by which a test interacts through the GUI in the classification
-below, so its GUI group and the opening list the same tests; a test whose name or path is about
-security carries a security mark in both.
+few words. These are the rules by which a test interacts through the GUI/TUI or the CLI in the
+classification below — the CLI when what it drives is the built program, the GUI/TUI otherwise —
+so those two groups together and the opening list the same tests; a test whose name or path is
+about security carries a security mark in both.
 
 A recording is matched to its test by file and by name, as written or as its phrase. A test that a
 recording names as its runner (`run_by`) is left out: it hands another file's tests to a runner
@@ -415,25 +416,27 @@ leaves a recording to watch. The request is the same in both front ends.
 
 Every test is classified by the eight questions of "What Types of Automated Tests do Developers
 Write?" (Ivanković, Rimanić, Budiselić, Petrović, Fraser and Just, AST 2025), in place of unit,
-integration and system levels, which that paper found nobody agrees on. Each question has options,
-and each option is answered on its own as yes, no or inconclusive, with why in a few words:
+integration and system levels, which that paper found nobody agrees on, and a ninth of
+codereview's own, on malformed input. Each question has options, and each option is answered on
+its own as yes, no or inconclusive, with why in a few words:
 
 1. What artifact is being tested: Code, Config, Data, Documentation, Hardware.
 2. Is the test executing the artifact: Dynamic, Static.
-3. How does the test interact with it: API, GUI.
+3. How does the test interact with it: API, GUI/TUI, CLI.
 4. Is the test performing a numerical measurement: Build-time, Run-time.
 5. How are outputs analyzed: As is, Post-processed.
 6. What assertions are done on the output: Existence, Constrained, Exact match.
 7. What assertions are done on the implementation or protocol: Existence, Constrained, Exact
    match.
 8. How does the test handle dependencies: Mocks, Fakes.
+9. Is the test using malformed input: Targeted attack, Heuristic, Random.
 
 A question is summarised the way the paper does: Not classified when any option is inconclusive;
 otherwise the one option that holds, a word for several (Multiple artifacts, Both dynamic and
-static, Both API and GUI, Both build-time and run-time, Both, Mixed, Both fakes and mocks), or a
-word for none (Nothing, Neither, No interaction, No measurement, Not analyzed, No assertions, Real
-dependencies). The reason given for a summary is that of the options that hold, or of the one that
-could not be decided, or of the first that does not hold.
+static, Several interfaces, Both build-time and run-time, Both, Mixed, Both fakes and mocks, Several
+kinds), or a word for none (Nothing, Neither, No interaction, No measurement, Not analyzed, No
+assertions, Real dependencies, Well-formed input). The reason given for a summary is that of the
+options that hold, or of the one that could not be decided, or of the first that does not hold.
 
 The answers are read, never run: from the test's own lines and the four above them, the files of
 code its body names (the symbol index's word, as for areas below), and the end-to-end rules above.
@@ -455,10 +458,12 @@ code its body names (the symbol index's word, as for areas below), and the end-t
   always no.
 - Dynamic holds when the test names code, drives the program or calls an HTTP API; Static when it
   reads a file of the repository as it is or runs a linter.
-- API holds when the test names code of the repository or calls an HTTP API; GUI when it drives
-  the program by the end-to-end rules above: a browser, a terminal, or the built program on its
-  command line, which counts as the interface a person uses. A test is end to end exactly when it
-  is Dynamic and GUI.
+- API holds when the test names code of the repository or calls an HTTP API. CLI holds when it
+  runs the built program on its command line (`CARGO_BIN_EXE_`, assert_cmd); GUI/TUI when it
+  drives the program some other way by the end-to-end rules above: a browser, a terminal, or a
+  path or recording that says it is end to end. The paper's GUI is split in two because a screen
+  someone looks at and a command someone types are different interfaces. A test is end to end
+  exactly when it is Dynamic and GUI/TUI or CLI.
 - Run-time holds when the test reads a clock (or memory) and compares a duration; Build-time when
   it compares the size of something under `target`, `dist`, `build` or a binary.
 - Output assertions are read by their spelling: exact for equality (`assert_eq!`, `toEqual`,
@@ -475,19 +480,28 @@ code its body names (the symbol index's word, as for areas below), and the end-t
   calls being unwrapped, which asserts that it does not fail.
 - Mocks hold for a mocking library (mockall, `unittest.mock`, `jest.fn`, `vi.fn`, sinon, gomock,
   nock); Fakes for a name with fake, stub, dummy or in-memory in it.
+- Targeted attack holds for input made to break the code: a whole word of the test's name such as
+  tampered, forged, spoofed, malicious, attack, injection, traversal, XSS, replay or overflow, or a
+  known payload in its body (`../../`, `<script`, `javascript:`, `' OR 1`, `; DROP TABLE`, a
+  null byte, `${jndi:`). Heuristic holds for input someone chose to be wrong, by a whole word of
+  the name: invalid, malformed, bad, broken, corrupt, garbage, junk, bogus, nonsense, unparsable,
+  truncated, illegal, wrong, garbled or mangled. Random holds for input generated for the test: a
+  fuzzer or a property-based library (proptest, quickcheck, arbitrary, bolero, Hypothesis,
+  fast-check, Go's `f.Fuzz` and `testing/quick`).
 
 A test whose name or path has a word about security in it (password, auth, CSRF, sign in,
 permission and so on, as whole words) carries a security mark with that reason, whatever its kind.
 
 Both front ends group the specification by one question, how the test interacts with what it
 tests to begin with, and list every option of it as a group even when empty; mixed, none and Not
-classified appear only when some test is. A group says what its tests are, and an empty GUI group
-says, as a finding, that nothing shows the program working the way someone would use it. The
-areas count each test towards its group. In the terminal, `c` groups by the next question and `K`
-lists all eight answers for the test under the cursor, with why; the status line gives the
+classified appear only when some test is. A group says what its tests are, and an empty GUI/TUI
+group says, as a finding, that nothing shows a screen of the program working the way someone would
+see it, as an empty Heuristic group does that nothing shows it refusing input it should. The areas
+count each test towards its group. In the terminal, `c` groups by the next question and `K`
+lists all nine answers for the test under the cursor, with why; the status line gives the
 cursor's test its answer to the current question and the reason. On the page, a select above the
 tests picks the question and is kept in the address (`by=`), and each test's card has its kind,
-end to end or how it interacts, which opens in place to the eight answers with why. Tests elsewhere
+end to end or how it interacts, which opens in place to the nine answers with why. Tests elsewhere
 — a file's tests, the smaller tests of an end-to-end one — are labelled end to end or by how they
 interact, and the changes a stretch made carry only the security mark.
 
@@ -514,31 +528,38 @@ URL, the full commit, the file, the lines and the test, saying that the content 
 codereview's and stays under the source's licence, and naming the licence file at the top of
 the repository at that commit with its first line, or saying there is none.
 
-The CSV's columns are the sample's directory name, the repository as `owner/name`, the full
-commit, the file, the first and last line, the test as written and as a phrase, then what the
-rules need beyond the text, read from the checkout when it was drawn — the files of code the
-test names, by the symbol index (code only), why it drives the program if it does, and the
-files of the repository its strings name — then its status (pending, done or skipped), a column
-per option of the eight questions (`artifact.code` to `dependencies.fakes`) holding yes, no,
-inconclusive or nothing yet, and a note. Lists are separated by semicolons; fields are quoted
-the usual way. Columns are found by name, so an option missing from an older file is
-unanswered. The file is rewritten whole through a temporary one on every change.
+The CSV's columns are the sample's directory name, the repository as `owner/name`, the full commit,
+the file, the first and last line, the test as written and as a phrase, then what the rules need
+beyond the text, read from the checkout when it was drawn — the files of code the test names, by the
+symbol index (code only), why it drives the program if it does, and the files of the repository its
+strings name — then its status (pending, done or skipped), a column per option of the nine questions
+(`artifact.code` to `malformed_input.random`) holding yes, no, inconclusive or nothing yet, and a
+note. Lists are separated by semicolons; fields are quoted the usual way. Columns are found by name,
+so an option missing from an older file is unanswered, and a sample it said was done is pending
+again until the new options are answered. The file is rewritten whole through a temporary one on
+every change.
 
-`kinds label` opens the samples in the terminal, at the one named or the first pending: a
-header with which sample of how many, how many are done, the repository at the short commit,
-the file and lines and the status; the file, highlighted, scrolled to the test, its lines
-marked; and the eight questions with their options. `y`, `n` and `i` answer the option under
-the cursor (holds, does not, cannot be told) and move to the next, `Space` cycles an answer
-and `x` clears it, `N` answers every unanswered option of the question no and moves to the
-next question, `j`/`k` and `Tab`/`Shift-Tab` move by option and by question. A question fully
-answered shows its summary. A sample with every option answered is done; `s` sets one aside
-as skipped or takes it back. `]` and `[` move between samples and `}` goes to the next one
-pending; `Ctrl-d`/`Ctrl-u` scroll the file, which is shown whole when it fits, and `z`
-returns to the test; `e` writes a note, shown in the title of the file's pane; `?` lists the
-keys. Every answer is saved as it is given. The rules' answers are hidden until
-`r` shows them beside each option, with whether the two agree, and the status line gives the
-rules' reason for the option under the cursor; they are worked out from the sample alone, so
-no checkout is needed.
+`kinds label` opens the samples in the terminal, at the one named or the first pending: a header
+with which sample of how many, how many are done, the repository at the short commit, the file and
+lines and the status; the file, highlighted, scrolled to the test, its lines marked; and the nine
+questions with their options. `y`, `n` and `i` answer the option under the cursor (holds, does not,
+cannot be told) and move to the next, `Space` cycles an answer and `x` clears it, `N` answers every
+unanswered option of the question no and moves to the next question, `j`/`k` and `Tab`/`Shift-Tab`
+move by option and by question. A question fully answered shows its summary. A sample with every
+option answered is done; `s` sets one aside as skipped or takes it back. `]` and `[` move between
+samples and `}` goes to the next one pending; `Ctrl-d`/`Ctrl-u` scroll the file, which is shown
+whole when it fits, and `z` returns to the test. `c` gives the keys to the file, its pane's border
+lit and its title saying which line of how many the cursor is on: `j`/`k` move a line,
+`Ctrl-d`/`Ctrl-u` (or the page keys) half a page, `g`/`G` to the top and the end, `h`/`l` scroll
+sideways while the line numbers and the test's mark stay put and `0` scrolls back, `/` searches —
+ignoring case unless the search has a capital — and `n`/`N` find the next and previous line that
+matches, wrapping at the ends and saying which match of how many it is, with every matching line's
+number lit; `z` returns to the test, and `Esc` or `c` gives the keys back to the questions. `/` from
+the questions searches the file at once. `e` writes a note, shown in the title of the file's pane;
+`?` lists the keys. Every answer is saved as it is given. The rules' answers are hidden until `r`
+shows them beside each option, with whether the two agree, and the status line gives the rules'
+reason for the option under the cursor; they are worked out from the sample alone, so no checkout is
+needed.
 
 `kinds agree` runs the rules on every finished sample from what it keeps and prints, for each
 question, on how many the summary is the same and, per option, how often the answers are;

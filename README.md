@@ -19,12 +19,14 @@ line they were left on and finding it again after edits.
   declared anywhere — how it is doing, down to how many review comments have lost the lines
   they were left on, and its tests: what they say the system does, file by file, whether the
   last run is about the code on disk, and which of the files everything leans on no test names.
-- **Classify every test** by the eight questions of [What Types of Automated Tests do
-  Developers Write?](https://homes.cs.washington.edu/~rjust/publ/test_type_analysis_ast_2025.pdf)
-  instead of unit and integration levels: what it tests (code, configuration, data,
-  documentation), whether it runs it, through an API or the interface a person uses, what it
-  measures, how it checks the output and the calls, and whether it mocks or fakes what it
-  depends on. Each answer says why, and the tests can be grouped by any of the questions.
+- **Classify every test** by the eight questions of [What Types of Automated Tests do Developers
+  Write?](https://homes.cs.washington.edu/~rjust/publ/test_type_analysis_ast_2025.pdf) instead of
+  unit and integration levels: what it tests (code, configuration, data, documentation), whether it
+  runs it, through an API, a screen (GUI or TUI) or the command line, what it measures, how it
+  checks the output and the calls, and whether it mocks or fakes what it depends on — and a ninth
+  question of our own: whether it feeds the code malformed input, made as a targeted attack, by
+  heuristic or at random. Each answer says why, and the tests can be grouped by any of the
+  questions.
 - **Explore** the working tree with syntax highlighting, change markers against HEAD, and blame;
   pictures are shown as pictures, in the browser and in a terminal that can draw them.
 - **Comment** on a line or a range. Comments go to `REVIEW.md`, pending or completed, in the

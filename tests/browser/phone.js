@@ -134,13 +134,13 @@ test('a repository without end-to-end tests opens on saying so', async t => {
   t.ok('they open', await page.evaluate(() => location.hash.startsWith('#/r1/spec')), await page.evaluate(() => location.hash));
 }, { docs: ['SPECS.md#What a repository opens on'] });
 
-test('the tests can be grouped by another of the eight questions', async t => {
+test('the tests can be grouped by another of the questions', async t => {
   const page = t.page;
   await t.open('#/spec');
   await page.waitForSelector('.spec details.group');
   t.ok('they start grouped by how they interact', await page.evaluate(() =>
     [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')].map(b => b.textContent).join(', ')
-      === 'API, GUI, No interaction' || [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')].map(b => b.textContent).join(', ')));
+      === 'API, GUI/TUI, CLI, No interaction' || [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')].map(b => b.textContent).join(', ')));
   t.ok('the question is in reach', await page.evaluate(hittable, '.spec select.question'));
   t.step('group them by what artifact they test');
   await page.select('.spec select.question', 'artifact');
@@ -152,25 +152,42 @@ test('the tests can be grouped by another of the eight questions', async t => {
       === 'Code, Config, Data, Documentation' || [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')].map(b => b.textContent).join(', ')));
 }, { docs: ['SPECS.md#What kind of test each one is'] });
 
+test('the tests can be grouped by whether they use malformed input', async t => {
+  const page = t.page;
+  await t.open('#/spec');
+  await page.waitForSelector('.spec select.question');
+  t.ok('the question is one of those offered', await page.evaluate(() =>
+    [...document.querySelectorAll('.spec select.question option')].some(o => o.textContent === 'Is the test using malformed input?')));
+  t.step('group them by whether they use malformed input');
+  await page.select('.spec select.question', 'malformed_input');
+  await page.waitForFunction(() => location.hash.includes('by=malformed_input'));
+  await page.waitForFunction(() => [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')]
+    .some(b => b.textContent === 'Well-formed input'));
+  t.ok('the groups are its options', await page.evaluate(() => {
+    const groups = [...document.querySelectorAll('.spec details.group > summary b, .spec .fold-empty b')].map(b => b.textContent);
+    return ['Targeted attack', 'Heuristic', 'Random', 'Well-formed input'].every(g => groups.includes(g)) ? true : groups.join(', ');
+  }));
+}, { docs: ['SPECS.md#What kind of test each one is'] });
+
 test('a test opens to what kind of test it is and why', async t => {
   const page = t.page;
   await t.open('#/spec');
   await page.waitForSelector('.spec details.group');
-  const GUI = '.spec details.group:first-of-type';
-  await page.waitForSelector(GUI + ' .card-test details.kind');
-  await t.inView(GUI + ' .card-test details.kind > summary');
+  const GROUP = '.spec details.group:first-of-type';
+  await page.waitForSelector(GROUP + ' .card-test details.kind');
+  await t.inView(GROUP + ' .card-test details.kind > summary');
   t.ok('an end-to-end test says so', await page.evaluate(sel =>
     document.querySelector(sel + ' .card-test details.kind > summary').textContent === 'end to end'
-      || document.querySelector(sel + ' .card-test details.kind > summary').textContent, GUI));
+      || document.querySelector(sel + ' .card-test details.kind > summary').textContent, GROUP));
   t.step('open what kind of test it is');
-  await page.click(GUI + ' .card-test details.kind > summary');
+  await page.click(GROUP + ' .card-test details.kind > summary');
   t.ok('it stays on the list', await page.evaluate(() => location.hash.includes('/spec')), await page.evaluate(() => location.hash));
   t.ok('every question is answered', await page.evaluate(sel =>
-    document.querySelectorAll(sel + ' .card-test details.kind[open] tr').length === 8, GUI));
+    document.querySelectorAll(sel + ' .card-test details.kind[open] tr').length === 9, GROUP));
   t.ok('with why', await page.evaluate(sel => {
     const row = [...document.querySelectorAll(sel + ' .card-test details.kind[open] tr')].find(r => r.querySelector('th').textContent === 'interaction');
-    return row && row.textContent.includes('GUI') && row.textContent.includes('it drives the built program') ? true : row && row.textContent;
-  }, GUI));
+    return row && row.textContent.includes('CLI') && row.textContent.includes('it drives the built program') ? true : row && row.textContent;
+  }, GROUP));
 }, { docs: ['SPECS.md#What kind of test each one is'] });
 
 test('the summary says what a repository is, where to start and how it is doing', async t => {
