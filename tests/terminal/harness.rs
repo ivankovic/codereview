@@ -226,23 +226,24 @@ impl Term {
         }
     }
 
-    /// Leaves the end-to-end tests, which a repository opens on, for the code: the file tree
-    /// and the file beside it.
+    /// Waits for the end-to-end tests, the first section, which a repository opens on.
     #[track_caller]
-    pub fn leave_the_tests(&mut self) {
+    pub fn on_the_tests(&mut self) {
         let line = std::panic::Location::caller().line();
         self.wait_until(line, "shows the end-to-end tests", |s| {
             s.contains("end-to-end test") || s.contains("No end-to-end tests")
         });
-        self.push(
-            line,
-            "action",
-            "leave the tests for the code".into(),
-            None,
-            None,
-        );
+    }
+
+    /// Goes from the end-to-end tests, which a repository opens on, to the code, the third
+    /// section: the file tree and the file beside it.
+    #[track_caller]
+    pub fn go_to_the_code(&mut self) {
+        let line = std::panic::Location::caller().line();
+        self.on_the_tests();
+        self.push(line, "action", "go to the code (3)".into(), None, None);
         self.described = true;
-        self.keys("q");
+        self.keys("3");
         self.wait_until(line, "shows “files 5”", |s| s.contains("files 5"));
     }
 

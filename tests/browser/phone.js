@@ -316,27 +316,78 @@ test('the tests read as sentences, folded by how they interact and by file', asy
   t.ok('and goes back', await page.evaluate(() => location.hash === '#/summary'), await page.evaluate(() => location.hash));
 });
 
-test('the tabs lead to the files, the changes and the log', async t => {
+test('the tabs are Tests, All tests, Code, Review and Agent, and the page opens on Tests', async t => {
   const page = t.page;
-  await t.open('#/summary');
-  // The overview is a tab of its own, lit while it is up; Code with nothing open is the
-  // tree, and the Summary tab brings the overview back.
-  t.ok('the Summary tab is lit', await page.evaluate(() => document.querySelector('header .tabs [data-view=overview]').classList.contains('active')));
-  t.ok('the Summary tab can be tapped', await page.evaluate(hittable, 'header .tabs [data-view=overview]'));
+  await t.open();
+  await page.waitForSelector('.e2e .e2e-test');
+  // Tests first: what the repository demonstrably does is the top of the page, and the code
+  // is a tab further along, not the floor everything falls back to.
+  t.ok('the tabs are in that order', await page.evaluate(() => {
+    const names = [...document.querySelectorAll('header .tabs button')].map(b => b.firstChild.textContent.trim()).join(', ');
+    return names === 'Tests, All tests, Code, Review, Agent' ? true : names;
+  }));
+  t.ok('Tests is lit, at the root address', await page.evaluate(() =>
+    document.querySelector('header .tabs [data-group=tests]').classList.contains('active') && location.hash === '#/'), await page.evaluate(() => location.hash));
+  t.ok('and no other is', await page.evaluate(() => document.querySelectorAll('header .tabs button.active').length === 1));
+  // Five tabs across a phone: each must be where a finger lands, and say its whole name.
+  for (const group of ['tests', 'spec', 'code', 'review', 'agent']) {
+    t.ok(`the ${group} tab can be tapped`, await page.evaluate(hittable, `header .tabs [data-group=${group}]`));
+  }
+  t.ok('no tab name is cut short', await page.evaluate(() => {
+    const cut = [...document.querySelectorAll('header .tabs button')].filter(b => b.scrollWidth > b.clientWidth + 1).map(b => b.textContent.trim());
+    return cut.length ? 'cut: ' + cut.join(', ') : true;
+  }));
+  t.step('tap All tests');
+  await page.click('header .tabs [data-group=spec]');
+  await page.waitForSelector('.spec');
+  t.ok('All tests is every test, a tab of its own', await page.evaluate(() =>
+    location.hash.startsWith('#/spec') && document.querySelector('header .tabs [data-group=spec]').classList.contains('active') && document.querySelector('#subnav').hidden), await page.evaluate(() => location.hash));
+}, { docs: ['SPECS.md#Browser UI'] });
+
+test('the Code tab lands on the summary, with the files, the changes and the log beside it', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('.e2e');
   t.step('tap Code');
-  await page.click('header .tabs [data-view=explore]');
-  await page.waitForSelector('#tree .row');
-  t.ok('Code with nothing open is the tree', await page.evaluate(() => location.hash.endsWith('/tree')), await page.evaluate(() => location.hash));
-  t.ok('Code holds the files, the changes and the log', await page.evaluate(() => {
+  await page.click('header .tabs [data-group=code]');
+  await page.waitForSelector('.overview .summary');
+  t.ok('Code opens on the summary', await page.evaluate(() => location.hash === '#/summary'), await page.evaluate(() => location.hash));
+  t.ok('Code holds the summary, the files, the changes and the log', await page.evaluate(() => {
     const subs = [...document.querySelectorAll('#subnav button')].map(b => b.dataset.sub).join(' ');
-    return subs === 'explore changes log' ? true : subs;
+    return subs === 'overview explore changes log' ? true : subs;
   }));
   t.ok('and each can be tapped', await page.evaluate(hittable, '#subnav [data-sub=log]'));
-  t.step('tap Summary');
-  await page.click('header .tabs [data-view=overview]');
-  await page.waitForSelector('.overview');
-  t.ok('Summary brings the overview back', await page.evaluate(() => !!document.querySelector('.overview')));
-});
+  t.step('tap Files');
+  await page.click('#subnav [data-sub=explore]');
+  await page.waitForSelector('#tree .row');
+  t.ok('Files with nothing open is the tree', await page.evaluate(() => location.hash.endsWith('/tree')), await page.evaluate(() => location.hash));
+  t.step('tap Tests, then Code again');
+  await page.click('header .tabs [data-group=tests]');
+  await page.waitForSelector('.e2e');
+  await page.click('header .tabs [data-group=code]');
+  await page.waitForSelector('#tree .row');
+  t.ok('Code goes back to the view it was last on', await page.evaluate(() => location.hash.endsWith('/tree')), await page.evaluate(() => location.hash));
+}, { docs: ['SPECS.md#Browser UI'] });
+
+test('the agent is a tab of its own', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('.e2e');
+  t.step('tap Agent');
+  await page.click('header .tabs [data-group=agent]');
+  await page.waitForSelector('#agent');
+  t.ok('the agent opens at its own address', await page.evaluate(() => location.hash === '#/agent'), await page.evaluate(() => location.hash));
+  t.ok('Agent is lit, and Review is not', await page.evaluate(() =>
+    document.querySelector('header .tabs [data-group=agent]').classList.contains('active')
+    && !document.querySelector('header .tabs [data-group=review]').classList.contains('active')));
+  t.step('tap Review');
+  await page.click('header .tabs [data-group=review]');
+  await page.waitForSelector('#subnav [data-sub=notes]');
+  t.ok('Review holds the comments and the notes, and not the agent', await page.evaluate(() => {
+    const subs = [...document.querySelectorAll('#subnav button')].map(b => b.dataset.sub).join(' ');
+    return subs === 'review notes' ? true : subs;
+  }));
+}, { docs: ['SPECS.md#Browser UI'] });
 
 test('the header menu refreshes, and Files opens the tree', async t => {
   const page = t.page;
@@ -527,6 +578,12 @@ test('a stretch says what no end-to-end test ran, and how each test ran before i
   await page.waitForFunction(() => /none yet/.test(document.querySelector('.testview .compare .media.before pre.term').textContent)
     && /why is this pub/.test(document.querySelector('.testview .compare .media.after pre.term').textContent), { timeout: 5000 });
   t.ok('both recordings go to it', true);
+  // Reading down the test put the header away, and the back button with it: a tap where it
+  // was lands on the test's own title.
+  t.step('scroll back up, so that the header comes back');
+  await page.evaluate(() => { $('#content').scrollTop = 0; });
+  await page.waitForFunction(`(${hittable})('#back') === true`, { timeout: 5000 }).catch(() => {});
+  t.ok('the back button is there', await page.evaluate(hittable, '#back'));
   t.step('go back, and open the code nothing ran');
   await page.click('#back');
   await page.waitForSelector('.stretch-card .unran .item', { timeout: 30000 });

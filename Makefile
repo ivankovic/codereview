@@ -50,8 +50,18 @@ clippy:
 
 check: fmt clippy test
 
+# Where Portage already manages codereview (the live dev-util/codereview-9999 ebuild), rebuild
+# that package from this checkout's current branch rather than GitHub, so the binary on PATH
+# stays Portage's; uncommitted changes are not in it. Anywhere else, cargo install.
 install: check
-	cargo install --path . --features web --locked
+	@if command -v portageq >/dev/null && portageq has_version / dev-util/codereview; then \
+		echo "sudo emerge --oneshot dev-util/codereview, from $(CURDIR) $$(git branch --show-current)"; \
+		sudo EGIT_OVERRIDE_REPO_IVANKOVIC_CODEREVIEW=file://$(CURDIR) \
+			EGIT_OVERRIDE_BRANCH_IVANKOVIC_CODEREVIEW=$$(git branch --show-current) \
+			emerge --oneshot dev-util/codereview; \
+	else \
+		cargo install --path . --features web --locked; \
+	fi
 
 # Install, then restart the service that runs it. The unit is a user one by default, since
 # the repositories worth serving are usually the ones in $HOME; DEPLOY_UNIT and SYSTEMCTL

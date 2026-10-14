@@ -31,6 +31,9 @@ cargo install --path . --features web --locked   # or: make install
 sudo cp ~/.cargo/bin/codereview /usr/local/bin/
 ```
 
+Where Portage manages `dev-util/codereview`, `make install` instead re-emerges that package from
+the checkout's current branch, which puts the binary in `/usr/bin` already.
+
 Choose a password and store only its hash. `hash-password` asks twice without echoing, and
 prints nothing but the hash:
 

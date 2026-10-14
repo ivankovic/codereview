@@ -36,9 +36,6 @@ pub struct Workspace {
     /// repository cloned or created in one joins the others.
     checkouts: Checkouts,
     scanned: Instant,
-    /// Whether a repository that appears later opens on its end-to-end tests, as the ones
-    /// named at start-up without a file do. Off for the tests that build a workspace by hand.
-    pub opens_on_tests: bool,
 }
 
 impl Workspace {
@@ -58,7 +55,6 @@ impl Workspace {
             branches: Vec::new(),
             checkouts: Checkouts::default(),
             scanned: Instant::now(),
-            opens_on_tests: false,
         }
     }
 
@@ -102,9 +98,6 @@ impl Workspace {
             let mut app = App::new(session, None);
             app.graphics = graphics.clone();
             app.graphics_known = graphics_known;
-            if self.opens_on_tests {
-                app.push_end_to_end();
-            }
             if self.picker.is_some() {
                 self.branches.push(app.session.repo.head_label());
             }

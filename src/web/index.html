@@ -453,7 +453,7 @@ body.zen.hasmsg footer { display: flex; }
   /* Sized for a finger: text a phone can be read at, and nothing to tap under 44 pixels. */
   body { font-size: 16px; }
   button.small { font-size: 13px; padding: 6px 10px; }
-  header .tabs button { font-size: 14px; min-height: 56px; }
+  header .tabs button { font-size: 13px; min-height: 56px; }
   #back { font-size: 24px; min-width: 44px; min-height: 40px; }
   #subnav { position: sticky; top: 0; z-index: 4; padding: 6px 10px; gap: 6px; overflow-x: auto; }
   #subnav button { flex: 1; min-height: 40px; font-size: 15px; border: 1px solid var(--border); }
@@ -530,17 +530,18 @@ body.zen.hasmsg footer { display: flex; }
 }
 </style>
 </head>
-<body data-view="explore">
+<body data-view="e2e">
 <header>
   <button id="back" title="back to where you were" hidden>‹</button>
   <span class="brand">codereview</span>
   <select id="repo" title="which repository the page shows" hidden></select>
   <span id="branch" class="dim"></span>
   <nav class="tabs">
-    <button data-view="e2e" data-group="tests" title="what it does: the end-to-end tests and their recordings, then every test">Tests</button>
-    <button data-view="overview" data-group="overview" title="how the repository is doing">Summary</button>
-    <button data-view="explore" data-group="code" class="active" title="files, changes and history">Code</button>
-    <button data-view="review" data-group="review" title="comments, notes and the agent">Review <span id="pending" class="badge"></span><span id="agentdot" class="badge" hidden></span></button>
+    <button data-view="e2e" data-group="tests" class="active" title="what it demonstrably does: the end-to-end tests and their recordings">Tests</button>
+    <button data-view="spec" data-group="spec" title="every test, by what kind of test it is">All tests</button>
+    <button data-view="overview" data-group="code" title="how the repository is doing, its files, changes and history">Code</button>
+    <button data-view="review" data-group="review" title="comments and notes">Review <span id="pending" class="badge"></span></button>
+    <button data-view="agent" data-group="agent" title="the coding agent">Agent <span id="agentdot" class="badge" hidden></span></button>
   </nav>
   <span class="spacer"></span>
   <button id="more" class="phone" title="search, colour scheme, and more">⋯</button>
@@ -3141,16 +3142,16 @@ async function showNotes() {
 
 // ----- chrome ---------------------------------------------------------------------------------
 
-// Four tabs, one per question: how is it doing, what does it do, what is the code, and what
-// is to be done about it. Two of them hold several views, picked from a row under the header;
-// a tab remembers which of its views was last open and goes back to it.
+// Five tabs, tests first, in the order the terminal UI has its sections: what it demonstrably
+// does, every test, the code, what is to be done about it, and the agent doing it. Two of them
+// hold several views, picked from a row under the header; a tab remembers which of its views
+// was last open and goes back to it.
 const GROUPS = {
-  tests: [['e2e', 'End to end'], ['spec', 'All tests']],
-  code: [['explore', 'Files'], ['changes', 'Changes'], ['log', 'Log']],
-  review: [['review', 'Comments'], ['notes', 'Notes'], ['agent', 'Agent']],
+  code: [['overview', 'Summary'], ['explore', 'Files'], ['changes', 'Changes'], ['log', 'Log']],
+  review: [['review', 'Comments'], ['notes', 'Notes']],
 };
-const GROUP_OF = { overview: 'overview', e2e: 'tests', spec: 'tests', explore: 'code', changes: 'code', log: 'code', diff: 'code',
-  review: 'review', notes: 'review', agent: 'review' };
+const GROUP_OF = { e2e: 'tests', spec: 'spec', overview: 'code', explore: 'code', changes: 'code', log: 'code', diff: 'code',
+  review: 'review', notes: 'review', agent: 'agent' };
 const lastInGroup = {};
 
 function setTabs(view) {
@@ -3212,7 +3213,7 @@ function openView(v, again = false) {
   // A tab always starts its view afresh, rather than redrawing what was there. Explore
   // goes back to the open file, or, tapped again on a phone while a file is up, to the tree.
   if (v === 'explore') {
-    // Nothing open: the tree, since the overview has a tab of its own. A file open: that file.
+    // Nothing open: the tree; the Code tab itself lands on the summary. A file open: that file.
     // On a phone, tapped again while the file is up: the tree, which is how you get to the next.
     if ((again || phone()) && state.view === 'explore' && document.body.classList.contains('showfile')) showTree();
     else if (!state.file) showTree();
@@ -3297,7 +3298,14 @@ $('#search').oninput = e => { state.search = e.target.value; if (state.view === 
 $('#search').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; state.search = ''; e.target.blur(); if (state.file) renderFile(); } };
 
 const HELP = `
-<h3>Explore</h3><table>
+<h3>Tests</h3><table>
+<tr><td><kbd>Tests</kbd></td><td>the first tab, what the repository opens on: every test that drives it the way a person does, each with the recording its last run left, whether it passed, and how far the code has moved since. Tap a step to go to that moment of the recording; the file name opens the test</td></tr>
+<tr><td><kbd>Ask the agent to write the first ones</kbd></td><td>where there are none: the agent writes them, each leaving a recording</td></tr></table>
+<h3>All tests</h3><table>
+<tr><td><kbd>All tests</kbd></td><td>every test as a sentence, grouped by one of nine questions about what kind of test it is; a test's kind opens to all nine answers and why</td></tr>
+<tr><td><kbd>last 7 days</kbd> <kbd>last commit</kbd> <kbd>uncommitted</kbd></td><td>what that stretch did to the tests, the ones that now ask less first: removed, skipped, fewer assertions</td></tr>
+<tr><td><kbd>Tests in this commit</kbd></td><td>in the log: the same for one commit</td></tr></table>
+<h3>Code</h3><table>
 <tr><td><kbd>click line number</kbd></td><td>comment on that line; shift-click, or the form's <kbd>Extend range</kbd> and another line number, extends the range</td></tr>
 <tr><td><kbd>Comment</kbd></td><td>a comment on the whole file; <kbd>+</kbd> on a directory in the tree comments on it</td></tr>
 <tr><td><kbd>/</kbd></td><td>search in the file (smart case)</td></tr>
@@ -3307,13 +3315,6 @@ const HELP = `
 <tr><td><kbd>Blame</kbd></td><td>last commit per line</td></tr>
 <tr><td><kbd>Zen</kbd> or <kbd>z</kbd></td><td>the file, its line numbers and its comments, and nothing else; <kbd>z</kbd> or <kbd>Esc</kbd> comes back</td></tr>
 <tr><td><kbd>Wrap lines</kbd> or <kbd>w</kbd></td><td>wrap long lines instead of scrolling sideways, with the continuation indented; remembered in this browser</td></tr></table>
-<h3>Tests</h3><table>
-<tr><td><kbd>End to end</kbd></td><td>what the repository opens on: every test that drives it the way a person does, each with the recording its last run left, whether it passed, and how far the code has moved since. Tap a step to go to that moment of the recording; the file name opens the test</td></tr>
-<tr><td><kbd>Ask the agent to write the first ones</kbd></td><td>where there are none: the agent writes them, each leaving a recording</td></tr></table>
-<h3>Spec</h3><table>
-<tr><td><kbd>Spec</kbd></td><td>every test as a sentence, grouped by one of nine questions about what kind of test it is; a test's kind opens to all nine answers and why</td></tr>
-<tr><td><kbd>last 7 days</kbd> <kbd>last commit</kbd> <kbd>uncommitted</kbd></td><td>what that stretch did to the tests, the ones that now ask less first: removed, skipped, fewer assertions</td></tr>
-<tr><td><kbd>Tests in this commit</kbd></td><td>in the log: the same for one commit</td></tr></table>
 <h3>Changes</h3><table>
 <tr><td><kbd>Commit</kbd></td><td>in the working tree view, stages everything listed and commits it; in the staged view, commits what is staged. The sheet names the files and any comment still pending on them, and hooks run as they do on the command line</td></tr></table>
 <h3>Symbols</h3><table>

@@ -162,10 +162,105 @@ fn a_repository_without_end_to_end_tests_says_so_first() {
 }
 
 #[test]
-fn a_repository_opens_on_what_it_holds_and_where_to_go() {
+fn the_sections_run_along_the_top_with_the_tests_first() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
-    t.leave_the_tests();
+    t.on_the_tests();
+    let screen = t.screen();
+    let top = screen.lines().next().unwrap_or_default().to_string();
+    let order =
+        ["1 Tests", "2 All tests", "3 Code", "4 Review", "5 Agent"].map(|name| top.find(name));
+    t.check(
+        "the top row is Tests, All tests, Code, Review, Agent, in that order",
+        order.iter().all(Option::is_some) && order.is_sorted(),
+        || top.clone(),
+    );
+    t.check(
+        "the tests are the first screen, with nothing under them",
+        screen
+            .lines()
+            .last()
+            .is_some_and(|l| l.starts_with(" end to end ")),
+        || screen.clone(),
+    );
+}
+
+#[test]
+fn a_number_goes_to_a_section_and_q_comes_back_to_the_tests() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.on_the_tests();
+    t.step("go to the review, the fourth section");
+    t.keys("4");
+    t.wait_for(" review 0 pending, 0 completed");
+    t.step("go to the code, the third");
+    t.keys("3");
+    t.wait_for("files 5");
+    t.step("step back out of the code");
+    t.keys("q");
+    t.wait_for("1 end-to-end test of 2 tests");
+}
+
+#[test]
+fn a_file_named_on_the_command_line_opens_in_the_code_with_the_tests_a_q_away() {
+    let mut t = term!(|_: &Path| {}, &["src/main.rs"]);
+    t.documents("SPECS.md#Terminal UI");
+    t.wait_for("src/main.rs 1/7");
+    t.wait_for(" explore ");
+    t.step("step back out of the file and the tree");
+    t.keys("q");
+    t.keys("q");
+    t.wait_for("1 end-to-end test of 2 tests");
+}
+
+#[test]
+fn a_pending_comment_is_counted_beside_review_in_the_top_row() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.go_to_the_code();
+    t.step("open src/main.rs and comment on its first line");
+    t.keys(DOWN);
+    t.keys(ENTER);
+    t.wait_for("src/main.rs 1/7");
+    t.keys("c");
+    t.wait_for("comment on src/main.rs:1:");
+    t.keys("why here?");
+    t.keys(ENTER);
+    t.wait_for("src/main.rs 1/7 ●1");
+    let top = t.screen().lines().next().unwrap_or_default().to_string();
+    t.check(
+        "the top row counts one pending comment beside Review",
+        top.contains("4 Review 1"),
+        || top.clone(),
+    );
+}
+
+#[test]
+fn a_test_s_source_opens_over_the_tests_and_q_goes_back_to_them() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.wait_for("○ a review survives a restart");
+    t.step("open the test's source");
+    t.keys("s");
+    t.wait_for("tests/e2e.rs 2/4");
+    t.wait_for(" end to end › explore ");
+    t.step("step back out of the file and the tree");
+    t.keys("q");
+    t.keys("q");
+    t.wait_for("○ a review survives a restart");
+    let screen = t.screen();
+    t.check(
+        "the tests are on screen again, not the code",
+        !screen.contains("files 5"),
+        || screen.clone(),
+    );
+}
+
+#[test]
+fn the_code_says_what_the_repository_holds_and_where_to_go() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.go_to_the_code();
     t.wait_for("5 files, 0 pending comments, 0 notes");
     t.wait_for("L  repository log");
     t.wait_for("S  working tree changes");
@@ -176,7 +271,7 @@ fn a_repository_opens_on_what_it_holds_and_where_to_go() {
 fn a_comment_left_on_a_line_is_written_to_review_md() {
     let mut t = term!();
     t.documents("SPECS.md#REVIEW.md");
-    t.leave_the_tests();
+    t.go_to_the_code();
     t.step("open src/main.rs from the tree");
     t.keys(DOWN);
     t.keys(ENTER);
@@ -201,7 +296,7 @@ fn a_comment_left_on_a_line_is_written_to_review_md() {
 fn a_search_goes_to_the_line_that_matches() {
     let mut t = term!();
     t.documents("README.md#Terminal UI");
-    t.leave_the_tests();
+    t.go_to_the_code();
     t.step("open src/main.rs from the tree");
     t.keys(DOWN);
     t.keys(ENTER);
@@ -219,7 +314,7 @@ fn a_search_goes_to_the_line_that_matches() {
 fn the_log_lists_the_commits_and_opens_one_as_a_diff() {
     let mut t = term!();
     t.documents("SPECS.md#Diffs");
-    t.leave_the_tests();
+    t.on_the_tests();
     t.step("open the repository log");
     t.keys("L");
     t.wait_for("log main 2 commits");
@@ -240,7 +335,7 @@ fn the_log_lists_the_commits_and_opens_one_as_a_diff() {
 fn uncommitted_changes_are_listed_and_open_as_a_diff() {
     let mut t = term!();
     t.documents("SPECS.md#Diffs");
-    t.leave_the_tests();
+    t.on_the_tests();
     t.step("open the working tree changes");
     t.keys("S");
     t.wait_for("working tree 2 files");
@@ -258,9 +353,9 @@ fn uncommitted_changes_are_listed_and_open_as_a_diff() {
 fn the_tests_read_as_a_specification_grouped_by_how_they_interact() {
     let mut t = term!();
     t.documents("SPECS.md#What kind of test each one is");
-    t.leave_the_tests();
-    t.step("open the specification");
-    t.keys("P");
+    t.on_the_tests();
+    t.step("go to every test, the second section");
+    t.keys("2");
     t.wait_for("specification 2 tests");
     t.wait_for("How does the test interact with it?");
     t.wait_for("GUI/TUI 1");
@@ -274,9 +369,9 @@ fn the_tests_read_as_a_specification_grouped_by_how_they_interact() {
 fn c_groups_the_specification_by_the_next_question() {
     let mut t = term!();
     t.documents("SPECS.md#What kind of test each one is");
-    t.leave_the_tests();
-    t.step("open the specification");
-    t.keys("P");
+    t.on_the_tests();
+    t.step("go to every test, the second section");
+    t.keys("2");
     t.wait_for("How does the test interact with it?");
     t.step("group the tests by the next question");
     t.keys("c");
@@ -288,9 +383,9 @@ fn c_groups_the_specification_by_the_next_question() {
 fn k_answers_every_question_for_the_test_under_the_cursor() {
     let mut t = term!();
     t.documents("SPECS.md#What kind of test each one is");
-    t.leave_the_tests();
-    t.step("open the specification and find the unit test");
-    t.keys("P");
+    t.on_the_tests();
+    t.step("go to every test and find the unit test");
+    t.keys("2");
     t.wait_for("API 1");
     t.keys("/");
     t.keys("round trips");
@@ -309,12 +404,12 @@ fn k_answers_every_question_for_the_test_under_the_cursor() {
 fn q_steps_back_and_then_gives_the_terminal_back() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
-    t.leave_the_tests();
-    t.step("open the log, then step back out of it");
+    t.on_the_tests();
+    t.step("open the log over the tests, then step back out of it");
     t.keys("L");
     t.wait_for("log main 2 commits");
     t.keys("q");
-    t.wait_for("files 5");
+    t.wait_for("1 end-to-end test of 2 tests");
     t.step("leave");
     t.keys("q");
     t.exits();
@@ -373,9 +468,7 @@ fn q_from_a_repository_goes_back_to_the_list_of_repositories() {
     t.step("open the first repository");
     t.keys(ENTER);
     t.wait_for("end to end");
-    t.step("step back out of its tests and its files");
-    t.keys("q");
-    t.wait_for("files");
+    t.step("step back out of its tests");
     t.keys("q");
     t.wait_for("Select repository · 2");
     t.step("leave from the list");

@@ -256,8 +256,7 @@ impl App {
     /// refresh, and, for the ones still waiting for it, when the index arrives.
     pub(super) fn refresh_end_to_end_tests(&mut self, only_provisional: bool) {
         let keys: Vec<(String, String)> = self
-            .screens
-            .iter()
+            .every_screen_mut()
             .filter_map(|s| match s {
                 Screen::EndToEndTest(state) if !only_provisional || state.detail.is_none() => {
                     Some(state.key.clone())
@@ -270,7 +269,7 @@ impl App {
             let cast = self.cast_for(detail.as_ref());
             let compared = self.read_comparison(&key);
             let coverage_target = self.has_coverage_target();
-            for screen in &mut self.screens {
+            for screen in self.every_screen_mut() {
                 let Screen::EndToEndTest(state) = screen else {
                     continue;
                 };

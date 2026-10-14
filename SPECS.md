@@ -616,47 +616,30 @@ of the size of one object per segment; the page unpacks them on arrival.
 
 ## Terminal UI
 
-Screens form a stack; `q` or `Esc` pops one, and quits from the explorer (or, started on a
-directory of checkouts, goes back to the repository list). The explorer has a side
-panel — the file tree (folding, filter, status letters, pending-comment counts for files and
-directories; past the tenth file of a directory the rest fold behind `… N more`, except the
-changed, the commented on and the one under the cursor, and nothing folds under a filter),
-or, after `O`, the outline of the open file — and the file viewer (syntax
-highlighting, line numbers, change markers against HEAD or the index, comment rows under the
-lines they refer to, comments on the whole file above its first line, optional blame column,
-search with smart case, visual line selection). A picture — PNG, JPEG, GIF, WebP, BMP or ICO —
-is drawn in the viewer, fitted to it, where the terminal speaks a graphics protocol (kitty,
-sixel or iTerm2); where it does not, the viewer says it is a picture and how big. The terminal
-is asked which protocol it speaks when the first picture is opened, not before, with a second to
-answer; one whose `TERM` is unset or `dumb` is not asked. An SVG is text and shows as its
-source. The outline is
-what the open file defines, parsed on its own so it does not wait for the symbol index, fields
-left out, each definition indented under the ones whose lines hold it; its cursor follows the
-file's while the file has the focus, `Enter` jumps to a definition as `Ctrl-o` can come back
-from, and `Space` shows it without leaving the outline. Either panel can be set to hide: it is
-drawn while it has the focus and left out while the file has it, the file taking its width,
-and `Tab`, or `q` from the file, brings it back; with no file open it always shows. `,` opens
-the options panel — each panel's auto-hide, the diff layout, the colour scheme — where `Space`
-changes a setting, saves it at once, and the setting under the cursor is explained. `c` on the tree
-comments on the selected file or directory as a whole; `c` in the viewer comments on the line
-or the selection. Other screens: repository log and per-file history (commit list, details, files
-of the selected commit, paging in 200s), working tree and staged change lists, a diff view
-(auto, side by side or unified, hunk navigation, next and previous file of the same commit,
-comments on after-side lines), the review list (jump to, complete, edit, delete, re-anchor),
-the notes list, a locations list (definitions, occurrences, symbols; Enter jumps, and a jump
-stack brings the cursor back), and the agent panel (transcript with roles, tool calls and
-plans; a permission bar answered by number or `y`/`n`; the running turn cancelled with Esc;
-the transcript kept while other screens are shown). The viewer has a column cursor moved by
-character and word, drawn in reverse video, from which the identifier for navigation is
-taken. A single-line prompt at the bottom takes comment and note text, search queries, line
-numbers, the tree filter, symbol searches and agent prompts. The agent starts on another
-thread so the interface never waits for it. `o` suspends the UI and runs `$VISUAL` or
-`$EDITOR` at the current line. The mouse wheel scrolls.
+The top row is five sections, in the order the page has its tabs: Tests, All tests, Code, Review and
+Agent, each with the digit that goes there, `1` to `5`, the one on screen lit, and beside Review the
+number of pending comments and beside Agent whether it is working or asking. Each section is a stack
+of screens of its own, its first screen at the bottom: the end-to-end tests, every test by its kind,
+the explorer, the review list and the agent panel. A section left keeps its stack and is read again
+when it is come back to; asked for the section already on screen, the digit goes back to its first
+screen. `q` or `Esc` pops one screen; on a section's first screen it goes to the tests, and on the
+tests it quits (or, started on a directory of checkouts, goes back to the repository list). `E`,
+`P`, `C`, `R` and `A` or `Ctrl-a` go to the same five sections as the digits, except that `P` in the
+log opens every test as that commit left them over the log, and that in the agent panel `C` clears
+the conversation and, while it asks for permission, a digit is an answer. The status line starts
+with where in the section the screen is: its first screen and what was opened over it, the last two
+when there are more than three. Anything that opens a file — a test's source, the code a test ran, a
+comment in the review, a symbol — opens the explorer over the screen it was opened from, so `q` goes
+back there; where the section already has the explorer, it is that one, and what was opened over it
+is closed. A list of places to go, once one is picked, is closed with it. `a` and `i`, which ask the
+agent something, open its panel over the screen they were pressed on, and `q` there comes back to
+it.
 
-A repository opens on its end-to-end tests, pushed over the explorer, unless a file was named on
-the command line; this goes for a repository that appears later in a directory of checkouts too.
-`q` leaves them for the code and `E` brings them back from any screen; the tests that name the
-open file, which `E` used to show, are on `U`. Until the symbol index is built the tests are
+A repository opens on its end-to-end tests, the first screen of the first section, with nothing
+under them, unless a file was named on the command line, which opens in the code; this goes for
+a repository that appears later in a directory of checkouts too. `E` or `1` brings them back from
+any screen, where they were left; the tests that name the open file, which `E` used to show, are
+on `U`. Until the symbol index is built the tests are
 those `OVERVIEW.md` lists, and with no such file the screen says it is reading them; either way
 it reads them again once the index is in, and again on `r`, staying on the same test. The list
 has each test file as a heading with its tests under it, each marked passed, failed or without
@@ -716,63 +699,94 @@ do not fit across), and its steps are paired: both times, both marks, the step, 
 `only before` or `screen changed`; `Enter` on a pair takes both recordings to it, and `Space`,
 `]`, `[` and `0` move both.
 
+The explorer has a side panel — the file tree (folding, filter, status letters, pending-comment
+counts for files and directories; past the tenth file of a directory the rest fold behind `… N
+more`, except the changed, the commented on and the one under the cursor, and nothing folds under a
+filter), or, after `O`, the outline of the open file — and the file viewer (syntax highlighting,
+line numbers, change markers against HEAD or the index, comment rows under the lines they refer to,
+comments on the whole file above its first line, optional blame column, search with smart case,
+visual line selection). A picture — PNG, JPEG, GIF, WebP, BMP or ICO — is drawn in the viewer,
+fitted to it, where the terminal speaks a graphics protocol (kitty, sixel or iTerm2); where it does
+not, the viewer says it is a picture and how big. The terminal is asked which protocol it speaks
+when the first picture is opened, not before, with a second to answer; one whose `TERM` is unset or
+`dumb` is not asked. An SVG is text and shows as its source. The outline is what the open file
+defines, parsed on its own so it does not wait for the symbol index, fields left out, each
+definition indented under the ones whose lines hold it; its cursor follows the file's while the file
+has the focus, `Enter` jumps to a definition as `Ctrl-o` can come back from, and `Space` shows it
+without leaving the outline. Either panel can be set to hide: it is drawn while it has the focus and
+left out while the file has it, the file taking its width, and `Tab`, or `q` from the file, brings
+it back; with no file open it always shows. `,` opens the options panel — each panel's auto-hide,
+the diff layout, the colour scheme — where `Space` changes a setting, saves it at once, and the
+setting under the cursor is explained. `c` on the tree comments on the selected file or directory as
+a whole; `c` in the viewer comments on the line or the selection. Other screens: repository log and
+per-file history (commit list, details, files of the selected commit, paging in 200s), working tree
+and staged change lists, a diff view (auto, side by side or unified, hunk navigation, next and
+previous file of the same commit, comments on after-side lines), the review list (jump to, complete,
+edit, delete, re-anchor), the notes list, a locations list (definitions, occurrences, symbols; Enter
+jumps, and a jump stack brings the cursor back), and the agent panel (transcript with roles, tool
+calls and plans; a permission bar answered by number or `y`/`n`; the running turn cancelled with
+Esc; the transcript kept while other screens are shown). The viewer has a column cursor moved by
+character and word, drawn in reverse video, from which the identifier for navigation is taken. A
+single-line prompt at the bottom takes comment and note text, search queries, line numbers, the tree
+filter, symbol searches and agent prompts. The agent starts on another thread so the interface never
+waits for it. `o` suspends the UI and runs `$VISUAL` or `$EDITOR` at the current line. The mouse
+wheel scrolls.
+
 ## Browser UI
 
 One embedded page served by an axum server on a loopback address (by default) with a random port.
 
 Signing in works one of two ways. With `CODEREVIEW_PASSWORD_HASH` set, to an Argon2 hash from
-`codereview hash-password`, the page is a sign-in form and the password is checked against it;
-wrong answers are counted and sign-in then stops answering for a doubling delay, capped at a
-quarter of an hour, which a success clears. Otherwise a token opens a session: `CODEREVIEW_TOKEN`
-when set, which keeps one URL across restarts and must be at least sixteen characters, otherwise a
-fresh random one for the run. Setting both is an error, and a non-loopback address without a
-password is refused. Either way the browser ends up with a session: a cookie holding an
-identifier, and a second secret embedded in the page which every API request must send as a bearer
-header, never the cookie, so a page on another site cannot act as the signed-in browser. A session
-lasts a week, at most thirty-two are kept, and signing out ends one. Secrets are compared without
-stopping at the first wrong byte. Every response forbids storing, referrers and framing, and
-restricts the page to its own origin. `--public-url` names what a reverse proxy publishes: it is
-the URL printed at start-up, and an HTTPS one marks the cookie `Secure`. Everything the tool can
-do it can do for anyone who signs in: there is no read-only mode, and no way to serve the
-repository without the agent, the comments or the commit. The server stops on SIGTERM as well as
-on Ctrl-C. The API mirrors the session: state, file with highlighting and change markers, a
-picture's bytes with its media type (nothing that is not a picture), blame,
-log, commit files, changes, a repository's overview, what it leans on and its tests, diff with
-highlighting on both sides and anchored comments, comments and notes (list, add, toggle, edit,
-delete), commit, the checks configured and found and starting one, refresh and re-anchor, the theme
-list and config, a version, symbols (file symbols, definitions, occurrences, search, identifier at a
-position), and the agent (start, poll for events since a sequence number, prompt with text or a
-preset, answer a permission, cancel, stop, clear). The version is a fingerprint of everything a
-front end draws:
-the status of every path, the branch, and the size and modification time of both Markdown files
-and of one named file, hashed into a number that means nothing on its own. It costs one `git
-status`, and it moves whenever anything on screen would look different, whoever made the change; a
-status alone would not, since a file written twice is modified either way. The server writes the
-transcript itself, the same way the terminal does, and answers a poll with the entries that
-changed since the version the page names, each with the position it belongs at: a tool call is one
-entry, filled in as it runs, so entries are not append-only. It also sends what the turn is doing
-and what it has cost, already worded, so the page only draws. The page has an overview the
-terminal UI has not, and otherwise the same: explorer with tree and file, changes, log and
-history, diff, review, notes, and the agent tab; clicking a name in code offers its definition and
-usages in a side drawer. A picture in the working tree is shown in the file view, fitted to it
-on a checkerboard, with its size in pixels and bytes under it; an SVG has its source below it.
-The page fetches the bytes with the API token and shows them from memory, which the content
-security policy allows as `blob:` images; the endpoint serves an SVG under a policy that runs
-nothing. A comment left in a commit's diff sends that commit with it. A comment on a whole file
-comes from the Comment button in the file
-header and is shown above the first line; one on a directory from the `+` on its row in the tree.
-A range is chosen with shift-click, or with the comment form's Extend range button followed by the
-line number at the other end, which keeps the text typed so far. Editing a comment or a note, and
-commenting on a file or a directory, opens a text sheet of the page's own rather than the
-browser's prompt. The file header's Zen button, and `z`, leave the file alone on the screen: the
-header, the tabs, the tree, that header itself and the footer go, and what stays is the code, its
-line numbers, its comment rows and one button at the bottom right to come back, which `z` and
-`Esc` also do. A message still shows the footer for as long as it has something to say, and a key
-that reaches for a field in the header comes out of zen first. Zen is a way of reading rather than
-a view, so it has no address, and leaving the file leaves it. `w`, and the same menu's Wrap lines,
-wraps long lines where the screen ends instead of scrolling sideways, with each continuation
-indented past the start of the code so a wrapped line still reads as one; the choice is kept in
-that browser's own storage.
+`codereview hash-password`, the page is a sign-in form and the password is checked against it; wrong
+answers are counted and sign-in then stops answering for a doubling delay, capped at a quarter of an
+hour, which a success clears. Otherwise a token opens a session: `CODEREVIEW_TOKEN` when set, which
+keeps one URL across restarts and must be at least sixteen characters, otherwise a fresh random one
+for the run. Setting both is an error, and a non-loopback address without a password is refused.
+Either way the browser ends up with a session: a cookie holding an identifier, and a second secret
+embedded in the page which every API request must send as a bearer header, never the cookie, so a
+page on another site cannot act as the signed-in browser. A session lasts a week, at most thirty-two
+are kept, and signing out ends one. Secrets are compared without stopping at the first wrong byte.
+Every response forbids storing, referrers and framing, and restricts the page to its own origin.
+`--public-url` names what a reverse proxy publishes: it is the URL printed at start-up, and an HTTPS
+one marks the cookie `Secure`. Everything the tool can do it can do for anyone who signs in: there
+is no read-only mode, and no way to serve the repository without the agent, the comments or the
+commit. The server stops on SIGTERM as well as on Ctrl-C. The API mirrors the session: state, file
+with highlighting and change markers, a picture's bytes with its media type (nothing that is not a
+picture), blame, log, commit files, changes, a repository's overview, what it leans on and its
+tests, diff with highlighting on both sides and anchored comments, comments and notes (list, add,
+toggle, edit, delete), commit, the checks configured and found and starting one, refresh and
+re-anchor, the theme list and config, a version, symbols (file symbols, definitions, occurrences,
+search, identifier at a position), and the agent (start, poll for events since a sequence number,
+prompt with text or a preset, answer a permission, cancel, stop, clear). The version is a
+fingerprint of everything a front end draws: the status of every path, the branch, and the size and
+modification time of both Markdown files and of one named file, hashed into a number that means
+nothing on its own. It costs one `git status`, and it moves whenever anything on screen would look
+different, whoever made the change; a status alone would not, since a file written twice is modified
+either way. The server writes the transcript itself, the same way the terminal does, and answers a
+poll with the entries that changed since the version the page names, each with the position it
+belongs at: a tool call is one entry, filled in as it runs, so entries are not append-only. It also
+sends what the turn is doing and what it has cost, already worded, so the page only draws. The page
+has the terminal UI's sections as its five tabs, in the same order — Tests, All tests, Code, Review,
+Agent — and otherwise the same views: explorer with tree and file, changes, log and history, diff,
+review, notes and the agent, and an overview the terminal UI has not; clicking a name in code offers
+its definition and usages in a side drawer. A picture in the working tree is shown in the file view,
+fitted to it on a checkerboard, with its size in pixels and bytes under it; an SVG has its source
+below it. The page fetches the bytes with the API token and shows them from memory, which the
+content security policy allows as `blob:` images; the endpoint serves an SVG under a policy that
+runs nothing. A comment left in a commit's diff sends that commit with it. A comment on a whole file
+comes from the Comment button in the file header and is shown above the first line; one on a
+directory from the `+` on its row in the tree. A range is chosen with shift-click, or with the
+comment form's Extend range button followed by the line number at the other end, which keeps the
+text typed so far. Editing a comment or a note, and commenting on a file or a directory, opens a
+text sheet of the page's own rather than the browser's prompt. The file header's Zen button, and
+`z`, leave the file alone on the screen: the header, the tabs, the tree, that header itself and the
+footer go, and what stays is the code, its line numbers, its comment rows and one button at the
+bottom right to come back, which `z` and `Esc` also do. A message still shows the footer for as long
+as it has something to say, and a key that reaches for a field in the header comes out of zen first.
+Zen is a way of reading rather than a view, so it has no address, and leaving the file leaves it.
+`w`, and the same menu's Wrap lines, wraps long lines where the screen ends instead of scrolling
+sideways, with each continuation indented past the start of the code so a wrapped line still reads
+as one; the choice is kept in that browser's own storage.
 
 A review that ends in "this is good" ends in a commit, from the changes view: the working tree
 side stages everything it lists and commits that, the staged side commits the index as it
@@ -793,8 +807,12 @@ keeps the scroll where it was, says nothing in the footer, and leaves the agent'
 agent's own poll. A write of the page's own moves the version too, so the next reading after one
 becomes the baseline instead of redrawing what the page has just drawn.
 
-A repository opens on its end-to-end tests, under the Tests tab, at the root address; the overview
-is the Summary tab, at `summary`, and the specification is All tests, under the same tab. Each
+A repository opens on its end-to-end tests, under the Tests tab, at the root address, with nothing
+of the code drawn first. The tabs are Tests, which holds them and a test's own view; All tests, the
+specification; Code, whose row under the header holds Summary (the overview, at `summary`), Files,
+Changes and Log; Review, whose row holds the comments and the notes; and Agent, which carries the
+mark that the agent is working or waiting for an answer. Code lands on the view it was last on in
+this page, the summary to begin with, and a tab already lit goes to its first view. Each
 end-to-end test is a card, grouped by file, in a grid as wide as the screen allows: a mark for how
 its last run went, its sentence, a security or skipped badge, its file and line (which opens it),
 why it counts, when it ran and whether the tree has moved since, then its recording, what any failed
@@ -826,7 +844,7 @@ files and how many are changed, how many comments are pending and how many of th
 the lines they were left on, the commits of the last week with who made them, and the count of
 `TODO`, `FIXME`, `HACK` and `XXX` in tracked files.
 Every count is a way in, and every path opens. The tree is one button away, at its own address;
-the Explore tab with no file open is the tree as well.
+Files, under Code, with no file open is the tree as well.
 
 What a README opens with is often not prose, so none of this is kept: titles, which are the
 project's name and already on the page; lines that are only images, links or markup once those
@@ -884,9 +902,10 @@ files of one change replaces the address instead of adding to the history.
 **On a phone.** Below 700 pixels of width, or 500 of height, the header is one row with the tools
 (symbol and file search, colour scheme, refresh, sign out, help) behind one button, and it gets
 out of the way as the content scrolls down and comes back as it scrolls up, except while its own
-menu is open. The tabs run along the bottom edge, four of them rather than six: the log lives
-under changes and the notes under review, each reachable by a button in the other's header and
-each keeping its own address, and the tab that leads to one is the one lit while it shows. Views
+menu is open. The five tabs run along the bottom edge, each a fifth of the width and none
+cut short; the views a tab holds are the row under the header, which sticks, the log is also a
+button in the changes view's header and the notes in the review's, each keeps its own address,
+and the tab that leads to one is the one lit while it shows. Views
 show one pane at a time: the tree or the file, the commits or one commit, each with a back button,
 and the symbol drawer as a sheet over the lower half. Everything the file's header can do except
 Comment is behind one button, as a menu under it: seven buttons are three rows of a small screen,

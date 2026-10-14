@@ -18,6 +18,7 @@ mod end_to_end;
 mod one_test;
 mod overlays;
 mod screens;
+mod sections;
 
 use crate::tui::agent_panel;
 use crate::tui::diff_view::{DiffLayout, DiffView};
@@ -118,6 +119,7 @@ pub use screens::{
     ChangesState, DiffState, Hit, LocationsState, LogState, NotesState, ReviewState, SpecRow,
     SpecState, spec_rows,
 };
+pub use sections::Section;
 
 pub enum Screen {
     Explorer,
@@ -276,6 +278,11 @@ pub struct App {
     /// The end-to-end tests being recorded at a stretch's base commit, in a worktree of it:
     /// the commit, and the run.
     pub base_run: Option<(String, crate::analysis::Running)>,
+    /// The section on screen, whose stack `screens` is.
+    pub section: Section,
+    /// The stacks of the other sections, as they were left; the one on screen is empty here.
+    parked: [Vec<Screen>; 5],
+    /// The section on screen's stack: its first screen, and what was opened over it.
     pub screens: Vec<Screen>,
     pub prompt: Option<Prompt>,
     pub message: Option<(String, bool)>,
@@ -323,7 +330,9 @@ impl App {
             kept_at: std::time::Instant::now(),
             stretch: Stretch::Week,
             base_run: None,
-            screens: vec![Screen::Explorer],
+            section: Section::Tests,
+            parked: Default::default(),
+            screens: Vec::new(),
             prompt: None,
             message: None,
             show_help: false,
@@ -343,12 +352,19 @@ impl App {
             pending_g: false,
             agent: agent_panel::Panel::new(),
         };
-        if let Some(path) = open {
-            app.tree.select(&path);
-            app.open_file(&path);
-            app.focus_tree = false;
-        }
         app.warm();
+        // A repository opens on what it demonstrably does, its end-to-end tests, unless a file
+        // was named to open, which opens in the code.
+        match open {
+            Some(path) => {
+                app.section = Section::Code;
+                app.screens.push(Screen::Explorer);
+                app.tree.select(&path);
+                app.open_file(&path);
+                app.focus_tree = false;
+            }
+            None => app.push_end_to_end(),
+        }
         app
     }
 
@@ -368,11 +384,15 @@ impl App {
     }
 
     pub fn screen(&self) -> &Screen {
-        self.screens.last().expect("at least the explorer")
+        self.screens
+            .last()
+            .expect("at least the section's first screen")
     }
 
     fn screen_mut(&mut self) -> &mut Screen {
-        self.screens.last_mut().expect("at least the explorer")
+        self.screens
+            .last_mut()
+            .expect("at least the section's first screen")
     }
 
     pub fn info(&mut self, text: impl Into<String>) {
@@ -442,11 +462,14 @@ impl App {
     }
 
     fn refresh_diff_comments(&mut self) {
-        for screen in &mut self.screens {
+        let session = &self.session;
+        for screen in self
+            .screens
+            .iter_mut()
+            .chain(self.parked.iter_mut().flatten())
+        {
             if let Screen::Diff(d) = screen {
-                d.view.comments = self
-                    .session
-                    .anchor_in(&d.view.file.path, &d.view.diff.after.text);
+                d.view.comments = session.anchor_in(&d.view.file.path, &d.view.diff.after.text);
             }
         }
     }
@@ -475,7 +498,7 @@ impl App {
         self.info("refreshed");
     }
 
-    /// Opens `path` in the explorer at `line` (1-based), popping every other screen.
+    /// Opens `path` in the explorer at `line` (1-based), over the screen it was opened from.
     pub fn jump_to(&mut self, path: &str, line: usize) {
         self.jump_to_col(path, line, 0);
     }
@@ -483,7 +506,7 @@ impl App {
     /// Shows a whole path: the file at its first line, or a directory in the tree.
     pub fn jump_to_path(&mut self, path: &str) {
         if self.tree.node(path).is_some_and(|n| n.is_dir) {
-            self.screens.truncate(1);
+            self.show_explorer();
             self.tree.select(path);
             self.focus_tree = true;
             return;
@@ -493,7 +516,7 @@ impl App {
 
     /// Like `jump_to`, landing on byte `column` of the line.
     pub fn jump_to_col(&mut self, path: &str, line: usize, column: usize) {
-        self.screens.truncate(1);
+        self.show_explorer();
         self.tree.select(path);
         if self.viewer.as_ref().is_none_or(|v| v.path != path) {
             self.open_file(path);
@@ -709,7 +732,7 @@ impl App {
         let config = self.session.config.agent.clone();
         let root = self.session.root().to_path_buf();
         self.agent.start(&config, &root);
-        if !matches!(self.screen(), Screen::Agent) {
+        if !matches!(self.screens.last(), Some(Screen::Agent)) {
             self.screens.push(Screen::Agent);
         }
         self.agent.follow = true;
@@ -1041,7 +1064,7 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('a') => {
-                    self.open_agent();
+                    self.switch_section(Section::Agent);
                     return true;
                 }
                 KeyCode::Char('o') => {
@@ -1050,6 +1073,14 @@ impl App {
                 }
                 _ => {}
             }
+        }
+        // The sections, by number, except where the agent asks for a numbered answer.
+        if let KeyCode::Char(c) = key.code
+            && let Some(section) = Section::from_key(c)
+            && !(matches!(self.screen(), Screen::Agent) && self.agent.permission().is_some())
+        {
+            self.switch_section(section);
+            return true;
         }
         // Keys that work everywhere.
         match key.code {
@@ -1073,7 +1104,12 @@ impl App {
             // The agent panel from anywhere, for terminals (tmux with a Ctrl-a prefix) where
             // Ctrl-a never arrives. The review list keeps `A` for "address all".
             KeyCode::Char('A') if !matches!(self.screen(), Screen::Agent | Screen::Review(_)) => {
-                self.open_agent();
+                self.switch_section(Section::Agent);
+                return true;
+            }
+            // The code; the agent panel keeps `C` for clearing the conversation.
+            KeyCode::Char('C') if !matches!(self.screen(), Screen::Agent) => {
+                self.switch_section(Section::Code);
                 return true;
             }
             KeyCode::Char('i') if !matches!(self.screen(), Screen::Agent) => {
@@ -1095,7 +1131,7 @@ impl App {
             }
             // The end-to-end tests, what the repository opened on, from anywhere.
             KeyCode::Char('E') => {
-                self.push_end_to_end();
+                self.switch_section(Section::Tests);
                 return true;
             }
             // The tests that name the open file.
@@ -1103,21 +1139,20 @@ impl App {
                 self.push_tests_of_file();
                 return true;
             }
-            // The specification; in the log, of the commit under the cursor.
+            // Every test; in the log, as the commit under the cursor left them, over the log.
             KeyCode::Char('P') => {
-                let commit = match self.screen() {
-                    Screen::Log(state) => state.commits.current().map(|c| c.hash.clone()),
-                    _ => None,
-                };
-                let stretch = match commit {
-                    Some(hash) => Stretch::Commit(hash),
-                    None => Stretch::Week,
-                };
-                self.push_spec(stretch);
+                match self.screen() {
+                    Screen::Log(state) => {
+                        if let Some(hash) = state.commits.current().map(|c| c.hash.clone()) {
+                            self.push_spec(Stretch::Commit(hash));
+                        }
+                    }
+                    _ => self.switch_section(Section::AllTests),
+                }
                 return true;
             }
             KeyCode::Char('R') if !matches!(self.screen(), Screen::Agent) => {
-                self.push_review();
+                self.switch_section(Section::Review);
                 return true;
             }
             KeyCode::Char('T') => {
@@ -1191,7 +1226,7 @@ impl App {
         if self.screens.len() > 1 {
             self.screens.pop();
         } else {
-            self.quit = true;
+            self.leave_section();
         }
     }
 
@@ -1216,7 +1251,7 @@ impl App {
                     self.tree.filter.clear();
                     self.tree.rebuild();
                 } else {
-                    self.quit = true;
+                    self.pop_screen();
                 }
             }
             KeyCode::Tab => {

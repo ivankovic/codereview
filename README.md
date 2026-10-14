@@ -106,10 +106,21 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 
 ### Terminal UI
 
-`?` shows every key. The essentials:
+It opens on the end-to-end tests, and the top row is the five sections, tests first: **Tests**,
+**All tests**, **Code**, **Review**, **Agent**. Each keeps its own stack of screens; `q` steps
+back, from a section's first screen to the tests, and from the tests out. `?` shows every key.
+The essentials:
 
 | Key | What |
 | --- | --- |
+| `1` or `E` | Tests, what it opens on: `Space` plays, `Enter` a test on its own, `s` source |
+| `2` or `P` | All tests, by kind: `c` the next question, `K` a test's answers |
+| `3` or `C` | Code: the file tree and the file |
+| `4` or `R` | Review: every comment in REVIEW.md |
+| `5`, `A` or `Ctrl-a` | Agent (`A` inside it: address every pending comment) |
+| `w` `b` | on the tests: the stretch marked; record the tests at its base to compare |
+| `q` `Esc` | back; on a section's first screen, the tests; on the tests, quit |
+| `U` | the tests that name the open file |
 | `Tab` | switch between the side panel and the file |
 | `O` | side panel: the file tree, or the outline of the file (`Enter` goes to a definition) |
 | `,` | options: side panels that hide while the file has the focus, diff layout, colour scheme |
@@ -119,11 +130,7 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 | `n` `N` | note on the file, general note |
 | `H` | history of the file |
 | `D` | diff the file against HEAD |
-| `L` `S` `R` `T` | repository log, working tree changes, review list, notes list |
-| `E` | end-to-end tests, what it opens on: `Space` plays, `Enter` a test on its own, `s` source |
-| `w` `b` | end-to-end screens: the stretch marked; record the tests at its base to compare |
-| `U` | the tests that name the open file |
-| `P` | the specification, every test by its kind: `c` the next question, `K` a test's answers |
+| `L` `S` `T` | repository log, working tree changes, notes list, over the screen you are on |
 | `B` | blame column |
 | `t` | colour scheme picker, previewed live and saved |
 | `h` `l` `w` `b` `0` `$` | move the column cursor |
@@ -133,12 +140,10 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 | `Ctrl-o` | back to where you were before a jump |
 | `a` | ask the agent about the line, the selection, or the comment under the cursor |
 | `i` | ask the agent something, from anywhere |
-| `A` or `Ctrl-a` | the agent panel (`A` inside it: address every pending comment) |
 | `gt` `gT` `W` | next / previous repository, the repository picker (when several are open) |
 | `l` | in the agent panel: show or hide the backend's log lines |
 | `/` `> <` | search, next and previous match |
 | `o` | open the line in `$EDITOR` |
-| `q` `Esc` | back; from the last screen, quit, or the repository list on a directory of checkouts |
 
 In a diff: `n`/`p` step through hunks, `]`/`[` through the files of the same commit, `v` cycles
 between automatic, side-by-side and unified layout, `c` comments on the after-side line.
@@ -170,18 +175,19 @@ weigh first. Weigh it seriously: the tool is meant to change the repositories it
 comments, notes, commits, and an agent running commands in them — so whoever can sign in can do
 all of that, and nothing turns it off.
 
-Click a line number to comment, shift-click to extend the range (or the form's Extend range
-button and another line number, on a phone); the Comment button in the file header comments
-on the whole file, and the `+` on a directory in the tree on the directory. Everything the
-terminal UI does is a button or a tab. Every view has an address, so the browser's back
-returns to the previous view and a file, a diff or a commit can be linked to. The page keeps
-itself current: when the agent, another window or a git command changes the repository, it
-notices within a couple of seconds and redraws where you are, without moving the scroll.
-The `Zen` button, or `z`, leaves the file alone on the screen. When the change reads well,
-**Commit** in the changes view records it: the sheet names the files going in and any comment
-on them still pending, and the repository's hooks run as they would in a terminal.
+Click a line number to comment, shift-click to extend the range (or the form's Extend range button
+and another line number, on a phone); the Comment button in the file header comments on the whole
+file, and the `+` on a directory in the tree on the directory. The tabs are the terminal UI's
+sections, in its order: Tests, All tests, Code (the summary, files, changes and log), Review
+(comments and notes) and Agent; everything else the terminal UI does is a button. Every view has an
+address, so the browser's back returns to the previous view and a file, a diff or a commit can be
+linked to. The page keeps itself current: when the agent, another window or a git command changes
+the repository, it notices within a couple of seconds and redraws where you are, without moving the
+scroll. The `Zen` button, or `z`, leaves the file alone on the screen. When the change reads well,
+**Commit** in the changes view records it: the sheet names the files going in and any comment on
+them still pending, and the repository's hooks run as they would in a terminal.
 
-The page works on a phone: one pane at a time, the tabs along the bottom, and it can be added
+The page works on a phone: one pane at a time, the five tabs along the bottom, and it can be added
 to the home screen as an app. Review comments, diffs and the agent's transcript are what a
 phone is good for; symbol navigation is there but is desk work.
 

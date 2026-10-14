@@ -504,7 +504,7 @@ impl App {
     /// Reads the tests again for every end-to-end screen on the stack, keeping each on its
     /// test: after a refresh, and when the index the first reading did without arrives.
     pub(super) fn refresh_end_to_end(&mut self, only_provisional: bool) {
-        let stale = self.screens.iter().any(|s| match s {
+        let stale = self.every_screen_mut().any(|s| match s {
             Screen::EndToEnd(state) => {
                 !only_provisional
                     || state.opening.is_none()
@@ -519,7 +519,7 @@ impl App {
         }
         let (opening, from_overview) = self.read_opening();
         let report = self.read_report();
-        for screen in &mut self.screens {
+        for screen in self.every_screen_mut() {
             let Screen::EndToEnd(state) = screen else {
                 continue;
             };

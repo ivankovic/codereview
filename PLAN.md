@@ -151,6 +151,13 @@ phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
    last commit, the last week — marked within it; any commit in the log drills down to the
    same views for that commit alone. Explore, Changes and Log stay, as the code a test leads to.
 
+   **Five sections, tests first** (2026-10-14). The terminal UI used to open on the tests pushed
+   over the file explorer, so the code was the floor every `q` fell back to and opening a file
+   from a test threw the test away. Both front ends now have the same five sections, in this
+   order: Tests, All tests, Code, Review, Agent. Each is level 0 of a stack of its own; the
+   tests are the first, what a repository opens on and what `q` returns to, and code opened
+   from a test opens over it. The page's tabs are the same five, the summary under Code.
+
    **A recording is a file the run left behind**, like every other result. Per test, the run
    leaves a directory under a root the configuration names, matched to the test by its name:
    the recording (`video.webm` for a browser; `terminal.cast`, asciicast v2, for a terminal,
@@ -222,7 +229,8 @@ src/claude.rs      Claude Code driven through its own streaming protocol
 src/agent.rs       the agent as the front ends see it, either backend
 src/fakes.rs       in-process stand-ins for both backends, tests only
 src/tui.rs, src/tui/  Ratatui front end (feature `tui`); workspace.rs holds one app per repository,
-                   outline.rs the side panel listing what the open file defines, kinds.rs
-                   the screen a sample of tests is classified by hand on
+                   app/sections.rs the five sections and their stacks, outline.rs the side
+                   panel listing what the open file defines, kinds.rs the screen a sample of
+                   tests is classified by hand on
 src/web.rs, src/web/  axum server and the embedded page (feature `web`)
 ```

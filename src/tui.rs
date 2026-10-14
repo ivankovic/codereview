@@ -29,16 +29,7 @@ use workspace::Workspace;
 /// on whatever repository appears later in a directory of checkouts it was started on.
 pub fn run(opened: crate::session::Opened) -> Result<()> {
     anyhow::ensure!(!opened.targets.is_empty(), "no repository to open");
-    // A repository opens on what it demonstrably does, its end-to-end tests, unless a file
-    // was named to open.
-    let plain: Vec<bool> = opened.targets.iter().map(|(_, o)| o.is_none()).collect();
     let mut ws = Workspace::new(opened.targets);
-    for (app, plain) in ws.apps.iter_mut().zip(plain) {
-        if plain {
-            app.push_end_to_end();
-        }
-    }
-    ws.opens_on_tests = true;
     if !opened.checkouts.is_empty() {
         ws.open_home();
     }
@@ -169,7 +160,7 @@ fn open_editor(path: &Path, line: usize) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::app::{App, Screen};
+    use super::app::{App, Screen, Section};
     use crate::session::tests::{scratch_repo, scratch_session};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
@@ -203,6 +194,7 @@ mod tests {
         let dir = scratch_repo();
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
+        app.switch_section(Section::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
         draw(&mut term, &mut app);
 
@@ -231,6 +223,7 @@ mod tests {
         let dir = scratch_repo();
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
+        app.switch_section(Section::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
         draw(&mut term, &mut app);
 
@@ -254,6 +247,7 @@ mod tests {
     fn a_side_panel_set_to_hide_gives_the_file_its_width() {
         let dir = scratch_repo();
         let mut app = App::new(scratch_session(dir.path()), None);
+        app.switch_section(Section::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
         assert!(draw(&mut term, &mut app).contains(" files "));
 
@@ -294,6 +288,7 @@ mod tests {
     fn the_outline_follows_the_file_and_goes_where_it_points() {
         let dir = scratch_repo();
         let mut app = App::new(scratch_session(dir.path()), None);
+        app.switch_section(Section::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
         draw(&mut term, &mut app);
         app.handle_key(key('O'));
@@ -378,7 +373,13 @@ mod tests {
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        // A repository opens on its tests; the code is the third section.
+        assert_eq!(app.section, Section::Tests);
+        assert!(matches!(app.screen(), Screen::EndToEnd(_)));
+        press(&mut app, &[KeyCode::Char('3')]);
+        assert_eq!(app.section, Section::Code);
         let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("1 Tests"));
         assert!(screen.contains("a.rs"));
         assert!(screen.contains("Makefile"));
 
@@ -477,14 +478,17 @@ mod tests {
         // Nothing staged: the screen is replaced by a message and popped.
         assert!(matches!(app.screen(), Screen::Explorer));
         press(&mut app, &[KeyCode::Char('R')]);
+        assert_eq!(app.section, Section::Review);
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("needs a doc comment"));
         press(&mut app, &[KeyCode::Char('j'), KeyCode::Char('d')]);
         assert_eq!(app.session.review.pending_count(), 1);
         press(&mut app, &[KeyCode::Char('u')]);
         assert_eq!(app.session.review.pending_count(), 2);
+        // A comment opens its file over the review, which `q` comes back to.
         press(&mut app, &[KeyCode::Enter]);
         assert!(matches!(app.screen(), Screen::Explorer));
+        assert_eq!(app.screens.len(), 2);
         press(&mut app, &[KeyCode::Char('N')]);
         for ch in "tiny".chars() {
             app.handle_key(key(ch));
@@ -495,10 +499,20 @@ mod tests {
         press(&mut app, &[KeyCode::Char('?')]);
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("keys"));
+        // Out of the notes, out of the file into the tree, back to the review, back to the
+        // tests, and only then out.
         press(
             &mut app,
-            &[KeyCode::Esc, KeyCode::Char('q'), KeyCode::Char('q')],
+            &[
+                KeyCode::Esc,
+                KeyCode::Char('q'),
+                KeyCode::Char('q'),
+                KeyCode::Char('q'),
+            ],
         );
+        assert!(matches!(app.screen(), Screen::Review(_)));
+        press(&mut app, &[KeyCode::Char('q')]);
+        assert_eq!(app.section, Section::Tests);
         assert!(!app.quit);
         press(&mut app, &[KeyCode::Char('q')]);
         assert!(app.quit);
@@ -783,7 +797,8 @@ mod tests {
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("No recording"), "{screen}");
 
-        // `s` is the test's source; q leaves the screen for the code.
+        // `s` is the test's source, opened over the list; `E` comes back to the list, and
+        // from the list, which is the first screen there is, `q` quits.
         press(&mut app, &[KeyCode::Char('k'), KeyCode::Char('s')]);
         assert!(matches!(app.screen(), Screen::Explorer));
         let viewer = app.viewer.as_ref().unwrap();
@@ -791,8 +806,9 @@ mod tests {
         assert_eq!(viewer.current_line(), Some(2));
         press(&mut app, &[KeyCode::Char('E')]);
         assert!(matches!(app.screen(), Screen::EndToEnd(_)));
+        assert_eq!(app.screens.len(), 1);
         press(&mut app, &[KeyCode::Char('q')]);
-        assert!(matches!(app.screen(), Screen::Explorer));
+        assert!(app.quit);
     }
 
     #[test]
@@ -942,8 +958,23 @@ mod tests {
             "{screen}"
         );
 
+        // The file was opened over the list, which `q` comes back to, where it was left.
+        press(&mut app, &[KeyCode::Char('q'), KeyCode::Char('q')]);
+        let Screen::EndToEnd(state) = app.screen() else {
+            panic!("back on the list");
+        };
+        assert_eq!(state.rows.cursor, unran);
+        let test = state
+            .rows
+            .items
+            .iter()
+            .position(|r| matches!(r, E2eRow::Test(_)))
+            .unwrap();
+        if let Some(Screen::EndToEnd(state)) = app.screens.last_mut() {
+            state.rows.cursor = test;
+        }
+
         // The test on its own: before and after, side by side, the steps paired.
-        press(&mut app, &[KeyCode::Char('E')]);
         press(&mut app, &[KeyCode::Enter]);
         let Screen::EndToEndTest(state) = app.screen() else {
             panic!("the test's own screen");
@@ -1206,7 +1237,8 @@ mod tests {
         assert!(screen.contains("Asks less than before: 1"), "{screen}");
         assert!(screen.contains("weakened"), "{screen}");
         assert!(screen.contains("2 → 1 assertions"), "{screen}");
-        assert_eq!(app.screens.len(), 2, "cycling replaces the screen");
+        assert_eq!(app.section, Section::AllTests);
+        assert_eq!(app.screens.len(), 1, "cycling replaces the screen");
 
         // Enter on the change: its file's diff across the stretch.
         let rows = |app: &App| match app.screen() {
@@ -1308,8 +1340,10 @@ mod tests {
         press(&mut app, &[KeyCode::Enter, KeyCode::Esc]);
         assert!(matches!(app.screen(), Screen::Spec(_)));
         assert!(rows(&app).iter().any(|r| matches!(r, SpecRow::Area(_))));
+        // Every test is a section's first screen, so leaving it goes to the end-to-end ones.
         press(&mut app, &[KeyCode::Esc]);
-        assert!(matches!(app.screen(), Screen::Explorer));
+        assert_eq!(app.section, Section::Tests);
+        assert!(matches!(app.screen(), Screen::EndToEnd(_)));
     }
 
     /// Thirty tests in two files, all added by the last commit: enough that every list folds.
@@ -1579,6 +1613,7 @@ mod tests {
         std::fs::write(dir.path().join("src/deep/inner.rs"), "fn inner() {}\n").unwrap();
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
+        app.switch_section(Section::Code);
         let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
         draw(&mut term, &mut app);
 
@@ -1650,6 +1685,7 @@ mod tests {
         let dir = scratch_repo();
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
+        app.switch_section(Section::Code);
         let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
         press(&mut app, &[KeyCode::Char('L')]);
         assert!(matches!(app.screen(), Screen::Log(_)));

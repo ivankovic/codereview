@@ -382,8 +382,8 @@ impl App {
     /// replaced, so cycling stretches does not pile screens up, and keeps its folds and its
     /// search.
     pub(super) fn push_spec(&mut self, stretch: Stretch) {
-        let by = match self.screen() {
-            Screen::Spec(s) => s.by,
+        let by = match self.screens.last() {
+            Some(Screen::Spec(s)) => s.by,
             _ => Question::Interaction,
         };
         self.push_spec_by(stretch, by);
@@ -395,8 +395,8 @@ impl App {
         let Some(spec) = self.report(spec) else {
             return;
         };
-        let (open, query) = match self.screen() {
-            Screen::Spec(s) => (s.open.clone(), s.query.clone()),
+        let (open, query) = match self.screens.last() {
+            Some(Screen::Spec(s)) => (s.open.clone(), s.query.clone()),
             _ => (HashMap::new(), String::new()),
         };
         let mut state = SpecState {
@@ -412,7 +412,7 @@ impl App {
             query,
         };
         state.rows = ListState::new(spec_rows(&state));
-        if matches!(self.screen(), Screen::Spec(_)) {
+        if matches!(self.screens.last(), Some(Screen::Spec(_))) {
             self.screens.pop();
         }
         self.screens.push(Screen::Spec(Box::new(state)));

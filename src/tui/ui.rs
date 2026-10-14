@@ -11,7 +11,7 @@ use crate::anchor::AnchorState;
 use crate::session::DiffTarget;
 use crate::theme::Theme;
 use crate::tui::agent_panel;
-use crate::tui::app::{App, Screen, SpecRow};
+use crate::tui::app::{App, Screen, Section, SpecRow};
 use crate::tui::style::{self, comment_style};
 use crate::tui::workspace::Workspace;
 
@@ -200,7 +200,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 /// One repository's app in `area`.
 pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
-    let [main, status] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
+    let [bar, main, status] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .areas(area);
+    draw_sections(frame, app, bar);
     match app.screens.last_mut().expect("screen") {
         Screen::Explorer => draw_explorer(frame, app, main),
         Screen::Log(_) => draw_log(frame, app, main),
@@ -231,6 +237,35 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.options.is_some() {
         draw_options(frame, app, area);
     }
+}
+
+/// The sections across the top, tests first, the one on screen lit, each with the digit
+/// that goes there; what is waiting in one is said beside its name.
+fn draw_sections(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+    let mut spans: Vec<Span> = Vec::new();
+    for section in Section::ALL {
+        let waiting = match section {
+            Section::Review => {
+                let pending = app.session.review.pending_count();
+                (pending > 0).then(|| pending.to_string())
+            }
+            Section::Agent if app.agent.permission().is_some() => Some("asks".into()),
+            Section::Agent if app.agent_active() => Some("●".into()),
+            _ => None,
+        };
+        let label = format!(" {} {} ", section.key(), section.name());
+        spans.push(if section == app.section {
+            Span::styled(label, style::accent(theme).reversed())
+        } else {
+            label.into()
+        });
+        if let Some(waiting) = waiting {
+            spans.push(Span::styled(waiting, style::fg(theme.moved)));
+        }
+        spans.push(" ".into());
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// The options panel: each setting with what it is now, and under them what the one the
@@ -368,7 +403,14 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
         prompt.draw(frame, area);
         return;
     }
-    let mut spans: Vec<Span> = vec![format!(" {} ", app.screen().name()).reversed()];
+    // Where in the section this is: its first screen and what was opened over it, the last
+    // few of them.
+    let names: Vec<&str> = app.screens.iter().map(|s| s.name()).collect();
+    let trail = match names.len() {
+        0..=3 => names.join(" › "),
+        n => format!("… › {}", names[n - 2..].join(" › ")),
+    };
+    let mut spans: Vec<Span> = vec![format!(" {trail} ").reversed()];
     let elsewhere = !matches!(app.screen(), Screen::Agent);
     // What just happened comes first: a message is cleared by the next key, and burying an
     // error under the agent's progress for the length of a turn loses it entirely.
@@ -452,7 +494,7 @@ fn hint_for(screen: &Screen) -> &'static str {
             "Enter open/close, diff, test or area  h close fold  / search  c group by  K kind  f files a test names  s stretch  q back"
         }
         Screen::EndToEnd(_) => {
-            "Enter the test  Space play  ] [ steps  w stretch  b record before  s source  o video  q code"
+            "Enter the test  Space play  ] [ steps  w stretch  b record before  s source  o video  1-5 sections  q quit"
         }
         Screen::EndToEndTest(_) => {
             "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q back"
@@ -464,25 +506,32 @@ fn hint_for(screen: &Screen) -> &'static str {
 }
 
 const HELP: &[(&str, &str)] = &[
+    ("Sections", ""),
+    (
+        "1  E",
+        "Tests: the end-to-end tests, each with the recording of its last run; what a repository opens on",
+    ),
+    (
+        "2  P",
+        "All tests: every test by what kind of test it is, and what the last 7 days did to them; in the log, what that commit did",
+    ),
+    ("3  C", "Code: the file tree and the open file"),
+    ("4  R", "Review: every comment in REVIEW.md"),
+    ("5  A  Ctrl-a", "Agent: the conversation with the agent"),
+    (
+        "q / Esc",
+        "back; on a section's first screen, to the tests; on the tests, quit",
+    ),
+    ("", ""),
     ("Everywhere", ""),
     ("?", "this help"),
-    ("q / Esc", "back, or quit from the explorer"),
-    (
-        "E",
-        "the end-to-end tests, each with the recording of its last run: what a repository opens on",
-    ),
     ("L", "repository log"),
-    (
-        "P",
-        "specification: the tests by level and area, and what the last 7 days did to them (s: last commit, uncommitted); in the log, what that commit did",
-    ),
     ("U", "the tests that name the open file"),
     (
         "/ in P",
         "search the tests by their words, as you type; Enter opens or closes a fold, h closes the one the cursor is in",
     ),
     ("S", "working tree changes (s toggles staged)"),
-    ("R", "review: every comment in REVIEW.md"),
     ("T", "notes: every note in NOTES.md"),
     ("N", "add a general note"),
     ("r", "re-read the repository and both Markdown files"),
@@ -492,13 +541,60 @@ const HELP: &[(&str, &str)] = &[
         "options: side panels that hide, diff layout, colour scheme",
     ),
     ("Ctrl-h", "toggle syntax highlighting"),
-    ("A  Ctrl-a", "the agent panel"),
     ("i", "ask the agent something, from anywhere"),
     (
         "gt / gT",
         "next / previous repository, when several are open",
     ),
     ("W", "repository picker"),
+    ("", ""),
+    ("End to end", ""),
+    ("Space  p", "play or pause the selected test's recording"),
+    (
+        "] [",
+        "the next / previous step of the test, in the recording",
+    ),
+    ("0", "back to the start of the recording"),
+    ("z", "the recording on the whole screen, and back"),
+    (
+        "Enter",
+        "the test on its own: steps, the code it ran, its documentation, the tests below it",
+    ),
+    ("s", "the test's source"),
+    ("o", "open the recording in the system's player (videos)"),
+    (
+        "w",
+        "the stretch of history marked: the last 7 days, the last commit, uncommitted work",
+    ),
+    (
+        "Enter",
+        "on what the stretch did: a test that asks less, its diff; changed code no end-to-end test ran, the file with those lines marked ▌",
+    ),
+    (
+        "b",
+        "record the tests at the stretch's base, in a worktree of it, to compare each test with how it ran then",
+    ),
+    (
+        "a",
+        "with no end-to-end tests: ask the agent to write the first ones",
+    ),
+    (
+        "q",
+        "quit, or the repository list on a directory of checkouts",
+    ),
+    ("", ""),
+    ("One end-to-end test", ""),
+    ("Space  p  ] [  0  z  o", "the recording, as in the list"),
+    (
+        "Enter",
+        "a step: that moment of the recording; a file it ran: the file, the lines it ran marked ▌; a section or a test: there",
+    ),
+    ("s", "the test's source, at the step under the cursor"),
+    (
+        "w",
+        "the stretch: with the tests recorded at its base, the recording then beside the one now, and the steps paired",
+    ),
+    ("q", "back to the list"),
     ("", ""),
     ("Explorer", ""),
     ("Tab", "switch between the side panel and the file"),
@@ -547,51 +643,6 @@ const HELP: &[(&str, &str)] = &[
         "a",
         "ask the agent about the line, the selection, or the comment",
     ),
-    ("", ""),
-    ("End to end", ""),
-    ("Space  p", "play or pause the selected test's recording"),
-    (
-        "] [",
-        "the next / previous step of the test, in the recording",
-    ),
-    ("0", "back to the start of the recording"),
-    ("z", "the recording on the whole screen, and back"),
-    (
-        "Enter",
-        "the test on its own: steps, the code it ran, its documentation, the tests below it",
-    ),
-    ("s", "the test's source"),
-    ("o", "open the recording in the system's player (videos)"),
-    (
-        "w",
-        "the stretch of history marked: the last 7 days, the last commit, uncommitted work",
-    ),
-    (
-        "Enter",
-        "on what the stretch did: a test that asks less, its diff; changed code no end-to-end test ran, the file with those lines marked ▌",
-    ),
-    (
-        "b",
-        "record the tests at the stretch's base, in a worktree of it, to compare each test with how it ran then",
-    ),
-    (
-        "a",
-        "with no end-to-end tests: ask the agent to write the first ones",
-    ),
-    ("q", "the code"),
-    ("", ""),
-    ("One end-to-end test", ""),
-    ("Space  p  ] [  0  z  o", "the recording, as in the list"),
-    (
-        "Enter",
-        "a step: that moment of the recording; a file it ran: the file, the lines it ran marked ▌; a section or a test: there",
-    ),
-    ("s", "the test's source, at the step under the cursor"),
-    (
-        "w",
-        "the stretch: with the tests recorded at its base, the recording then beside the one now, and the steps paired",
-    ),
-    ("q", "back to the list"),
     ("", ""),
     ("Agent panel", ""),
     ("i", "ask something"),
