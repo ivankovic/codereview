@@ -561,8 +561,13 @@ fn names_for(tests: &[SpecTest], coverage: Option<&Coverage>) -> AreaNames {
 /// `tests` with what kind of test each is, what each names, and the areas it counts towards.
 /// The files of the repository are read for the tests' lines; `coverage`, the symbol index's
 /// word on what each test names, is `None` while the index is built, which leaves what a test
-/// calls not classified.
-pub fn annotate(root: &Path, tests: Vec<TestCase>, coverage: Option<&Coverage>) -> Vec<SpecTest> {
+/// calls not classified. What a person answered about a test, `learned`, wins over the rules.
+pub fn annotate(
+    root: &Path,
+    tests: Vec<TestCase>,
+    coverage: Option<&Coverage>,
+    learned: &crate::kinds::Learned,
+) -> Vec<SpecTest> {
     let recordings = crate::recording::find(root);
     let mut drivers = crate::e2e::Drivers::new(root);
     let mut reader = crate::classify::Reader::new(root);
@@ -586,7 +591,7 @@ pub fn annotate(root: &Path, tests: Vec<TestCase>, coverage: Option<&Coverage>) 
             let recorded = recordings.iter().any(|r| crate::e2e::names(r, &test));
             let drives = drivers.why(&test, recorded);
             let (body, above) = reader.lines(&test);
-            let kind = crate::classify::classify(&crate::classify::Evidence {
+            let mut kind = crate::classify::classify(&crate::classify::Evidence {
                 test: &test,
                 body: &body,
                 above: &above,
@@ -594,6 +599,7 @@ pub fn annotate(root: &Path, tests: Vec<TestCase>, coverage: Option<&Coverage>) 
                 drives: drives.as_deref(),
                 exists: &|p| root.join(p).is_file(),
             });
+            learned.apply(&test, &mut kind);
             SpecTest {
                 home: names.of(&test.path),
                 end_to_end: kind.end_to_end(),
@@ -710,7 +716,7 @@ pub fn of(
     let changes = session.spec_changes(&span)?;
     let total = tests.len();
     let ignored = tests.iter().filter(|t| t.ignored).count();
-    let tests = annotate(session.root(), tests, coverage);
+    let tests = annotate(session.root(), tests, coverage, &session.learned());
     let grouped = groups(tests.clone(), by);
     Ok(Spec {
         by,
@@ -889,6 +895,7 @@ mod tests {
                 case("tests/browser.rs", "the_phone_layout_works"),
             ],
             Some(&coverage),
+            &crate::kinds::Learned::default(),
         );
         assert_eq!(tests[0].areas, ["src", "web"]);
         assert_eq!(
@@ -932,6 +939,7 @@ mod tests {
                 dir.path(),
                 vec![case("src/a.rs", "x"), case("src/a.rs", "y")],
                 Some(&Coverage::default()),
+                &crate::kinds::Learned::default(),
             ),
             Question::Interaction,
         );

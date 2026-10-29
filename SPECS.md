@@ -252,13 +252,13 @@ the Light or Dark scheme and highlights with Dark's syntax theme.
 
 The config file is `$CODEREVIEW_CONFIG`, else `$XDG_CONFIG_HOME/codereview/config.toml`, else
 `~/.config/codereview/config.toml`: `theme`, `layout` (`auto`, `side-by-side`, `unified`),
-`timestamps`, `[agent]` with `kind`, `claude_command`, `claude_args`, `command` and
-`args`, `[sidebar]` with `files_auto_hide` and `outline_auto_hide`, and any number of
-`[[analysis]]` checks. Missing keys take defaults; a malformed file is an error. The terminal UI
+`timestamps`, `[agent]` with `kind`, `claude_command`, `claude_args`, `command` and `args`,
+`[sidebar]` with `files_auto_hide` and `outline_auto_hide`, `[kinds]` with `dataset`, and any number
+of `[[analysis]]` checks. Missing keys take defaults; a malformed file is an error. The terminal UI
 saves on Enter in the picker (`t`; `j`/`k` preview live, `Esc` restores), on every layout change
 (`v`) and on every change in the options panel (`,`), and hands what it saved to the other
-repositories open beside it; the browser UI saves from its header dropdown. Both read the file
-when they start.
+repositories open beside it; the browser UI saves from its header dropdown. Both read the file when
+they start.
 
 ## Analysis
 
@@ -458,7 +458,9 @@ code its body names (the symbol index's word, as for areas below), and the end-t
   always no.
 - Dynamic holds when the test names code, drives the program or calls an HTTP API; Static when it
   reads a file of the repository as it is or runs a linter.
-- API holds when the test names code of the repository or calls an HTTP API. CLI holds when it
+- API holds when the test names code of the repository or calls an HTTP API, and does not drive
+  the program: one that drives it goes through what it drives, and the code it names is how it
+  sets up and looks afterwards. CLI holds when it
   runs the built program on its command line (`CARGO_BIN_EXE_`, assert_cmd); GUI/TUI when it
   drives the program some other way by the end-to-end rules above: a browser, a terminal, or a
   path or recording that says it is end to end. The paper's GUI is split in two because a screen
@@ -476,10 +478,13 @@ code its body names (the symbol index's word, as for areas below), and the end-t
 - Protocol assertions: exact for a call expected with exact arguments or an exact count
   (`toHaveBeenCalledWith`, `assert_called_once_with`, `.times(n)`); constrained for a bound on
   the count; existence for a call or failure expected at all (`toHaveBeenCalled`,
-  `should_panic`, `assertRaises`, `pytest.raises`, `toThrow`, `is_err`), and for code the test
-  calls being unwrapped, which asserts that it does not fail.
+  `should_panic`, `assertRaises`, `pytest.raises`, `toThrow`, `is_err`). Unwrapping what the test
+  calls is not one: the tests classified by hand read it as how a test gets at its output.
 - Mocks hold for a mocking library (mockall, `unittest.mock`, `jest.fn`, `vi.fn`, sinon, gomock,
-  nock); Fakes for a name with fake, stub, dummy or in-memory in it.
+  nock); Fakes for a name with fake, stub, dummy or in-memory in it, and for a scratch directory
+  standing in for the file system: a temporary directory from a library (`tempdir`, `TempDir`,
+  `tempfile`, `mkdtemp`, `tmp_path`), a helper named `test_dir`, or a binding such as `_dir` or
+  `_tmp` kept only so that the directory outlives the test.
 - Targeted attack holds for input made to break the code: a whole word of the test's name such as
   tampered, forged, spoofed, malicious, attack, injection, traversal, XSS, replay or overflow, or a
   known payload in its body (`../../`, `<script`, `javascript:`, `' OR 1`, `; DROP TABLE`, a
@@ -492,18 +497,20 @@ code its body names (the symbol index's word, as for areas below), and the end-t
 A test whose name or path has a word about security in it (password, auth, CSRF, sign in,
 permission and so on, as whole words) carries a security mark with that reason, whatever its kind.
 
-Both front ends group the specification by one question, how the test interacts with what it
-tests to begin with, and list every option of it as a group even when empty; mixed, none and Not
+Both front ends group the specification by one question, how the test interacts with what it tests
+to begin with, and list every option of it as a group even when empty; mixed, none and Not
 classified appear only when some test is. A group says what its tests are, and an empty GUI/TUI
 group says, as a finding, that nothing shows a screen of the program working the way someone would
 see it, as an empty Heuristic group does that nothing shows it refusing input it should. The areas
-count each test towards its group. In the terminal, `c` groups by the next question and `K`
-lists all nine answers for the test under the cursor, with why; the status line gives the
-cursor's test its answer to the current question and the reason. On the page, a select above the
-tests picks the question and is kept in the address (`by=`), and each test's card has its kind,
-end to end or how it interacts, which opens in place to the nine answers with why. Tests elsewhere
-— a file's tests, the smaller tests of an end-to-end one — are labelled end to end or by how they
-interact, and the changes a stretch made carry only the security mark.
+count each test towards its group. In the terminal, `c` groups by the next question and `K` opens
+the test under the cursor on the labelling screen, to be answered by hand (see Kinds answered by
+hand); the status line gives the cursor's test its answer to the current question and the reason. On
+the page, a select above the tests picks the question and is kept in the address (`by=`), and each
+test's card has its kind, end to end or how it interacts, which opens in place to the nine answers
+with why, and under each its options, lit when they hold, dashed when they cannot be told and marked
+✎ when a person answered them. Tests elsewhere — a file's tests, the smaller tests of an end-to-end
+one — are labelled end to end or by how they interact, and the changes a stretch made carry only the
+security mark.
 
 ## A sample classified by hand
 
@@ -565,6 +572,36 @@ needed.
 question, on how many the summary is the same and, per option, how often the answers are;
 `--verbose` lists each sample where the summaries differ, the person's and the rules', with
 the rules' reason.
+
+### Kinds answered by hand
+
+The rules are corrected where they are read. Whatever a person answers about a test of a repository
+being reviewed, in either front end, is kept as a sample of a dataset, laid out as above: the
+config's `[kinds]` `dataset`, a directory (a leading `~/` is the home directory), or
+`$XDG_DATA_HOME/codereview/kinds` (`~/.local/share/codereview/kinds`) when it names none. Pointing
+it at this repository's `tests/data/kinds` makes every correction one more sample `kinds agree`
+holds the rules to.
+
+A sample is the test's repository — `owner/name` on GitHub, otherwise its directory's name — its
+file and its name; the same test answered again later is the same sample, brought up to date with
+the test as it is: its lines, HEAD's commit, the file and the test copied again, and what the rules
+need worked out again from the repository. A test only looked at is not kept: its sample and its
+files are written with the first answer. Its README says so when the copy is of a working tree
+that had changed the file since the commit, and names a repository not on GitHub as a checkout.
+
+From then on an option a person answered wins over the rules, for that test of that repository, in
+both front ends and everywhere the kind is used: its reason is "answered by hand", the question is
+summarised again, and the test is end to end, or not, by the answers as they now are. An option
+not answered stays the rules'. A sample set aside is not learned from.
+
+In the terminal, `K` on a test in the specification opens the labelling screen on that test alone:
+the header says how many of its options are answered by hand, the rules' answers are shown beside
+the questions from the start, `y`, `n` and `i` answer by hand and `x` gives an option back to the
+rules, and there is no other sample to move to. It takes every key but `Ctrl-c`; `q` goes back to
+the specification, drawn again with what was answered. On the page, a tap on an option of a test's
+kind turns the rules' answer over (yes to no, anything else to yes); a person's answer goes on to
+no, to cannot be told, and back to the rules. The list is drawn again with the kind still open and
+the change said at the foot of the page.
 
 ## What a stretch of history did
 

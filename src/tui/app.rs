@@ -134,6 +134,8 @@ pub enum Screen {
     EndToEnd(Box<EndToEndState>),
     /// One end-to-end test on its own: its recording, steps, code, documentation.
     EndToEndTest(Box<EndToEndTestState>),
+    /// One test's kind, to answer by hand: the labelling screen on it.
+    Kinds(Box<crate::tui::kinds::Labeller>),
     Agent,
 }
 
@@ -151,6 +153,7 @@ impl Screen {
             Screen::Spec(_) => "spec",
             Screen::EndToEnd(_) => "end to end",
             Screen::EndToEndTest(_) => "test",
+            Screen::Kinds(_) => "kind",
             Screen::Agent => "agent",
         }
     }
@@ -986,6 +989,11 @@ impl App {
             self.quit = true;
             return;
         }
+        // Answering a test's kind takes every key: its own are most of the keyboard.
+        if matches!(self.screen(), Screen::Kinds(_)) {
+            self.handle_kinds_key(key);
+            return;
+        }
         if self.handle_chord_key(key) {
             return;
         }
@@ -1200,6 +1208,7 @@ impl App {
             Screen::Spec(_) => self.handle_spec_key(key),
             Screen::EndToEnd(_) => self.handle_end_to_end_key(key),
             Screen::EndToEndTest(_) => self.handle_end_to_end_test_key(key),
+            Screen::Kinds(_) => self.handle_kinds_key(key),
             Screen::Agent => {
                 let height = self.measured.main_height;
                 let config = self.session.config.agent.clone();
@@ -1637,6 +1646,7 @@ impl App {
             Screen::Spec(state) => state.rows.move_by(delta),
             Screen::EndToEnd(_) => self.move_end_to_end(delta),
             Screen::EndToEndTest(_) => self.move_end_to_end_test(delta),
+            Screen::Kinds(l) => l.scroll = (l.scroll as isize + delta).max(0) as usize,
         }
     }
 }

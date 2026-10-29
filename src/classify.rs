@@ -278,6 +278,9 @@ pub struct Said {
     pub option: String,
     pub answer: Answer,
     pub why: String,
+    /// Whether a person gave this answer rather than the rules.
+    #[serde(default)]
+    pub by_hand: bool,
 }
 
 /// One question, answered option by option, and what that comes to.
@@ -447,6 +450,7 @@ fn said(option: &str, answer: Answer, why: impl Into<String>) -> Said {
         option: option.to_string(),
         answer,
         why: why.into(),
+        by_hand: false,
     }
 }
 
@@ -687,11 +691,15 @@ fn output_checks(body: &str) -> [Option<String>; 3] {
 
 /// The assertions made on the implementation or the protocol: that something is called, or
 /// raises, or does not — on mocks, and on errors.
-fn protocol_checks(body: &str, above: &str, calls_code: bool) -> [Option<String>; 3] {
+///
+/// Unwrapping what the test calls is not one. The paper gives "calling a chain of methods does
+/// not throw" as an existence assertion, and the rules once counted every `.unwrap()` as that;
+/// the tests classified by hand say otherwise: an unwrap is how a test gets at its output, and
+/// says nothing of the protocol that the output does not.
+fn protocol_checks(body: &str, above: &str) -> [Option<String>; 3] {
     static EXACT: OnceLock<Regex> = OnceLock::new();
     static CONSTRAINED: OnceLock<Regex> = OnceLock::new();
     static EXISTENCE: OnceLock<Regex> = OnceLock::new();
-    static UNWRAP: OnceLock<Regex> = OnceLock::new();
     let exact = regex(
         &EXACT,
         r"toHaveBeenCalledWith\(|toHaveBeenCalledTimes\(|toHaveBeenNthCalledWith\(|assert_called_once_with\(|assert_called_with\(|assert_has_calls\(|\.times\(\d+\)|\.Times\(\d+\)|EXPECT_CALL|\.with\(eq\(",
@@ -704,15 +712,7 @@ fn protocol_checks(body: &str, above: &str, calls_code: bool) -> [Option<String>
         &EXISTENCE,
         r"toHaveBeenCalled\(\)|assert_called\(\)|assert_called_once\(\)|assert_not_called\(\)|\.called\b|should_panic|assertRaises|pytest\.raises|\.toThrow\w*\(|\.rejects\.|\.unwrap_err\(\)|\.expect_err\(|\.is_err\(\)|catch_unwind|\bassert(?:\.|_)?[Pp]anics\b|require\.Error\b|assert\.Error\b",
     );
-    let unwrap = regex(&UNWRAP, r"\.unwrap\(\)|\.expect\(|\?;");
-    let existence_found = first(existence, &format!("{above}\n{body}")).or_else(|| {
-        // Calling the code and requiring that it does not fail is the paper's example of an
-        // existence assertion on the protocol: "calling a chain of methods does not throw".
-        calls_code
-            .then(|| first(unwrap, body))
-            .flatten()
-            .map(|w| format!("{w} on what it calls"))
-    });
+    let existence_found = first(existence, &format!("{above}\n{body}"));
     [
         existence_found,
         first(constrained, body),
@@ -733,6 +733,7 @@ fn mocks(body: &str) -> Option<String> {
 
 fn fakes(body: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
+    static SCRATCH: OnceLock<Regex> = OnceLock::new();
     first(
         regex(
             &RE,
@@ -740,6 +741,18 @@ fn fakes(body: &str) -> Option<String> {
         ),
         body,
     )
+    .or_else(|| {
+        // A scratch directory standing in for the file system the program would use: made by
+        // a library, by a helper named for it, or kept alive by a binding that is never read.
+        first(
+            regex(
+                &SCRATCH,
+                r"\btempdir\b|\bTempDir\b|\btempfile::|\bTemporaryDirectory\b|\bmkdtemp\w*|\btmp_path\b|\btmpdir\b|\bt\.TempDir\(|\b\w*test_dir\(|\blet\s*\(?[^=;]*\b_(?:dir|tmp|temp)\b",
+            ),
+            body,
+        )
+        .map(|w| format!("a scratch directory ({w})"))
+    })
 }
 
 /// Input made to break the code: a word of the test's name saying it was tampered with or
@@ -929,7 +942,14 @@ pub fn classify(e: &Evidence) -> Kind {
         yes_no("Static", statically, "it reads no file of the repository"),
     ];
 
+    // A test that drives the program goes through what it drives; the code it names is how
+    // it sets up and looks afterwards, not how it reaches what it tests.
     let api = match &calls {
+        _ if drives.is_some() && over_http.is_none() => said(
+            "API",
+            Answer::No,
+            "it drives the program rather than call its code",
+        ),
         Some(Some(why)) => said("API", Answer::Yes, why.clone()),
         _ if over_http.is_some() => said("API", Answer::Yes, over_http.clone().unwrap_or_default()),
         Some(None) => said("API", Answer::No, "it calls no code of the repository"),
@@ -1024,8 +1044,7 @@ pub fn classify(e: &Evidence) -> Kind {
         ],
     };
 
-    let calls_code = matches!(calls, Some(Some(_)));
-    let [p_exists, p_constrained, p_exact] = protocol_checks(e.body, e.above, calls_code);
+    let [p_exists, p_constrained, p_exact] = protocol_checks(e.body, e.above);
     let protocol_assertions = vec![
         yes_no(
             "Existence",
@@ -1213,7 +1232,8 @@ mod tests {
         assert_eq!(k.summary(Question::Execution), "Dynamic");
         assert_eq!(k.summary(Question::Interaction), "API");
         assert_eq!(k.summary(Question::OutputAssertions), "Exact match");
-        assert_eq!(k.summary(Question::ProtocolAssertions), "Existence");
+        // The unwrap is how it gets at the output, not a check of the protocol.
+        assert_eq!(k.summary(Question::ProtocolAssertions), "No assertions");
         assert_eq!(k.summary(Question::Outputs), "As is");
         assert_eq!(k.summary(Question::Measurement), "No measurement");
         assert_eq!(k.summary(Question::Dependencies), "Real dependencies");
@@ -1250,6 +1270,53 @@ mod tests {
             "it drives no browser or terminal; it runs the built program"
         );
         assert!(k.end_to_end());
+    }
+
+    #[test]
+    fn code_a_test_names_while_it_drives_the_program_is_not_its_interface() {
+        let k = kind(
+            "fn rejects() {\n    let db = Db::open(&path).unwrap();\n    bin().arg(\"x\").assert().failure();\n}",
+            Some(&["src/db.rs".to_string()]),
+            Some("it drives the built program"),
+        );
+        assert_eq!(k.summary(Question::Interaction), "CLI");
+        assert_eq!(
+            k.why(Question::Interaction, "API"),
+            "it drives the program rather than call its code"
+        );
+        // It still runs the code it names.
+        assert_eq!(k.summary(Question::Artifact), "Code");
+    }
+
+    #[test]
+    fn a_scratch_directory_is_a_fake_file_system() {
+        let at = |body: &str| {
+            let k = kind(body, Some(&["src/ca.rs".to_string()]), None);
+            (
+                k.summary(Question::Dependencies).to_string(),
+                k.why(Question::Dependencies, "Fakes").to_string(),
+            )
+        };
+        assert_eq!(
+            at("fn x() {\n    let tmp = tempfile::tempdir().unwrap();\n    open(tmp.path());\n}"),
+            (
+                "Fakes".into(),
+                "it uses a scratch directory (tempfile::)".into()
+            )
+        );
+        assert_eq!(
+            at("fn x() {\n    let dir = crate::test_dir();\n    open(dir.path());\n}").0,
+            "Fakes"
+        );
+        // A binding kept only so that the directory outlives the test.
+        assert_eq!(
+            at("fn x() {\n    let (_dir, nginx) = folder(&[]);\n    plan(&nginx);\n}").0,
+            "Fakes"
+        );
+        assert_eq!(
+            at("fn x() {\n    let dir_name = name();\n    plan(&dir_name);\n}").0,
+            "Real dependencies"
+        );
     }
 
     #[test]

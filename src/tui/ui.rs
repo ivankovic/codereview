@@ -218,6 +218,7 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
         Screen::Spec(_) => draw_spec(frame, app, main),
         Screen::EndToEnd(_) => draw_end_to_end(frame, app, main),
         Screen::EndToEndTest(_) => draw_end_to_end_test(frame, app, main),
+        Screen::Kinds(labeller) => labeller.draw_in(frame, main),
         Screen::Agent => {
             let theme = app.theme.clone();
             let label = app.agent_label();
@@ -491,7 +492,7 @@ fn hint_for(screen: &Screen) -> &'static str {
         Screen::Notes(_) => "Enter go to  n add  e edit  d delete  q back",
         Screen::Locations(_) => "Enter go there  Ctrl-o back to where you were  q close",
         Screen::Spec(_) => {
-            "Enter open/close, diff, test or area  h close fold  / search  c group by  K kind  f files a test names  s stretch  q back"
+            "Enter open/close, diff, test or area  h close fold  / search  c group by  K kind, to correct  f files a test names  s stretch  q back"
         }
         Screen::EndToEnd(_) => {
             "Enter the test  Space play  ] [ steps  w stretch  b record before  s source  o video  1-5 sections  q quit"
@@ -499,6 +500,7 @@ fn hint_for(screen: &Screen) -> &'static str {
         Screen::EndToEndTest(_) => {
             "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q back"
         }
+        Screen::Kinds(_) => "y n i answer by hand  x back to the rules  ? keys  q back",
         Screen::Agent => {
             "i ask  A address all pending  Esc cancel  1-9/y/n answer  t thoughts  l log  C clear  R restart  q back"
         }

@@ -503,6 +503,82 @@ impl Session {
         crate::e2e::of(self, tests)
     }
 
+    /// The dataset the kinds a person gives tests are kept in, from the config.
+    pub fn kinds_dataset(&self) -> Result<crate::kinds::Dataset> {
+        let Some(dir) = self.config.kinds.dir() else {
+            anyhow::bail!("nowhere to keep kinds: set HOME, XDG_DATA_HOME or kinds.dataset");
+        };
+        crate::kinds::Dataset::open(&dir)
+    }
+
+    /// What a person has answered about this repository's tests, to put before the rules'.
+    /// Nothing when the dataset cannot be read: the rules still answer.
+    pub fn learned(&self) -> crate::kinds::Learned {
+        self.kinds_dataset()
+            .map(|d| crate::kinds::Learned::of(&d, &crate::kinds::repository_of(self.root())))
+            .unwrap_or_default()
+    }
+
+    /// The dataset, with the test `name` in `path` as a sample of it, for a person to answer
+    /// the questions about: see [`crate::kinds::adopt`]. The sample's index comes with it.
+    pub fn kind_sample(
+        &mut self,
+        path: &str,
+        name: &str,
+    ) -> Result<(crate::kinds::Dataset, usize)> {
+        let test = self
+            .tests(0)
+            .files
+            .into_iter()
+            .flat_map(|f| f.tests)
+            .find(|t| t.path == path && t.name == name)
+            .with_context(|| format!("no test {name} in {path}"))?;
+        let coverage = self.coverage();
+        let names = coverage
+            .reach
+            .get(&(test.path.clone(), test.line))
+            .cloned()
+            .unwrap_or_default();
+        let recorded = crate::recording::find(self.root())
+            .iter()
+            .any(|r| crate::e2e::names(r, &test));
+        let drives = crate::e2e::Drivers::new(self.root()).why(&test, recorded);
+        let text = std::fs::read_to_string(self.root().join(&test.path))
+            .with_context(|| format!("reading {path}"))?;
+        let mut dataset = self.kinds_dataset()?;
+        let at = crate::kinds::adopt(
+            &mut dataset,
+            &crate::kinds::Live {
+                root: self.root(),
+                test: &test,
+                text: &text,
+                names,
+                drives,
+            },
+        )?;
+        Ok((dataset, at))
+    }
+
+    /// Answers one option of one question about a test by hand, or clears the answer, and
+    /// keeps it: the test's kind says so from now on, and the dataset has the test as a
+    /// sample. `option` is one of `question`'s options.
+    pub fn answer_kind(
+        &mut self,
+        path: &str,
+        name: &str,
+        question: crate::classify::Question,
+        option: &str,
+        answer: Option<crate::classify::Answer>,
+    ) -> Result<()> {
+        let at = crate::kinds::options()
+            .iter()
+            .position(|(q, o)| *q == question && *o == option)
+            .with_context(|| format!("{option:?} is not an option of {}", question.short()))?;
+        let (mut dataset, sample) = self.kind_sample(path, name)?;
+        dataset.samples[sample].set(at, answer);
+        dataset.save()
+    }
+
     /// Which files each test names, and every file of code a test could reach: worked out
     /// from the symbol index once per generation of it.
     pub fn coverage(&mut self) -> crate::spec::Coverage {
@@ -531,7 +607,7 @@ impl Session {
             .into_iter()
             .flat_map(|f| f.tests)
             .collect();
-        crate::spec::annotate(self.root(), tests, Some(&coverage))
+        crate::spec::annotate(self.root(), tests, Some(&coverage), &self.learned())
             .into_iter()
             .filter(|t| t.test.path == path || t.reaches.iter().any(|r| r == path))
             .collect()

@@ -150,6 +150,19 @@ impl Sample {
         }
     }
 
+    /// Answers option `at` of [`options`], or clears it, and settles whether the sample is
+    /// finished: one set aside stays aside.
+    pub fn set(&mut self, at: usize, answer: Option<Answer>) {
+        self.answers[at] = answer;
+        if self.status != Status::Skipped {
+            self.status = if self.answered() {
+                Status::Done
+            } else {
+                Status::Pending
+            };
+        }
+    }
+
     /// The person's answers to `question`, as the rules give theirs.
     pub fn said(&self, question: Question) -> Vec<Said> {
         options()
@@ -160,6 +173,7 @@ impl Sample {
                 option: option.to_string(),
                 answer: answer.unwrap_or(Answer::Inconclusive),
                 why: String::new(),
+                by_hand: true,
             })
             .collect()
     }
@@ -170,6 +184,18 @@ impl Sample {
 pub struct Dataset {
     pub dir: PathBuf,
     pub samples: Vec<Sample>,
+    /// Copies of samples' files not written yet: a test looked at in a front end becomes a
+    /// sample only once a person answers something about it, and then with its files.
+    pub staged: Vec<Staged>,
+}
+
+/// What a sample's directory holds, waiting for the CSV to be saved with it.
+#[derive(Debug, Clone)]
+pub struct Staged {
+    pub name: String,
+    pub file: String,
+    pub body: String,
+    pub readme: String,
 }
 
 impl Dataset {
@@ -184,14 +210,28 @@ impl Dataset {
         Ok(Self {
             dir: dir.to_path_buf(),
             samples,
+            staged: Vec::new(),
         })
     }
 
     /// Writes the CSV, whole, through a temporary file, so that a crash never leaves half of
-    /// one: a person's answers are saved after every key.
-    pub fn save(&self) -> Result<()> {
+    /// one: a person's answers are saved after every key. The files of a sample staged since
+    /// are written first, so that the CSV never lists a sample without them.
+    pub fn save(&mut self) -> Result<()> {
         std::fs::create_dir_all(&self.dir)
             .with_context(|| format!("creating {}", self.dir.display()))?;
+        for staged in std::mem::take(&mut self.staged) {
+            let Some(sample) = self.samples.iter().find(|s| s.name == staged.name) else {
+                continue;
+            };
+            store(
+                &self.dir,
+                sample,
+                &staged.file,
+                &staged.body,
+                &staged.readme,
+            )?;
+        }
         let path = self.dir.join(CSV);
         let temporary = self.dir.join(format!(".{CSV}.new"));
         std::fs::write(&temporary, write(&self.samples))
@@ -203,6 +243,9 @@ impl Dataset {
 
     /// The file a sample came from, as it was at its commit.
     pub fn file_text(&self, sample: &Sample) -> Result<String> {
+        if let Some(staged) = self.staged.iter().find(|s| s.name == sample.name) {
+            return Ok(staged.file.clone());
+        }
         let path = self
             .dir
             .join(&sample.name)
@@ -608,17 +651,7 @@ pub fn draw(dataset: &mut Dataset, sources: &[PathBuf], how: &Draw) -> Result<Dr
         let (body, _) = crate::classify::slice(&lines, &c.test);
         let files =
             crate::classify::mentioned(&body, &c.test.path, &|p| checkout.tracked.contains(p));
-        let short: String = checkout.commit.chars().take(7).collect();
-        let file = c.test.path.rsplit('/').next().unwrap_or(&c.test.path);
-        let stem = file.split('.').next().unwrap_or(file);
-        let name = unique(
-            dataset,
-            slug(&format!(
-                "{}-{short}-{stem}-{}",
-                checkout.repository.replace('/', "-"),
-                c.test.name
-            )),
-        );
+        let name = sample_name(dataset, &checkout.repository, &checkout.commit, &c.test);
         let sample = Sample {
             name: name.clone(),
             repository: checkout.repository.clone(),
@@ -643,12 +676,29 @@ pub fn draw(dataset: &mut Dataset, sources: &[PathBuf], how: &Draw) -> Result<Dr
             answers: vec![None; options().len()],
             notes: String::new(),
         };
-        store(dataset, &sample, text, &body, &checkout.root)?;
+        let readme = provenance(&sample, &checkout.root, false);
+        store(&dataset.dir, &sample, text, &body, &readme)?;
         dataset.samples.push(sample);
         drawn.added.push(name);
     }
     dataset.save()?;
     Ok(drawn)
+}
+
+/// What a new sample of `test` is called: the repository, the short commit, the file and the
+/// test, made unique in the dataset.
+fn sample_name(dataset: &Dataset, repository: &str, commit: &str, test: &TestCase) -> String {
+    let short: String = commit.chars().take(7).collect();
+    let file = test.path.rsplit('/').next().unwrap_or(&test.path);
+    let stem = file.split('.').next().unwrap_or(file);
+    unique(
+        dataset,
+        slug(&format!(
+            "{}-{short}-{stem}-{}",
+            repository.replace('/', "-"),
+            test.name
+        )),
+    )
 }
 
 /// `name`, or `name-2`, `name-3`... when the dataset already has a sample called that.
@@ -665,20 +715,21 @@ fn unique(dataset: &Dataset, name: String) -> String {
 }
 
 /// Writes a sample's directory: the file and the test verbatim, and where they came from.
-fn store(dataset: &Dataset, s: &Sample, file: &str, body: &str, root: &Path) -> Result<()> {
-    let dir = dataset.dir.join(&s.name);
+fn store(dataset: &Path, s: &Sample, file: &str, body: &str, readme: &str) -> Result<()> {
+    let dir = dataset.join(&s.name);
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let ext = s.extension();
     std::fs::write(dir.join(format!("file.{ext}.test")), file)?;
     let mut body = body.to_string();
     body.push('\n');
     std::fs::write(dir.join(format!("test.{ext}.test")), body)?;
-    std::fs::write(dir.join("README.md"), provenance(s, root))?;
+    std::fs::write(dir.join("README.md"), readme)?;
     Ok(())
 }
 
-/// What a sample's README says: where it is from, and the licence it stays under.
-fn provenance(s: &Sample, root: &Path) -> String {
+/// What a sample's README says: where it is from, and the licence it stays under. `changed`
+/// says the file was copied from a working tree that had changed it since the commit.
+fn provenance(s: &Sample, root: &Path, changed: bool) -> String {
     let licence = Repo::open(root)
         .ok()
         .and_then(|repo| {
@@ -703,19 +754,30 @@ fn provenance(s: &Sample, root: &Path) -> String {
              check the repository before reusing this sample outside codereview's own tests."
                 .to_string()
         });
+    // A repository not on GitHub is named after its directory, which has no slash in it.
+    let repository = if s.repository.contains('/') {
+        format!("https://github.com/{repo} (`{repo}`)", repo = s.repository)
+    } else {
+        format!("`{}`, a checkout not on GitHub", s.repository)
+    };
+    let changed = if changed {
+        " The working tree had changed the file since that commit, and the copy is of the \
+         working tree."
+    } else {
+        ""
+    };
     format!(
         "# Sample provenance\n\n\
-         - **Repository:** https://github.com/{repo} (`{repo}`)\n\
+         - **Repository:** {repository}\n\
          - **Commit:** `{commit}`\n\
          - **File:** `{path}`, lines {line}–{end}\n\
          - **Test:** `{test}`\n\n\
          `file.{ext}.test` is that file and `test.{ext}.test` the test's own lines, copied verbatim \
          from the repository at the commit above, to be classified by hand and to hold \
-         codereview's test classification to. This content is **not** part of codereview's own \
+         codereview's test classification to.{changed} This content is **not** part of codereview's own \
          code and is **not** covered by its AGPL-3.0 licence: it remains under whatever licence \
          the source repository applies.\n\n\
          ## Licence\n\n{licence}\n",
-        repo = s.repository,
         commit = s.commit,
         path = s.path,
         line = s.line,
@@ -723,6 +785,146 @@ fn provenance(s: &Sample, root: &Path) -> String {
         test = s.test,
         ext = s.extension(),
     )
+}
+
+// ----- learning from use ------------------------------------------------------------------
+
+/// What a repository is called in a dataset: `owner/name` on GitHub, as a draw names it, and
+/// otherwise its directory's name.
+pub fn repository_of(root: &Path) -> String {
+    Repo::open(root)
+        .ok()
+        .and_then(|r| r.github_name())
+        .unwrap_or_else(|| {
+            root.file_name()
+                .map_or("repository".into(), |n| n.to_string_lossy().into_owned())
+        })
+}
+
+/// A test of a repository someone is reviewing, with what the rules need beyond its text, as
+/// a front end has it.
+pub struct Live<'a> {
+    pub root: &'a Path,
+    pub test: &'a TestCase,
+    /// Its file as it is on disk.
+    pub text: &'a str,
+    /// The files of code its body names.
+    pub names: Vec<String>,
+    /// Why it drives the program, if it does.
+    pub drives: Option<String>,
+}
+
+/// The sample of a test someone is reviewing, by its repository, file and name: the one the
+/// dataset has, brought up to date with the test as it is now, or a new one, pending, whose
+/// files are staged to be written with the first save. Its index in the samples.
+pub fn adopt(dataset: &mut Dataset, live: &Live) -> Result<usize> {
+    let repository = repository_of(live.root);
+    let repo = Repo::open(live.root)?;
+    let commit = if repo.has_commits() {
+        repo.resolve("HEAD")?
+    } else {
+        String::new()
+    };
+    let changed = !repo.committed_as_is(&live.test.path);
+    let lines: Vec<String> = live.text.lines().map(str::to_string).collect();
+    let (body, _) = crate::classify::slice(&lines, live.test);
+    let files =
+        crate::classify::mentioned(&body, &live.test.path, &|p| live.root.join(p).is_file());
+    let names: Vec<String> = live
+        .names
+        .iter()
+        .filter(|f| crate::testsuite::testable(f))
+        .cloned()
+        .collect();
+    let at = match dataset.samples.iter().position(|s| {
+        s.repository == repository && s.path == live.test.path && s.test == live.test.name
+    }) {
+        Some(at) => at,
+        None => {
+            let name = sample_name(dataset, &repository, &commit, live.test);
+            dataset.samples.push(Sample {
+                name,
+                repository,
+                commit: String::new(),
+                path: live.test.path.clone(),
+                line: 0,
+                end: 0,
+                test: live.test.name.clone(),
+                label: String::new(),
+                names: Vec::new(),
+                drives: String::new(),
+                files: Vec::new(),
+                status: Status::Pending,
+                answers: vec![None; options().len()],
+                notes: String::new(),
+            });
+            dataset.samples.len() - 1
+        }
+    };
+    let sample = &mut dataset.samples[at];
+    sample.commit = commit;
+    sample.line = live.test.line;
+    sample.end = live.test.end.max(live.test.line);
+    sample.label = live.test.label.clone();
+    sample.names = names;
+    sample.drives = live.drives.clone().unwrap_or_default();
+    sample.files = files;
+    let sample = sample.clone();
+    let readme = provenance(&sample, live.root, changed);
+    dataset.staged.retain(|s| s.name != sample.name);
+    dataset.staged.push(Staged {
+        name: sample.name,
+        file: live.text.to_string(),
+        body,
+        readme,
+    });
+    Ok(at)
+}
+
+/// What people answered about the tests of one repository, to put before the rules' answers.
+#[derive(Debug, Clone, Default)]
+pub struct Learned {
+    /// By file and test name, one answer per entry of [`options`].
+    answers: HashMap<(String, String), Vec<Option<Answer>>>,
+}
+
+impl Learned {
+    /// The samples of `repository` in `dataset` that a person has answered anything of; one
+    /// set aside is not a test to learn from.
+    pub fn of(dataset: &Dataset, repository: &str) -> Self {
+        Self {
+            answers: dataset
+                .samples
+                .iter()
+                .filter(|s| s.repository == repository && s.status != Status::Skipped)
+                .filter(|s| s.answers.iter().any(Option::is_some))
+                .map(|s| ((s.path.clone(), s.test.clone()), s.answers.clone()))
+                .collect(),
+        }
+    }
+
+    /// The person's answers, where there are any, in place of the rules': each says it was
+    /// answered by hand, and a question it touches is summarised again.
+    pub fn apply(&self, test: &TestCase, kind: &mut Kind) {
+        let Some(answers) = self.answers.get(&(test.path.clone(), test.name.clone())) else {
+            return;
+        };
+        for ((question, option), answer) in options().into_iter().zip(answers) {
+            let Some(answer) = answer else {
+                continue;
+            };
+            let Some(answered) = kind.answers.iter_mut().find(|a| a.question == question) else {
+                continue;
+            };
+            if let Some(said) = answered.options.iter_mut().find(|s| s.option == option) {
+                said.answer = *answer;
+                said.why = "answered by hand".into();
+                said.by_hand = true;
+            }
+            answered.summary = crate::classify::summarise(question, &answered.options);
+            answered.reason = crate::classify::Answered::because(&answered.options);
+        }
+    }
 }
 
 // ----- agreement ---------------------------------------------------------------------------
@@ -1007,6 +1209,67 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(names(1), names(1));
+    }
+
+    #[test]
+    fn an_answer_given_while_reviewing_is_kept_and_wins_over_the_rules() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = checkout(parent.path(), "alpha");
+        let text = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let test = crate::symbols::tests_of("src/lib.rs", &text)
+            .into_iter()
+            .find(|t| t.name == "parses")
+            .unwrap();
+        let dir = parent.path().join("learned");
+        let mut dataset = Dataset::open(&dir).unwrap();
+        let live = Live {
+            root: &root,
+            test: &test,
+            text: &text,
+            names: vec!["src/lib.rs".into()],
+            drives: None,
+        };
+        let at = adopt(&mut dataset, &live).unwrap();
+        assert!(!dir.join(CSV).exists(), "looking at a test keeps nothing");
+        assert_eq!(dataset.file_text(&dataset.samples[at]).unwrap(), text);
+
+        let mocks = options()
+            .iter()
+            .position(|(q, o)| *q == Question::Dependencies && *o == "Mocks")
+            .unwrap();
+        dataset.samples[at].set(mocks, Some(Answer::Yes));
+        dataset.save().unwrap();
+        let name = dataset.samples[at].name.clone();
+        assert!(name.starts_with("someone-alpha-"), "{name}");
+        assert!(dir.join(&name).join("file.rs.test").exists());
+        let readme = std::fs::read_to_string(dir.join(&name).join("README.md")).unwrap();
+        assert!(
+            readme.contains("https://github.com/someone/alpha"),
+            "{readme}"
+        );
+
+        // Again, later: the same sample, not a second one.
+        let mut dataset = Dataset::open(&dir).unwrap();
+        assert_eq!(dataset.samples[0].status, Status::Pending);
+        assert_eq!(adopt(&mut dataset, &live).unwrap(), 0);
+        assert_eq!(dataset.samples.len(), 1);
+
+        let mut kind = crate::classify::classify(&Evidence {
+            test: &test,
+            body: "assert_eq!(parse_review(\"ab\"), 2);",
+            above: "",
+            names: Some(&["src/lib.rs".to_string()]),
+            drives: None,
+            exists: &|_| false,
+        });
+        assert_eq!(kind.summary(Question::Dependencies), "Real dependencies");
+        Learned::of(&dataset, "someone/other").apply(&test, &mut kind);
+        assert_eq!(kind.summary(Question::Dependencies), "Real dependencies");
+        Learned::of(&dataset, &repository_of(&root)).apply(&test, &mut kind);
+        assert_eq!(kind.summary(Question::Dependencies), "Mocks");
+        assert_eq!(kind.of(Question::Dependencies).reason, "answered by hand");
+        assert!(kind.of(Question::Dependencies).options[0].by_hand);
+        assert!(!kind.of(Question::Dependencies).options[1].by_hand);
     }
 
     #[test]

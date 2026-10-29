@@ -351,6 +351,7 @@ fn every_browser_test_passes_in_a_real_browser() {
                 .map(|p| ("CODEREVIEW_COVERAGE_DIR", p.path().to_path_buf())),
         )
         .env("CODEREVIEW_CONFIG", work.path().join("config.toml"))
+        .env("XDG_DATA_HOME", work.path().join("data"))
         .env_remove("CODEREVIEW_PASSWORD_HASH")
         .stdout(Stdio::null())
         .spawn()

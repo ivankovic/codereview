@@ -63,6 +63,9 @@ pub struct Labeller {
     /// The note being written, while it is.
     pub note: Option<String>,
     pub help: bool,
+    /// One test of a repository being reviewed, opened from its kind: the questions are the
+    /// rules' to correct, so their answers are shown, and there is no other sample to go to.
+    pub alone: bool,
     pub quit: bool,
     pub message: Option<String>,
     theme: Theme,
@@ -134,6 +137,7 @@ impl Labeller {
             reveal: false,
             note: None,
             help: false,
+            alone: false,
             quit: false,
             message: None,
             theme,
@@ -144,6 +148,16 @@ impl Labeller {
         };
         labeller.load();
         Ok(labeller)
+    }
+
+    /// The labelling screen on one test of a repository being reviewed: `at` in a dataset
+    /// [`crate::kinds::adopt`] put it in, with the rules' answers beside the questions.
+    pub fn one(dataset: Dataset, at: usize, theme: Theme) -> Self {
+        let name = dataset.samples[at].name.clone();
+        let mut labeller = Self::new(dataset, theme, Some(&name)).expect("the sample is there");
+        labeller.alone = true;
+        labeller.reveal = true;
+        labeller
     }
 
     /// Reads the sample on screen: its file, highlighted, scrolled to the test; the cursor on
@@ -296,17 +310,12 @@ impl Labeller {
     fn answer(&mut self, answer: Option<Answer>, advance: bool) {
         let cursor = self.cursor;
         let sample = &mut self.dataset.samples[self.at];
-        sample.answers[cursor] = answer;
-        if sample.status != Status::Skipped {
-            sample.status = if sample.answered() {
-                Status::Done
-            } else {
-                Status::Pending
-            };
-        }
+        sample.set(cursor, answer);
         let finished = sample.status == Status::Done;
         self.save();
-        if finished {
+        if finished && self.alone {
+            self.message = Some("every option answered by hand: done".into());
+        } else if finished {
             self.message = Some("every option answered: done (] for the next sample)".into());
         }
         if advance && self.cursor + 1 < options().len() {
@@ -424,6 +433,10 @@ impl Labeller {
                 self.save();
                 self.message = Some(format!("now {word}"));
             }
+            KeyCode::Char(']' | '[' | '}') if self.alone => {
+                self.message =
+                    Some("one test here; codereview kinds label goes through them all".into())
+            }
             KeyCode::Char(']') => self.go_to(self.at + 1),
             KeyCode::Char('[') => self.go_to(self.at.saturating_sub(1)),
             KeyCode::Char('}') => {
@@ -449,7 +462,11 @@ impl Labeller {
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
-        let area = frame.area();
+        self.draw_in(frame, frame.area());
+    }
+
+    /// The screen in `area` of the frame: all of it, or the app's body.
+    pub fn draw_in(&mut self, frame: &mut Frame, area: Rect) {
         let [head, body, foot] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Fill(1),
@@ -472,9 +489,15 @@ impl Labeller {
         let s = &samples[self.at];
         let done = samples.iter().filter(|s| s.status == Status::Done).count();
         let short: String = s.commit.chars().take(7).collect();
+        let by_hand = s.answers.iter().filter(|a| a.is_some()).count();
+        let count = if self.alone {
+            format!(" {by_hand} of {} answered by hand · ", s.answers.len())
+        } else {
+            format!(" {}/{} · {done} done · ", self.at + 1, samples.len())
+        };
         let line: Line = vec![
-            " label ".reversed(),
-            format!(" {}/{} · {done} done · ", self.at + 1, samples.len()).dim(),
+            self.name().reversed(),
+            count.dim(),
             format!("{} @ {short}", s.repository).bold(),
             format!(" · {}:{}–{} · ", s.path, s.line, s.end).into(),
             Span::styled(
@@ -665,10 +688,10 @@ impl Labeller {
             ]
             .into()
         } else if let Some(message) = &self.message {
-            vec![" label ".reversed(), format!(" {message}").into()].into()
+            vec![self.name().reversed(), format!(" {message}").into()].into()
         } else if let Some(why) = self.rules_why() {
             // What the rules said of the option under the cursor, once shown.
-            vec![" label ".reversed(), format!(" rules: {why}").dim()].into()
+            vec![self.name().reversed(), format!(" rules: {why}").dim()].into()
         } else if self.focus == Focus::Code {
             vec![
                 " file ".reversed(),
@@ -685,6 +708,11 @@ impl Labeller {
             .into()
         };
         frame.render_widget(Paragraph::new(line), area);
+    }
+
+    /// What the screen is called: the labelling of a sample, or one test's kind.
+    fn name(&self) -> &'static str {
+        if self.alone { " kind " } else { " label " }
     }
 
     /// Why the rules answer the option under the cursor as they do, while they are shown.
@@ -736,8 +764,8 @@ impl Labeller {
         let width = 76.min(area.width);
         let height = (KEYS.len() as u16 + 4).min(area.height);
         let rect = Rect {
-            x: (area.width - width) / 2,
-            y: (area.height - height) / 2,
+            x: area.x + (area.width - width) / 2,
+            y: area.y + (area.height - height) / 2,
             width,
             height,
         };
@@ -799,9 +827,10 @@ mod tests {
                 notes: String::new(),
             });
         }
-        let dataset = Dataset {
+        let mut dataset = Dataset {
             dir: dir.path().to_path_buf(),
             samples,
+            staged: Vec::new(),
         };
         dataset.save().unwrap();
         (dir, dataset)

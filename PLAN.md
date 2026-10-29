@@ -221,7 +221,8 @@ src/testsuite.rs   the tests a repository defines, found in the same parse, per 
 src/classify.rs    what kind of test each one is: the paper's eight questions and one on
                    malformed input, answered
 src/kinds.rs       a sample of tests drawn from GitHub checkouts and classified by hand: the
-                   CSV, the stored tests, and how the rules agree with it
+                   CSV, the stored tests, how the rules agree with it, and the tests a person
+                   answers while reviewing, kept as samples and put before the rules
 src/spec.rs        the tests as a specification: grouped by kind, and what a stretch of
                    history did to them
 src/acp.rs         Agent Client Protocol client
@@ -231,6 +232,6 @@ src/fakes.rs       in-process stand-ins for both backends, tests only
 src/tui.rs, src/tui/  Ratatui front end (feature `tui`); workspace.rs holds one app per repository,
                    app/sections.rs the five sections and their stacks, outline.rs the side
                    panel listing what the open file defines, kinds.rs the screen a sample of
-                   tests is classified by hand on
+                   tests is classified by hand on, and one test's kind answered from `K`
 src/web.rs, src/web/  axum server and the embedded page (feature `web`)
 ```

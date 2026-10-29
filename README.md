@@ -26,7 +26,9 @@ line they were left on and finding it again after edits.
   checks the output and the calls, and whether it mocks or fakes what it depends on — and a ninth
   question of our own: whether it feeds the code malformed input, made as a targeted attack, by
   heuristic or at random. Each answer says why, and the tests can be grouped by any of the
-  questions.
+  questions. Where the rules are wrong, answer by hand where you read it — `K` in the terminal, a
+  tap on the option on the page — and your answer wins from then on, and is kept as one more
+  sample to hold the rules to.
 - **Explore** the working tree with syntax highlighting, change markers against HEAD, and blame;
   pictures are shown as pictures, in the browser and in a terminal that can draw them.
 - **Comment** on a line or a range. Comments go to `REVIEW.md`, pending or completed, in the
@@ -114,7 +116,7 @@ The essentials:
 | Key | What |
 | --- | --- |
 | `1` or `E` | Tests, what it opens on: `Space` plays, `Enter` a test on its own, `s` source |
-| `2` or `P` | All tests, by kind: `c` the next question, `K` a test's answers |
+| `2` or `P` | All tests, by kind: `c` the next question, `K` a test's answers, to correct |
 | `3` or `C` | Code: the file tree and the file |
 | `4` or `R` | Review: every comment in REVIEW.md |
 | `5`, `A` or `Ctrl-a` | Agent (`A` inside it: address every pending comment) |
@@ -249,6 +251,15 @@ Catppuccin Latte and Mocha, Solarized Light and Dark, Gruvbox Light and Dark, No
 The default, Terminal, paints nothing but your terminal's own sixteen colours, so it is
 readable on any background; the others carry their own palette and a matching syntax theme.
 The config file also remembers the diff layout (`v`) and whether comments get timestamps.
+
+The kinds you give tests by hand are kept in `~/.local/share/codereview/kinds` (or under
+`$XDG_DATA_HOME`). To have every correction count towards `codereview kinds agree`, point it at
+this repository's sample:
+
+```toml
+[kinds]
+dataset = "~/src/codereview/tests/data/kinds"
+```
 
 ## The two files
 

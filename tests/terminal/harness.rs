@@ -157,6 +157,8 @@ impl Term {
         cmd.env("TERM", "xterm-256color");
         cmd.env("HOME", home.path());
         cmd.env("CODEREVIEW_CONFIG", home.path().join("config.toml"));
+        // Kinds answered by hand are kept here, never in the data of whoever runs the tests.
+        cmd.env("XDG_DATA_HOME", home.path().join("data"));
         let profiles = std::env::var_os("CARGO_LLVM_COV").map(|_| tempfile::tempdir().unwrap());
         if let Some(dir) = &profiles {
             cmd.env(

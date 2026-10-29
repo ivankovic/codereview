@@ -92,6 +92,13 @@ table.areas td.gap { color: var(--moved); }
 .card-test details.kind table { border-collapse: collapse; margin-top: 4px; }
 .card-test details.kind th { text-align: left; font-weight: normal; padding-right: 8px; white-space: nowrap; }
 .card-test details.kind td { padding-right: 8px; vertical-align: top; }
+/* An option of a question: lit when it holds, dashed when it cannot be told, and marked when a
+   person answered it rather than the rules. A tap answers it by hand. */
+.card-test details.kind .opt { padding: 0 6px; margin: 1px 4px 1px 0; border-radius: 10px; color: var(--dim); background: none; }
+.card-test details.kind .opt.yes { color: var(--fg); border-color: var(--accent); }
+.card-test details.kind .opt.inconclusive { border-style: dashed; }
+.card-test details.kind .opt.hand { font-weight: 700; }
+.card-test details.kind .opt.hand::after { content: ' ✎'; }
 .badge.security { color: var(--del-fg); }
 .spec input.find { width: 100%; max-width: 40em; box-sizing: border-box; margin: 2px 0 8px; }
 .spec .chips.kinds { margin: 8px 0 4px; }
@@ -476,6 +483,7 @@ body.zen.hasmsg footer { display: flex; }
   .chips button { min-height: 40px; font-size: 15px; padding: 6px 14px; }
   .spec .card-test { min-height: 44px; padding: 10px 8px; }
   .spec .card-test .sub { font-size: 14px; }
+  .card-test details.kind .opt { min-height: 36px; padding: 4px 10px; margin: 2px 4px 2px 0; }
   .what { font-size: 13px; }
   .card .stale { font-size: 14px; }
   .spec .item .where, .spec .item .was { font-size: 14px; }
@@ -2650,12 +2658,30 @@ function testCard(t) {
     ? 'names ' + reaches.slice(0, 3).map(r => `<a data-path="${esc(r)}">${esc(base(r))}</a>`).join(', ') + (reaches.length > 3 ? ` and ${reaches.length - 3} more` : '')
     : t.line ? 'names no code directly' : '';
   const answers = (t.kind && t.kind.answers) || [];
-  const kind = answers.length ? `<details class="kind"><summary>${esc(kindName(t))}</summary><table>${answers.map(a =>
-    `<tr title="${esc(a.reason)}"><th>${esc(a.question.replace(/_/g, ' '))}</th><td>${esc(a.summary)}</td><td class="dim">${esc(a.reason)}</td></tr>`).join('')}</table></details>` : '';
+  const key = t.path + ':' + t.name;
+  const options = a => a.options.map(o =>
+    `<button class="opt ${o.answer}${o.by_hand ? ' hand' : ''}" data-question="${a.question}" data-option="${esc(o.option)}" title="${esc(o.option + ': ' + (o.answer === 'inconclusive' ? 'cannot be told' : o.answer) + ', ' + o.why + ' — tap to answer by hand')}">${esc(o.option)}</button>`).join('');
+  const kind = answers.length ? `<details class="kind"${state.kindOpen === key ? ' open' : ''}><summary>${esc(kindName(t))}</summary><table>${answers.map(a =>
+    `<tr title="${esc(a.reason)}"><th>${esc(a.question.replace(/_/g, ' '))}</th><td>${esc(a.summary)}</td><td class="dim">${esc(a.reason)}</td></tr><tr class="options"><th></th><td colspan="2">${options(a)}</td></tr>`).join('')}</table></details>` : '';
   el.innerHTML = `<div class="grow"><div class="label">${esc(t.label)}${t.security ? ' <span class="badge security" title="' + esc(t.security) + '">security</span>' : ''}</div><div class="sub dim"><span class="mono">${esc(t.path)}${t.line ? ':' + t.line : ''}</span>${names ? ' · ' + names : ''}</div>${kind}</div>${t.ignored ? '<span class="dim">skipped</span>' : ''}`;
   el.title = t.name;
   // The kind opens in place; it is not a way to the file.
-  el.querySelector('details.kind')?.addEventListener('click', e => e.stopPropagation());
+  const details = el.querySelector('details.kind');
+  details?.addEventListener('click', e => e.stopPropagation());
+  details?.addEventListener('toggle', () => { if (details.open) state.kindOpen = key; else if (state.kindOpen === key) state.kindOpen = null; });
+  // An option answered by hand. The rules' answer turned over first, since that is the
+  // correction; a person's answer then goes on to no, to cannot be told, and back to the
+  // rules. Kept, and the tests drawn again with it.
+  el.querySelectorAll('button.opt').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const said = answers.find(a => a.question === b.dataset.question).options.find(o => o.option === b.dataset.option);
+    const next = !said.by_hand ? (said.answer === 'yes' ? 'no' : 'yes')
+      : { yes: 'no', no: 'inconclusive', inconclusive: null }[said.answer];
+    state.kindOpen = key;
+    api('/kinds/answer', { body: { path: t.path, name: t.name, question: b.dataset.question, option: b.dataset.option, answer: next } })
+      .then(() => { msg(next ? `${b.dataset.option}: ${next === 'inconclusive' ? 'cannot be told' : next}, by hand` : `${b.dataset.option}: back to the rules`); rerenderCurrentView(); })
+      .catch(fail);
+  });
   // From OVERVIEW.md a test has no line; the file opens at the top.
   el.onclick = () => t.line ? openFile(t.path, t.line) : openFile(t.path);
   el.querySelectorAll('a[data-path]').forEach(a => a.onclick = e => { e.stopPropagation(); openFile(a.dataset.path); });
@@ -3302,7 +3328,7 @@ const HELP = `
 <tr><td><kbd>Tests</kbd></td><td>the first tab, what the repository opens on: every test that drives it the way a person does, each with the recording its last run left, whether it passed, and how far the code has moved since. Tap a step to go to that moment of the recording; the file name opens the test</td></tr>
 <tr><td><kbd>Ask the agent to write the first ones</kbd></td><td>where there are none: the agent writes them, each leaving a recording</td></tr></table>
 <h3>All tests</h3><table>
-<tr><td><kbd>All tests</kbd></td><td>every test as a sentence, grouped by one of nine questions about what kind of test it is; a test's kind opens to all nine answers and why</td></tr>
+<tr><td><kbd>All tests</kbd></td><td>every test as a sentence, grouped by one of nine questions about what kind of test it is; a test's kind opens to all nine answers and why, and a tap on an option answers it by hand</td></tr>
 <tr><td><kbd>last 7 days</kbd> <kbd>last commit</kbd> <kbd>uncommitted</kbd></td><td>what that stretch did to the tests, the ones that now ask less first: removed, skipped, fewer assertions</td></tr>
 <tr><td><kbd>Tests in this commit</kbd></td><td>in the log: the same for one commit</td></tr></table>
 <h3>Code</h3><table>

@@ -426,6 +426,26 @@ impl App {
         }
     }
 
+    /// A key for the test whose kind is being answered; leaving it shows the tests again with
+    /// what was answered.
+    pub(super) fn handle_kinds_key(&mut self, key: KeyEvent) {
+        let Some(Screen::Kinds(labeller)) = self.screens.last_mut() else {
+            return;
+        };
+        labeller.handle_key(key);
+        if !labeller.quit {
+            return;
+        }
+        self.screens.pop();
+        if let Some(Screen::Spec(state)) = self.screens.last() {
+            let (stretch, by, cursor) = (state.stretch.clone(), state.by, state.rows.cursor);
+            self.push_spec_by(stretch, by);
+            if let Some(Screen::Spec(state)) = self.screens.last_mut() {
+                state.rows.cursor = cursor.min(state.rows.items.len().saturating_sub(1));
+            }
+        }
+    }
+
     pub(super) fn handle_spec_key(&mut self, key: KeyEvent) {
         let height = self.measured.list_height.max(1) as isize;
         let Screen::Spec(state) = self.screens.last_mut().expect("screen") else {
@@ -482,25 +502,21 @@ impl App {
                 self.push_spec_by(stretch, by);
                 self.info(format!("grouped by: {}", by.title()));
             }
-            // Every question, answered for the test under the cursor.
+            // Every question, answered for the test under the cursor, to correct by hand.
             KeyCode::Char('K') => {
                 let Some(SpecRow::Test(t, _)) = state.rows.current().cloned() else {
                     self.info("K says what kind of test one is; put the cursor on a test");
                     return;
                 };
-                let hits = t
-                    .kind
-                    .answers
-                    .iter()
-                    .map(|a| Hit {
-                        path: t.test.path.clone(),
-                        line: t.test.line,
-                        column: 0,
-                        label: a.question.short().to_string(),
-                        text: format!("{} — {}", a.summary, a.reason),
-                    })
-                    .collect();
-                self.push_locations(format!("what kind of test {} is", t.test.label), hits);
+                let sample = self.session.kind_sample(&t.test.path, &t.test.name);
+                let Some((dataset, at)) = self.report(sample) else {
+                    return;
+                };
+                let theme = self.theme.clone();
+                self.screens
+                    .push(Screen::Kinds(Box::new(crate::tui::kinds::Labeller::one(
+                        dataset, at, theme,
+                    ))));
             }
             KeyCode::Char('s') => {
                 if matches!(state.stretch, Stretch::Commit(_)) {

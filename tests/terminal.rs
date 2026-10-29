@@ -19,7 +19,7 @@ mod harness;
 
 use std::path::Path;
 
-use harness::{DOWN, ENTER, ESC};
+use harness::{DOWN, ENTER, ESC, TAB};
 
 #[test]
 fn a_repository_opens_on_its_end_to_end_tests_and_plays_a_recording() {
@@ -380,9 +380,9 @@ fn c_groups_the_specification_by_the_next_question() {
 }
 
 #[test]
-fn k_answers_every_question_for_the_test_under_the_cursor() {
+fn k_opens_every_question_for_the_test_under_the_cursor_with_the_rules_answers() {
     let mut t = term!();
-    t.documents("SPECS.md#What kind of test each one is");
+    t.documents("SPECS.md#Kinds answered by hand");
     t.on_the_tests();
     t.step("go to every test and find the unit test");
     t.keys("2");
@@ -394,10 +394,43 @@ fn k_answers_every_question_for_the_test_under_the_cursor() {
     t.keys("G");
     t.step("ask what kind of test it is");
     t.keys("K");
-    t.wait_for("what kind of test a review round trips is");
-    t.wait_for("Code — it names code from src/review.rs");
-    t.wait_for("API — it names code from src/review.rs");
-    t.wait_for("Real dependencies");
+    t.wait_for("0 of 25 answered by hand");
+    t.wait_for("src/review.rs:");
+    t.wait_for("What artifact is being tested?");
+    t.wait_for("[ ] Code           rules y");
+    t.step("read why the rules say it tests code");
+    t.wait_for("rules: it names code from src/review.rs");
+}
+
+#[test]
+fn an_answer_given_by_hand_moves_the_test_to_its_group() {
+    let mut t = term!();
+    t.documents("SPECS.md#Kinds answered by hand");
+    t.on_the_tests();
+    t.step("go to every test and open the unit test's kind");
+    t.keys("2");
+    t.wait_for("API 1");
+    t.keys("/");
+    t.keys("round trips");
+    t.keys(ENTER);
+    t.wait_for("1 test matches");
+    t.keys("G");
+    t.keys("K");
+    t.wait_for("0 of 25 answered by hand");
+    t.step("go to how it interacts: two questions down");
+    t.keys(TAB);
+    t.keys(TAB);
+    t.wait_for("rules: it names code from src/review.rs");
+    t.step("say it does not go through the API, and that it drives a screen");
+    t.keys("n");
+    t.keys("y");
+    t.wait_for("2 of 25 answered by hand");
+    t.wait_for("GUI/TUI");
+    t.step("go back to the tests");
+    t.keys("q");
+    t.keys(ESC);
+    t.wait_for("GUI/TUI 2");
+    t.wait_for("API 0");
 }
 
 #[test]
@@ -525,8 +558,9 @@ fn a_drawn_sample(root: &Path) {
         "pub fn parse_review(s: &str) -> usize {\n    s.len()\n}\n\n#[test]\nfn parses() {\n    assert_eq!(parse_review(\"ab\"), 2);\n}\n",
     )
     .unwrap();
-    let dataset = Dataset {
+    let mut dataset = Dataset {
         dir,
+        staged: Vec::new(),
         samples: vec![Sample {
             name: "someone-alpha-0123456-lib-parses".into(),
             repository: "someone/alpha".into(),

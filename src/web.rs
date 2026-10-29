@@ -726,6 +726,7 @@ fn router(state: AppState) -> Router {
         .route("/comments/toggle", post(api::post_comment_toggle))
         .route("/comments/edit", post(api::post_comment_edit))
         .route("/comments/delete", post(api::post_comment_delete))
+        .route("/kinds/answer", post(api::post_kind_answer))
         .route("/notes", get(api::get_notes).post(api::post_note))
         .route("/notes/edit", post(api::post_note_edit))
         .route("/notes/delete", post(api::post_note_delete))

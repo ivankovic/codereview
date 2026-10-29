@@ -183,12 +183,48 @@ test('a test opens to what kind of test it is and why', async t => {
   await page.click(GROUP + ' .card-test details.kind > summary');
   t.ok('it stays on the list', await page.evaluate(() => location.hash.includes('/spec')), await page.evaluate(() => location.hash));
   t.ok('every question is answered', await page.evaluate(sel =>
-    document.querySelectorAll(sel + ' .card-test details.kind[open] tr').length === 9, GROUP));
+    document.querySelectorAll(sel + ' .card-test details.kind[open] tr:not(.options)').length === 9, GROUP));
   t.ok('with why', await page.evaluate(sel => {
-    const row = [...document.querySelectorAll(sel + ' .card-test details.kind[open] tr')].find(r => r.querySelector('th').textContent === 'interaction');
+    const row = [...document.querySelectorAll(sel + ' .card-test details.kind[open] tr:not(.options)')].find(r => r.querySelector('th').textContent === 'interaction');
     return row && row.textContent.includes('CLI') && row.textContent.includes('it drives the built program') ? true : row && row.textContent;
   }, GROUP));
 }, { docs: ['SPECS.md#What kind of test each one is'] });
+
+test('an option answered by hand moves the test to the group it then belongs in', async t => {
+  const page = t.page;
+  await t.open('#/spec');
+  // The end-to-end test's card, marked so that a selector finds it: every answer redraws the
+  // list. Waits for its GUI/TUI option to say `answer`, by hand or not, and gives back the
+  // group the test is in.
+  const until = (answer, hand) => page.waitForFunction((answer, hand) => {
+    const card = [...document.querySelectorAll('.spec .card-test')].find(c => c.querySelector('.label').textContent.startsWith('a review is listed'));
+    if (!card) return false;
+    card.dataset.under = 'test';
+    const b = card.querySelector('button.opt[data-question="interaction"][data-option="GUI/TUI"]');
+    return b && b.classList.contains(answer) && b.classList.contains('hand') === hand
+      && card.closest('details.group').querySelector('summary b').textContent;
+  }, {}, answer, hand).then(h => h.jsonValue());
+  const CARD = '.spec .card-test[data-under]';
+  const SCREEN = CARD + ' details.kind button.opt[data-question="interaction"][data-option="GUI/TUI"]';
+  t.ok('the rules say it runs the program on its command line', (await until('no', false)) === 'CLI');
+  t.step('open what kind of test it is');
+  await t.inView(CARD + ' details.kind > summary');
+  await page.click(CARD + ' details.kind > summary');
+  await t.inView(SCREEN);
+  t.ok('its options are in reach of a finger', await page.evaluate(hittable, SCREEN));
+  t.step('say that it drives a screen as well');
+  await page.click(SCREEN);
+  const group = await until('yes', true);
+  t.ok('it is in the group of tests with several interfaces', group === 'Several interfaces', group);
+  t.ok('its kind is still open', await page.evaluate(sel => document.querySelector(sel).closest('details.kind').open, SCREEN));
+  t.step('give it back to the rules: no, cannot be told, and then the rules');
+  for (const [answer, hand] of [['no', true], ['inconclusive', true], ['no', false]]) {
+    await t.inView(SCREEN);
+    await page.click(SCREEN);
+    await until(answer, hand);
+  }
+  t.ok('the rules answer again', (await until('no', false)) === 'CLI');
+}, { docs: ['SPECS.md#Kinds answered by hand'] });
 
 test('the summary says what a repository is, where to start and how it is doing', async t => {
   const page = t.page;

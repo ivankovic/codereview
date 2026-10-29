@@ -957,6 +957,33 @@ pub(super) async fn post_comment_delete(
     Ok(Json(Ok_ { ok: true }))
 }
 
+// ----- kinds ---------------------------------------------------------------------------------
+
+/// One option of one question about a test, answered by hand: `answer` is `yes`, `no`,
+/// `inconclusive`, or `null` to give it back to the rules.
+#[derive(Deserialize)]
+pub(super) struct KindAnswer {
+    path: String,
+    name: String,
+    question: crate::classify::Question,
+    option: String,
+    answer: Option<crate::classify::Answer>,
+}
+
+pub(super) async fn post_kind_answer(state: Ctx, Json(body): Json<KindAnswer>) -> ApiResult<Ok_> {
+    with_session(&state, move |s| {
+        s.answer_kind(
+            &body.path,
+            &body.name,
+            body.question,
+            &body.option,
+            body.answer,
+        )
+    })
+    .await?;
+    Ok(Json(Ok_ { ok: true }))
+}
+
 // ----- notes ---------------------------------------------------------------------------------
 
 pub(super) async fn get_notes(state: Ctx) -> ApiResult<Vec<Note>> {

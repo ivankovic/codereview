@@ -434,7 +434,8 @@ pub fn detail(session: &mut Session, file: &str, name: &str) -> Option<Detail> {
                 .flat_map(|f| f.tests)
                 .collect();
             let coverage = session.coverage();
-            let annotated = crate::spec::annotate(&root, tests, Some(&coverage));
+            let annotated =
+                crate::spec::annotate(&root, tests, Some(&coverage), &session.learned());
             let mut found: Vec<Smaller> = annotated
                 .into_iter()
                 .filter(|t| !t.end_to_end)

@@ -21,6 +21,36 @@ pub struct Config {
     pub analysis: Vec<Check>,
     /// The terminal UI's side panel: the file tree, or the outline of the open file.
     pub sidebar: SidebarConfig,
+    /// Where the kinds of tests a person corrects are kept.
+    pub kinds: KindsConfig,
+}
+
+/// The tests a person classifies by hand while reviewing, in either front end: each is kept
+/// as a sample of a dataset, the way `codereview kinds` keeps them, and its answers are put
+/// before the rules' from then on.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KindsConfig {
+    /// The dataset directory; empty for `$XDG_DATA_HOME/codereview/kinds`
+    /// (`~/.local/share/codereview/kinds`). A leading `~/` is the home directory.
+    pub dataset: String,
+}
+
+impl KindsConfig {
+    /// The dataset directory this means, if there is a home to put it in.
+    pub fn dir(&self) -> Option<PathBuf> {
+        let home = || std::env::var_os("HOME").map(PathBuf::from);
+        if let Some(rest) = self.dataset.strip_prefix("~/") {
+            return Some(home()?.join(rest));
+        }
+        if !self.dataset.is_empty() {
+            return Some(PathBuf::from(&self.dataset));
+        }
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home().map(|h| h.join(".local/share")))?;
+        Some(base.join("codereview").join("kinds"))
+    }
 }
 
 /// Whether each of the explorer's side panels gets out of the way. A panel that hides is
@@ -143,6 +173,7 @@ impl Default for Config {
             agent: AgentConfig::default(),
             analysis: Vec::new(),
             sidebar: SidebarConfig::default(),
+            kinds: KindsConfig::default(),
         }
     }
 }
@@ -234,6 +265,9 @@ mod tests {
                 files_auto_hide: true,
                 outline_auto_hide: false,
             },
+            kinds: KindsConfig {
+                dataset: "~/src/codereview/tests/data/kinds".into(),
+            },
         };
         config.save_to(&path).unwrap();
         assert!(path.exists(), "the directory was made as well");
@@ -244,6 +278,24 @@ mod tests {
         assert!(err.contains("config.toml"), "{err}");
     }
     use super::*;
+
+    #[test]
+    fn the_kinds_dataset_is_where_the_config_says_or_with_the_users_data() {
+        let at = |dataset: &str| {
+            KindsConfig {
+                dataset: dataset.into(),
+            }
+            .dir()
+        };
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        assert_eq!(
+            at("~/src/codereview/tests/data/kinds"),
+            Some(home.join("src/codereview/tests/data/kinds"))
+        );
+        assert_eq!(at("/srv/kinds"), Some(PathBuf::from("/srv/kinds")));
+        let default = at("").unwrap();
+        assert!(default.ends_with("codereview/kinds"), "{default:?}");
+    }
 
     #[test]
     fn missing_keys_take_defaults() {
