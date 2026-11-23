@@ -623,7 +623,7 @@ fn draw_detail(frame: &mut Frame, theme: &Theme, state: &EndToEndState, area: Re
         if let Some(media) = r.media() {
             said.push(Line::from(vec![
                 Span::styled(media, Style::new().bold()),
-                Span::styled(" — o opens it in the system's player", dim),
+                Span::styled(" — ge opens it in the system's player", dim),
             ]));
         } else if r.recording.is_some() {
             said.push(Line::from(Span::styled(
@@ -995,7 +995,7 @@ fn draw_test_view(
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
                         Span::styled(media, Style::new().bold()),
-                        Span::styled(" — o opens it in the system's player", dim),
+                        Span::styled(" — ge opens it in the system's player", dim),
                     ])),
                     player,
                 );

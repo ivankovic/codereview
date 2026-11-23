@@ -332,7 +332,7 @@ fn a_stretch_picked_from_the_range_picker_is_what_the_tests_mark() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
     t.on_the_tests();
-    t.step("open the range picker and pick the uncommitted work");
+    t.step("open the range picker with gp, which o also opens, and pick the uncommitted work");
     t.keys("g");
     t.keys("p");
     t.wait_for("review what?");
@@ -369,8 +369,7 @@ fn a_worktree_s_uncommitted_work_is_reviewed_against_its_last_commit() {
     t.documents("SPECS.md#Pull requests and comparisons");
     t.on_the_tests();
     t.step("open the range picker, and find the agent's worktree");
-    t.keys("g");
-    t.keys("p");
+    t.keys("o");
     t.wait_for("Worktrees, as they are on disk");
     t.keys("/");
     t.keys("-agent");
@@ -396,8 +395,7 @@ fn a_branch_is_compared_as_a_pull_request_into_the_current_one() {
     t.documents("SPECS.md#Pull requests and comparisons");
     t.on_the_tests();
     t.step("open the range picker, and find the feature branch");
-    t.keys("g");
-    t.keys("p");
+    t.keys("o");
     t.wait_for("review what?");
     t.keys("/");
     t.keys("feature");
@@ -474,8 +472,7 @@ fn a_pull_request_from_the_forge_opens_with_its_files_and_comments() {
     t.documents("SPECS.md#Pull requests and comparisons");
     t.on_the_tests();
     t.step("open the range picker, which asks the forge for its pull requests");
-    t.keys("g");
-    t.keys("p");
+    t.keys("o");
     t.wait_for("#7 Say what the feature does — ana");
     t.step("pick the pull request, which is a base and a head already");
     t.keys("/");

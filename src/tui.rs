@@ -258,6 +258,44 @@ mod tests {
         assert!(comment.line.is_some(), "{comment:?}");
     }
 
+    /// `o` is open, wherever one is: what to review. Opening something elsewhere — the file in
+    /// `$EDITOR` — is `ge`.
+    #[test]
+    fn o_opens_what_to_review_and_ge_opens_elsewhere() {
+        let dir = scratch_repo();
+        let mut app = App::new(scratch_session(dir.path()), None);
+        app.switch_focus(Focus::Code);
+        press(&mut app, &[KeyCode::Char('j'), KeyCode::Enter]);
+        assert!(app.viewer.is_some(), "a.rs is open");
+
+        app.handle_key(key('o'));
+        assert!(app.range_picker.is_some(), "o opened the range picker");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.range_picker.is_none());
+        assert!(
+            app.editor_request.is_none(),
+            "o no longer asks for the editor"
+        );
+
+        press(
+            &mut app,
+            &[KeyCode::Char('j'), KeyCode::Char('g'), KeyCode::Char('e')],
+        );
+        let (path, line) = app.editor_request.clone().expect("ge asked for the editor");
+        assert!(path.ends_with("a.rs"), "{path:?}");
+        assert_eq!(line, 2, "at the cursor's line");
+
+        // On a diff, the after line.
+        app.editor_request = None;
+        press(&mut app, &[KeyCode::Char('D')]);
+        assert!(matches!(app.screen(), Screen::Diff(_)));
+        press(&mut app, &[KeyCode::Char('g'), KeyCode::Char('e')]);
+        assert!(
+            app.editor_request.is_some(),
+            "ge on a diff asks for the editor"
+        );
+    }
+
     /// `\\` hides the side panel and gives the file its width; a key that gives the panel the
     /// focus brings it back, and with no file open it is always there.
     #[test]

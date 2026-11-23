@@ -31,7 +31,7 @@ pub(super) fn draw_range(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(format!(" · {} by {}", state.label, pr.author), dim),
         ]));
         head.push(Line::from(Span::styled(
-            clip(&format!("{} — o opens it", pr.url), width),
+            clip(&format!("{} — ge opens it", pr.url), width),
             dim,
         )));
     } else {

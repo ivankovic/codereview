@@ -1009,7 +1009,7 @@ pub(super) fn play(player: &mut Player, now: Instant) -> Option<Said> {
             .is_some_and(|r| r.kind == Some(Kind::Video)) =>
         {
             Some(Said::Info(
-                "a video plays outside the terminal: o opens it".into(),
+                "a video plays outside the terminal: ge opens it".into(),
             ))
         }
         None => Some(Said::Info("this test has no recording to play".into())),

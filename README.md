@@ -122,7 +122,7 @@ tests, and from the tests out. `?` shows every key. The essentials:
 | `R` | the review, over the code: every comment in REVIEW.md |
 | `A` or `Ctrl-a` | the agent panel, over the screen (`A` in the review: address every comment) |
 | `w` `b` | on the tests: the stretch marked; record the tests at its base to compare |
-| `gp` | review a pull request, a worktree, a branch or a tag, then pick its base; `/` filters |
+| `o` | open: a pull request, a worktree, a branch or a tag, then its base; `/` filters |
 | `q` `Esc` | back; on a focus's first screen, the tests; on the tests, quit |
 | `U` | the tests that name the open file |
 | `Tab` | switch between the side panel and the file |
@@ -147,7 +147,7 @@ tests, and from the tests out. `?` shows every key. The essentials:
 | `gt` `gT` `W` | next / previous repository, the repository picker (when several are open) |
 | `l` | in the agent panel: show or hide the backend's log lines |
 | `/` `> <` | search, next and previous match |
-| `o` | open the line in `$EDITOR` |
+| `ge` | open elsewhere: the line in `$EDITOR`, a video in its player, a pull request on the forge |
 
 In a diff: `n`/`p` step through hunks, `]`/`[` through the files of the same commit, `v` cycles
 between automatic, side-by-side and unified layout, `c` comments on the after-side line.

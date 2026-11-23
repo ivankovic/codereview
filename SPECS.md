@@ -680,7 +680,8 @@ is closed. A list of places to go, once one is picked, is closed with it. `a` an
 agent something, open its panel over the screen they were pressed on, and `q` there comes back to
 it.
 
-`gp` opens the range picker over the screen, in two steps. First, what to review: the forge's
+`o`, open, from any screen but the agent's (or `gp`), opens the range picker over the screen,
+in two steps. First, what to review: the forge's
 open pull requests, each with its number, title, author and whether it is a draft, which the
 picker says it is asking for while it does and fills in when the answer comes, or says why there
 are none; the worktrees as they are on disk, each with what it has checked out and this one
@@ -694,7 +695,7 @@ thread of its own, and so is the fetch a pull request may need, so nothing on sc
 the network. A comparison or a pull request is the range the tests are seen through, and opens
 over the code on a screen of its own, titled with the pull request's number and title or with
 the head against the base: for a pull request, its state, its two branches and its
-author, and its address, which `o` opens; then the files it changes, each opening its diff
+author, and its address, which `ge` opens; then the files it changes, each opening its diff
 across the range, and, for a pull request, its comments, oldest first, each with its author and
 where it is. `Enter` on a comment on a line opens the file's diff across the range at that line,
 which counts in the pull request's head; a comment on the whole pull request has nowhere to go.
@@ -723,7 +724,7 @@ the length and whether it plays, and cropped to the box with a note when it is b
 gives it the whole of the tests' screen. `Space` or `p` plays and pauses, from the start again
 once it has ended; `]` and `[` go to the next and previous step; `0` goes back to the start;
 these work from the panel as well, on the selected test; while it plays the screen is drawn
-every 40 ms. A video cannot be drawn, so it is named, and `o` hands it to the system's opener
+every 40 ms. A video cannot be drawn, so it is named, and `ge` hands it to the system's opener
 (`xdg-open`, or `open` on macOS). `s` in the panel opens the test's source at its line. A
 repository with no end-to-end tests opens on that finding instead: what one would look like for
 the kind of software it seems to be, how many tests of other kinds it has, and `a`, which sends
@@ -796,7 +797,9 @@ Esc; the transcript kept while other screens are shown). The viewer has a column
 character and word, drawn in reverse video, from which the identifier for navigation is taken. A
 single-line prompt at the bottom takes comment and note text, search queries, line numbers, the tree
 filter, symbol searches and agent prompts. The agent starts on another thread so the interface never
-waits for it. `o` suspends the UI and runs `$VISUAL` or `$EDITOR` at the current line. The mouse
+waits for it. `ge`, open elsewhere, suspends the UI and runs `$VISUAL` or `$EDITOR` at the
+current line, in the file or on a diff's after side; on every screen `ge` is what opens outside
+the tool. The mouse
 wheel scrolls.
 
 ## Browser UI

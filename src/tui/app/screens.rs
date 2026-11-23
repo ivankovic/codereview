@@ -583,7 +583,7 @@ impl App {
             KeyCode::Char('o') => match state.rows.current().cloned() {
                 Some(SpecRow::Change(c, _)) if c.what != What::Removed => {
                     if state.span.to.is_some() {
-                        self.info("o opens the working tree; this change is in a commit");
+                        self.info("ge opens the working tree; this change is in a commit");
                     } else {
                         self.jump_to(&c.path, c.line.max(1));
                     }
@@ -851,7 +851,7 @@ impl App {
         }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
-            KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('l') => {
+            KeyCode::Enter | KeyCode::Char('l') => {
                 if let Some(hit) = state.items.current().cloned() {
                     self.push_jump();
                     self.jump_to_col(&hit.path, hit.line, hit.column);
@@ -1093,10 +1093,11 @@ impl App {
                 let path = v.file.path.clone();
                 self.push_log(Some(path));
             }
+            // `ge`: the after side's line in `$EDITOR`, as everywhere else.
             KeyCode::Char('o') => {
                 let line = v.after_line().unwrap_or(0) + 1;
-                let path = v.file.path.clone();
-                self.jump_to(&path, line);
+                let path = self.session.root().join(&v.file.path);
+                self.editor_request = Some((path, line));
             }
             _ => {}
         }
@@ -1131,7 +1132,7 @@ impl App {
                     &text,
                 ));
             }
-            KeyCode::Enter | KeyCode::Char('o') => {
+            KeyCode::Enter => {
                 if let Some(a) = Self::review_visible(state).get(state.items.cursor) {
                     let (path, line) = (a.comment.path.clone(), a.line);
                     match line {
@@ -1176,7 +1177,7 @@ impl App {
                 };
                 self.prompt = Some(Prompt::new(PromptKind::Note { path }, label, ""));
             }
-            KeyCode::Enter | KeyCode::Char('o') => {
+            KeyCode::Enter => {
                 if let Some(n) = state.items.current().filter(|n| !n.is_general()) {
                     let path = n.target.clone();
                     self.jump_to(&path, 1);

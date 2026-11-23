@@ -1076,6 +1076,12 @@ impl App {
                 }
                 KeyCode::Char('d') => self.goto_definition(),
                 KeyCode::Char('p') => self.open_range_picker(),
+                // Open elsewhere: the line in `$EDITOR`, a recording in the system's player, a
+                // pull request on the forge, a test's source. Each screen answers it as the `o`
+                // it used to take, which the global `o` now keeps from reaching it.
+                KeyCode::Char('e') => {
+                    self.handle_screen_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE))
+                }
                 KeyCode::Char('r') => self.find_references(),
                 KeyCode::Char('s') => self.file_symbols(),
                 KeyCode::Char('S') => {
@@ -1122,6 +1128,12 @@ impl App {
         match key.code {
             KeyCode::Char('?') => {
                 self.show_help = true;
+                return true;
+            }
+            // Open: what to review, and against what. A screen never sees `o` itself; what
+            // it used to do with it — open something elsewhere — is `ge`, below.
+            KeyCode::Char('o') if !matches!(self.screen(), Screen::Agent) => {
+                self.open_range_picker();
                 return true;
             }
             // In the agent panel `t` toggles thoughts; the picker is a key away elsewhere.

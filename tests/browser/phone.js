@@ -417,6 +417,16 @@ test('the review range is picked from the breadcrumb', async t => {
   t.ok('and the picker has gone', await page.evaluate(() => document.querySelector('#ranges').hidden));
 }, { docs: ['SPECS.md#Browser UI'] });
 
+test('o opens what to review, as the range in the breadcrumb does', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('#tests [data-test]');
+  t.step('press o');
+  await page.keyboard.press('o');
+  await page.waitForSelector('#ranges [data-head]');
+  t.ok('the range picker is open', await page.evaluate(() => !document.querySelector('#ranges').hidden));
+}, { docs: ['SPECS.md#Browser UI'] });
+
 test('a pull request from the forge opens with its files and comments', async t => {
   const page = t.page;
   await t.open();

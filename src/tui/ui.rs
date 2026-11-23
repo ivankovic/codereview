@@ -456,8 +456,10 @@ fn hint_for(screen: &Screen) -> &'static str {
             "c comment  gd def  gr uses  @ symbols  O outline  a/i ask agent  A agent panel  H history  D diff  / search  , options"
         }
         Screen::Log(_) => "Enter files/diff  Tab switch  w vs working tree  H file history  q back",
-        Screen::Changes(_) => "Enter diff  s staged/working  H history  o open  q back",
-        Screen::Diff(_) => "n/p hunks  ]/[ files  c comment  v layout  o open in explorer  q back",
+        Screen::Changes(_) => {
+            "Enter diff  s staged/working  H history  ge the file  o open  q back"
+        }
+        Screen::Diff(_) => "n/p hunks  ]/[ files  c comment  v layout  ge $EDITOR  o open  q back",
         Screen::Review(_) => {
             "Enter go to  x done  e edit  d delete  a/A ask agent  s completed  Z re-anchor  q back"
         }
@@ -466,7 +468,7 @@ fn hint_for(screen: &Screen) -> &'static str {
         Screen::Spec(_) => {
             "Enter open/close, diff, test or area  h close fold  / search  c group by  K kind  f files a test names  s stretch  q back"
         }
-        Screen::Range(_) => "Enter diff or comment  o open on the forge  gp another range  q back",
+        Screen::Range(_) => "Enter diff or comment  ge on the forge  o open another  q back",
         Screen::EndToEnd(state) if state.main && state.test.is_some() => {
             "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q/Tab the list"
         }
@@ -474,7 +476,7 @@ fn hint_for(screen: &Screen) -> &'static str {
             "Enter go there  b record before  w stretch  q/Tab the list"
         }
         Screen::EndToEnd(_) => {
-            "Enter/Tab beside  Space play  ] [ steps  w stretch  b record before  s source  o video  \\ panel  1-4 focus  q quit"
+            "Enter/Tab beside  Space play  ] [ steps  w stretch  b record before  s source  ge video  o open  \\ panel  1-4 focus  q quit"
         }
         Screen::Agent => {
             "i ask  A address all pending  Esc cancel  1-9/y/n answer  t thoughts  l log  C clear  R restart  q back"
@@ -500,8 +502,12 @@ const HELP: &[(&str, &str)] = &[
     ("Everywhere", ""),
     ("?", "this help"),
     (
-        "gp",
-        "the review range: a stretch, a branch compared with another, or a pull request",
+        "o",
+        "open: a pull request, a worktree, a branch or a tag to review, then what to compare it with; or a stretch",
+    ),
+    (
+        "ge",
+        "open elsewhere: the line in $EDITOR, a recording in the system's player, a pull request on the forge",
     ),
     (
         "P",
@@ -542,7 +548,7 @@ const HELP: &[(&str, &str)] = &[
         "the test on its own: steps, the code it ran, its documentation, the tests below it",
     ),
     ("s", "the test's source"),
-    ("o", "open the recording in the system's player (videos)"),
+    ("ge", "open the recording in the system's player (videos)"),
     (
         "w",
         "the stretch of history marked: the last 7 days, the last commit, uncommitted work",
@@ -604,7 +610,7 @@ const HELP: &[(&str, &str)] = &[
     ("H", "history of this file"),
     ("D", "diff this file against HEAD"),
     ("B", "blame column"),
-    ("o", "open in $EDITOR at the line"),
+    ("ge", "open in $EDITOR at the line"),
     (
         "h l w b 0 ^ $",
         "move the column cursor: character, word, line start, end",
@@ -646,7 +652,7 @@ const HELP: &[(&str, &str)] = &[
         "c x e D",
         "comment on the after line; done, edit, delete it",
     ),
-    ("o", "open the after line in the explorer"),
+    ("ge", "open the after line in $EDITOR"),
     ("", ""),
     ("Colours", ""),
     ("green", "inserted"),

@@ -581,7 +581,7 @@ footer .msg.error { color: var(--del-fg); }
     <span class="sep a">›</span>
     <span id="branch" title="the branch checked out"></span>
     <span class="sep">›</span>
-    <button id="range" class="crumb" title="the review range: a stretch, a branch compared with another, or a pull request">last 7 days</button>
+    <button id="range" class="crumb" title="open (o): a pull request, a worktree, a branch or a tag to review, or a stretch">last 7 days</button>
     <span class="sep c">›</span>
     <span id="commit" class="dim" title="the commit checked out"></span>
   </nav>
@@ -3639,7 +3639,8 @@ const HELP = `
 <h3>The frame</h3><table>
 <tr><td><kbd>Tests</kbd> <kbd>Code</kbd> <kbd>Docs</kbd> <kbd>Data</kbd></td><td>what to look at: the tests, the code, the Markdown documents, the datasets</td></tr>
 <tr><td><kbd>☰</kbd> or <kbd>\\</kbd></td><td>hide or show the side panel</td></tr>
-<tr><td><kbd>Agent</kbd></td><td>the coding agent, over what is on screen</td></tr></table>
+<tr><td><kbd>Agent</kbd></td><td>the coding agent, over what is on screen</td></tr>
+<tr><td><kbd>o</kbd> or the range in the breadcrumb</td><td>open: a pull request, a worktree as it is on disk, a branch or a tag to review, then what to compare it with; or a stretch</td></tr></table>
 <h3>All tests</h3><table>
 <tr><td><kbd>All tests</kbd></td><td>every test as a sentence, grouped by one of nine questions about what kind of test it is; a test's kind opens to all nine answers and why</td></tr>
 <tr><td><kbd>last 7 days</kbd> <kbd>last commit</kbd> <kbd>uncommitted</kbd></td><td>what that stretch did to the tests, the ones that now ask less first: removed, skipped, fewer assertions</td></tr>
@@ -3693,6 +3694,8 @@ document.addEventListener('keydown', e => {
   if (e.key === '#') { e.preventDefault(); $('#symbol').focus(); $('#symbol').select(); return; }
   if (e.key === '@' && state.file) { showFileSymbols(state.file.path); return; }
   if (e.key === 'r' && !e.ctrlKey && !e.metaKey) { $('#refresh').click(); return; }
+  // Open: what to review, and against what, as in the terminal.
+  if (e.key === 'o' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); openRanges().catch(fail); return; }
   if (state.diff && document.querySelector('#content table.code') && state.view !== 'explore') {
     if (e.key === 'n') jumpHunk(1);
     if (e.key === 'p') jumpHunk(-1);
