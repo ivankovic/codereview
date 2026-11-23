@@ -18,6 +18,7 @@ mod end_to_end;
 mod focus;
 mod one_test;
 mod overlays;
+mod range;
 mod screens;
 
 use crate::tui::agent_panel;
@@ -116,6 +117,7 @@ impl<T> ListState<T> {
 pub use end_to_end::{E2eRow, EndToEndState, Player};
 pub use focus::{Explorer, Focus};
 pub use one_test::{EndToEndTestState, TestRow};
+pub use range::{RangeChoice, RangePicker, RangeRow, RangeState};
 pub use screens::{
     ChangesState, DiffState, Hit, LocationsState, LogState, NotesState, ReviewState, SpecRow,
     SpecState, spec_rows,
@@ -132,6 +134,8 @@ pub enum Screen {
     Spec(Box<SpecState>),
     /// The end-to-end tests: what a repository opens on.
     EndToEnd(Box<EndToEndState>),
+    /// A pull request or a comparison: what it is, its files, its comments.
+    Range(Box<RangeState>),
     Agent,
 }
 
@@ -148,6 +152,8 @@ impl Screen {
             Screen::Locations(_) => "locations",
             Screen::Spec(_) => "spec",
             Screen::EndToEnd(_) => "end to end",
+            Screen::Range(r) if r.pull.is_some() => "pull request",
+            Screen::Range(_) => "comparison",
             Screen::Agent => "agent",
         }
     }
@@ -322,6 +328,10 @@ pub struct App {
     pub help_scroll: usize,
     pub highlight: bool,
     pub theme: Theme,
+    /// The range picker, `gp`, while it is up.
+    pub range_picker: Option<RangePicker>,
+    /// What is being asked of the forge on other threads.
+    asking: range::Asking,
     /// Open theme picker: the highlighted index and the theme to restore on cancel.
     pub theme_picker: Option<(usize, Theme)>,
     pub layout: DiffLayout,
@@ -375,6 +385,8 @@ impl App {
             highlight: true,
             theme,
             theme_picker: None,
+            range_picker: None,
+            asking: Default::default(),
             layout,
             quit: false,
             measured: Measured::default(),
@@ -817,6 +829,7 @@ impl App {
             changed = true;
         }
         changed |= self.advance_playback();
+        changed |= self.take_answers();
         changed |= self.watch_base_run();
         if active && self.kept_at.elapsed() >= std::time::Duration::from_secs(5) {
             self.kept_at = std::time::Instant::now();
@@ -1057,6 +1070,10 @@ impl App {
             self.handle_theme_picker_key(key);
             return true;
         }
+        if self.range_picker.is_some() {
+            self.handle_range_picker_key(key);
+            return true;
+        }
         if self.options.is_some() {
             self.handle_options_key(key);
             return true;
@@ -1091,6 +1108,7 @@ impl App {
                     self.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
                 }
                 KeyCode::Char('d') => self.goto_definition(),
+                KeyCode::Char('p') => self.open_range_picker(),
                 KeyCode::Char('r') => self.find_references(),
                 KeyCode::Char('s') => self.file_symbols(),
                 KeyCode::Char('S') => {
@@ -1257,6 +1275,7 @@ impl App {
             Screen::Locations(_) => self.handle_locations_key(key),
             Screen::Spec(_) => self.handle_spec_key(key),
             Screen::EndToEnd(_) => self.handle_end_to_end_key(key),
+            Screen::Range(_) => self.handle_range_key(key),
             Screen::Agent => {
                 let height = self.measured.main_height;
                 let config = self.session.config.agent.clone();
@@ -1681,6 +1700,7 @@ impl App {
             Screen::Notes(n) => n.items.move_by(delta),
             Screen::Spec(state) => state.rows.move_by(delta),
             Screen::EndToEnd(_) => self.move_end_to_end(delta),
+            Screen::Range(r) => r.rows.move_by(delta),
         }
     }
 }

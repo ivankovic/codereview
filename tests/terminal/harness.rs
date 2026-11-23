@@ -165,6 +165,11 @@ impl Term {
             );
         }
         cmd.env_remove("CODEREVIEW_PASSWORD_HASH");
+        // A test that answers for the forge leaves a stand-in for `gh` in the git directory.
+        let gh = repo.path().join(".git/gh");
+        if gh.exists() {
+            cmd.env("CODEREVIEW_GH", gh);
+        }
         let child = pty.slave.spawn_command(cmd).expect("the binary starts");
         // The program holds the other end now; ours would keep the terminal open after it
         // exits, and the reader below would never see the end.

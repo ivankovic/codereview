@@ -668,6 +668,23 @@ is closed. A list of places to go, once one is picked, is closed with it. `a` an
 agent something, open its panel over the screen they were pressed on, and `q` there comes back to
 it.
 
+`gp` opens the range picker over the screen: the three stretches; each other local branch
+compared with the one checked out, most recently committed to first, at most twenty, and the
+checked-out branch compared with the default one — the branch `origin/HEAD` names, else `main` or
+`master` — when it is another; and the forge's open pull requests, each with its number, title,
+author and whether it is a draft, which the picker says it is asking for while it does and fills
+in when the answer comes, or says why there are none. The forge is asked on a thread of its own,
+and so is the fetch a pull request may need, so nothing on screen waits for the network. A
+stretch picked is what the tests mark. A comparison or a pull request is the range the tests are
+seen through, and opens over the code on a screen of its own, titled with the pull request's
+number and title or the two branches: for a pull request, its state, its two branches and its
+author, and its address, which `o` opens; then the files it changes, each opening its diff
+across the range, and, for a pull request, its comments, oldest first, each with its author and
+where it is. `Enter` on a comment on a line opens the file's diff across the range at that line,
+which counts in the pull request's head; a comment on the whole pull request has nowhere to go.
+The breadcrumb names the range: a stretch by its name, a pull request as `#` and its number, a
+comparison as its head against its base.
+
 A repository opens on its end-to-end tests, the first screen of the first focus, with nothing
 under them, unless a file was named on the command line, which opens in the code; this goes for
 a repository that appears later in a directory of checkouts too. `E` or `1` brings them back from

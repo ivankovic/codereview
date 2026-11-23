@@ -306,6 +306,155 @@ fn r_opens_the_review_over_the_code() {
     t.wait_for("files 5");
 }
 
+/// A branch in the scratch repository: `feature`, one commit past `main`, changing the README.
+fn feature_branch(root: &Path) -> (String, String) {
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(&["switch", "-q", "-c", "feature"]);
+    let readme = root.join("README.md");
+    let mut text = std::fs::read_to_string(&readme).unwrap();
+    text.push_str("\nA line the feature adds.\n");
+    std::fs::write(&readme, text).unwrap();
+    git(&["commit", "-q", "-m", "the feature", "--", "README.md"]);
+    git(&["switch", "-q", "main"]);
+    (git(&["rev-parse", "main"]), git(&["rev-parse", "feature"]))
+}
+
+#[test]
+fn a_stretch_picked_from_the_range_picker_is_what_the_tests_mark() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.on_the_tests();
+    t.step("open the range picker and pick the uncommitted work");
+    t.keys("g");
+    t.keys("p");
+    t.wait_for("review range");
+    t.keys("j");
+    t.keys("j");
+    t.keys(ENTER);
+    t.wait_for("marking uncommitted work (w)");
+    let top = t.screen().lines().next().unwrap_or_default().to_string();
+    t.check(
+        "the breadcrumb names the stretch",
+        top.contains("› uncommitted ›"),
+        || top.clone(),
+    );
+}
+
+#[test]
+fn a_branch_is_compared_as_a_pull_request_into_the_current_one() {
+    let mut t = term!(|root: &Path| {
+        feature_branch(root);
+    });
+    t.documents("SPECS.md#Pull requests and comparisons");
+    t.on_the_tests();
+    t.step("open the range picker");
+    t.keys("g");
+    t.keys("p");
+    t.wait_for("review range");
+    t.wait_for("feature against main");
+    t.step("pick the comparison of feature with main");
+    t.keys("j");
+    t.keys("j");
+    t.keys("j");
+    t.keys(ENTER);
+    t.wait_for(" comparison feature against main ");
+    t.wait_for("Files it changes 1");
+    let top = t.screen().lines().next().unwrap_or_default().to_string();
+    t.check(
+        "the breadcrumb names the range",
+        top.contains("› feature against main ›"),
+        || top.clone(),
+    );
+    t.step("open the diff of the file it changes");
+    t.keys(ENTER);
+    t.wait_for("A line the feature adds.");
+}
+
+#[test]
+fn a_pull_request_from_the_forge_opens_with_its_files_and_comments() {
+    let mut t = term!(|root: &Path| {
+        let (base, head) = feature_branch(root);
+        let out = std::process::Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:someone/scratch.git",
+            ])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let git = root.join(".git");
+        let pull = format!(
+            r#"{{"number": 7, "title": "Say what the feature does", "user": {{"login": "ana"}},
+                "state": "open", "draft": false, "merged_at": null,
+                "base": {{"ref": "main", "sha": "{base}"}},
+                "head": {{"ref": "feature", "sha": "{head}"}},
+                "html_url": "https://github.com/someone/scratch/pull/7",
+                "updated_at": "2026-11-20T10:00:00Z"}}"#
+        );
+        std::fs::write(git.join("pulls.json"), format!("[[{pull}]]")).unwrap();
+        std::fs::write(
+            git.join("on-lines.json"),
+            r#"[[{"user": {"login": "bo"}, "body": "Why this line?", "path": "README.md",
+                  "line": 5, "created_at": "2026-11-20T12:00:00Z"}]]"#,
+        )
+        .unwrap();
+        std::fs::write(
+            git.join("on-whole.json"),
+            r#"[[{"user": {"login": "ana"}, "body": "Ready for a look.",
+                  "created_at": "2026-11-20T11:00:00Z"}]]"#,
+        )
+        .unwrap();
+        let gh = git.join("gh");
+        std::fs::write(
+            &gh,
+            "#!/bin/sh\nhere=$(dirname \"$0\")\ncase \"$4\" in\n\
+             */pulls/7/comments*) cat \"$here/on-lines.json\" ;;\n\
+             */issues/7/comments*) cat \"$here/on-whole.json\" ;;\n\
+             */pulls\\?*) cat \"$here/pulls.json\" ;;\n\
+             *) echo \"no answer for $4\" >&2; exit 1 ;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    });
+    t.documents("SPECS.md#Pull requests and comparisons");
+    t.on_the_tests();
+    t.step("open the range picker, which asks the forge for its pull requests");
+    t.keys("g");
+    t.keys("p");
+    t.wait_for("#7 Say what the feature does — ana");
+    t.step("pick the pull request");
+    t.keys("G");
+    t.keys(ENTER);
+    t.wait_for(" pull request #7 Say what the feature does ");
+    t.wait_for("open · feature into main by ana");
+    t.wait_for("Files it changes 1");
+    t.wait_for("ana on the pull request: Ready for a look.");
+    t.wait_for("bo on README.md:5: Why this line?");
+    let top = t.screen().lines().next().unwrap_or_default().to_string();
+    t.check(
+        "the breadcrumb names the pull request",
+        top.contains("› #7 ›"),
+        || top.clone(),
+    );
+    t.step("open the line the comment is on, in the pull request's diff");
+    t.keys("G");
+    t.keys(ENTER);
+    t.wait_for("A line the feature adds.");
+    t.wait_for("-0 +2 hunk 1/1");
+}
+
 #[test]
 fn a_number_goes_to_a_focus_and_q_comes_back_to_the_tests() {
     let mut t = term!();

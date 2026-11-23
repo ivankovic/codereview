@@ -17,10 +17,12 @@ use crate::tui::workspace::Workspace;
 
 mod end_to_end;
 mod explorer;
+mod range;
 mod screens;
 
 use end_to_end::draw_end_to_end;
 use explorer::draw_explorer;
+use range::{draw_range, draw_range_picker};
 use screens::{
     draw_changes, draw_diff, draw_locations, draw_log, draw_notes, draw_review, draw_spec,
 };
@@ -165,6 +167,7 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
         Screen::Locations(_) => draw_locations(frame, app, main),
         Screen::Spec(_) => draw_spec(frame, app, main),
         Screen::EndToEnd(_) => draw_end_to_end(frame, app, main),
+        Screen::Range(_) => draw_range(frame, app, main),
         Screen::Agent => {
             let theme = app.theme.clone();
             let label = app.agent_label();
@@ -183,6 +186,9 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     if app.options.is_some() {
         draw_options(frame, app, area);
+    }
+    if app.range_picker.is_some() {
+        draw_range_picker(frame, app, area);
     }
 }
 
@@ -204,10 +210,7 @@ fn draw_top(frame: &mut Frame, app: &App, area: Rect) {
     left.push(sep());
     left.push(crumbs.branch.clone().into());
     left.push(sep());
-    left.push(Span::styled(
-        app.stretch.name().to_string(),
-        style::accent(theme),
-    ));
+    left.push(Span::styled(app.stretch.title(), style::accent(theme)));
     if !crumbs.commit.is_empty() {
         left.push(sep());
         left.push(Span::styled(crumbs.commit.clone(), style::dim(theme)));
@@ -463,6 +466,7 @@ fn hint_for(screen: &Screen) -> &'static str {
         Screen::Spec(_) => {
             "Enter open/close, diff, test or area  h close fold  / search  c group by  K kind  f files a test names  s stretch  q back"
         }
+        Screen::Range(_) => "Enter diff or comment  o open on the forge  gp another range  q back",
         Screen::EndToEnd(state) if state.main && state.test.is_some() => {
             "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q/Tab the list"
         }
@@ -495,6 +499,10 @@ const HELP: &[(&str, &str)] = &[
     ("", ""),
     ("Everywhere", ""),
     ("?", "this help"),
+    (
+        "gp",
+        "the review range: a stretch, a branch compared with another, or a pull request",
+    ),
     (
         "P",
         "every test by what kind of test it is, and what the last 7 days did to them; in the log, what that commit did",

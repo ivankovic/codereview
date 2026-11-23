@@ -2,8 +2,8 @@
 
 ## One frame, four focuses (PLAN.md phase 7)
 
-- Terminal UI: the breadcrumb's pickers choosing a branch, a pull request or a comparison as the
-  range; Docs rendered rather than shown as source; CSV shown as a table.
+- Terminal UI: Docs rendered rather than shown as source; CSV shown as a table; a forge's
+  comments on the lines of a pull request's diff, not only in its list.
 - Terminal UI: the review's comments in the Code sidebar rather than a screen over the code.
 - Browser UI: the same, with addresses for ranges, pull requests and documents; tabs, the card
   grid and zen removed.

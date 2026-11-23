@@ -315,6 +315,24 @@ pub enum Stretch {
 impl Stretch {
     pub const CHOICES: [Stretch; 3] = [Stretch::Week, Stretch::LastCommit, Stretch::Uncommitted];
 
+    /// What the breadcrumb calls it: its name, or, for a range, which one it is: `#12` for a
+    /// pull request, `feature against main` for a comparison, a commit as its short hash.
+    pub fn title(&self) -> String {
+        let short = |rev: &str| {
+            if rev.len() == 40 && rev.chars().all(|c| c.is_ascii_hexdigit()) {
+                rev[..7].to_string()
+            } else {
+                rev.to_string()
+            }
+        };
+        match self {
+            Stretch::Range { pull: Some(n), .. } => format!("#{n}"),
+            Stretch::Range { base, head, .. } => format!("{} against {}", short(head), short(base)),
+            Stretch::Commit(hash) => format!("commit {}", short(hash)),
+            other => other.name().to_string(),
+        }
+    }
+
     /// The name a front end puts on the button that picks it.
     pub fn name(&self) -> &'static str {
         match self {
@@ -1102,6 +1120,8 @@ mod tests {
         };
         let pinned = span(&session, &range).unwrap();
         assert_eq!(pinned.label, "feature against main");
+        assert_eq!(range.title(), "feature against main");
+        assert_eq!(session.repo.default_branch().as_deref(), Some("main"));
         let first = session.repo.log(None, None, 0, 10).unwrap();
         let first = &first.last().unwrap().hash;
         assert_eq!(
@@ -1132,6 +1152,7 @@ mod tests {
                 .label
                 .starts_with("pull request #3")
         );
+        assert_eq!(pull.title(), "#3");
         let nowhere = Stretch::Range {
             base: "main".into(),
             head: "--all".into(),

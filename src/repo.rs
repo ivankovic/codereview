@@ -598,6 +598,24 @@ impl Repo {
         Ok(parse_branches(&out))
     }
 
+    /// The branch pull requests usually go into: the one `origin/HEAD` names, else `main` or
+    /// `master` where there is one.
+    pub fn default_branch(&self) -> Option<String> {
+        if let Ok(out) = self.git(&["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]) {
+            let name = String::from_utf8_lossy(&out).trim().to_string();
+            if let Some(branch) = name.strip_prefix("origin/") {
+                return Some(branch.to_string());
+            }
+        }
+        ["main", "master"]
+            .into_iter()
+            .find(|b| {
+                self.git(&["rev-parse", "--verify", "-q", &format!("refs/heads/{b}")])
+                    .is_ok()
+            })
+            .map(str::to_string)
+    }
+
     /// The commit `a` and `b` last had in common, where a pull request from `b` into `a` starts.
     pub fn merge_base(&self, a: &str, b: &str) -> Result<Option<String>> {
         Self::check_rev(a)?;
