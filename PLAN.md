@@ -54,6 +54,13 @@ grammar for (Makefiles, for one) fall back to its plain-text line diff.
   browsers see the same numbers because they are looking at the same files, a restart loses
   nothing that was not already on disk, and the rule above survives a feature that would
   otherwise have needed a database.
+- **Forges through their command-line tools**, the way git is through `git`. GitHub is `gh`;
+  another forge is another implementation of the same small interface: list pull requests, one
+  pull request's base, head, title and state, its comments. Without the tool, or signed out of
+  it, there are no forge pull requests and local comparisons are still there. A forge's comments
+  are shown and never written for now; a comment left in a pull request goes in `REVIEW.md` like
+  every other. Nothing from a forge is cached on disk: it is asked again, which keeps the server
+  stateless.
 - **AGPL-3.0-only**, like omnidiff.
 
 ## Phases
@@ -157,6 +164,7 @@ phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
    order: Tests, All tests, Code, Review, Agent. Each is level 0 of a stack of its own; the
    tests are the first, what a repository opens on and what `q` returns to, and code opened
    from a test opens over it. The page's tabs are the same five, the summary under Code.
+   Superseded by phase 7.
 
    **A recording is a file the run left behind**, like every other result. Per test, the run
    leaves a directory under a root the configuration names, matched to the test by its name:
@@ -194,6 +202,32 @@ phase 5 (2026-09-17). Phase 4 is open; TODO.md tracks it.
       opt-in for running on its own is the watched checks' to extend when that is wanted. A plain
       run of the tests keeps the coverage the last counting run left, with its time, so that a
       reviewer is not told nothing ran just because nothing was counted this time.
+
+7. **One frame, four focuses** (decided 2026-11-23, from a sketch). Phase 6 put the tests at
+   the centre but kept the old shape around them: five sections, each a stack of screens, and a
+   page whose tabs, card grid and zen mode each solved one view's problem. Every view now has the
+   same frame, in both front ends, and the old one goes entirely rather than living beside it:
+
+   - **A breadcrumb across the top**: repository address, branch, pull request or comparison,
+     commit. Each part is a picker, so it is also how one gets anywhere in history: another
+     repository, branch, review range or commit.
+   - **A focus picker at the top right**: Tests, Code, Docs, Data. A focus is what the reader is
+     looking at, not a stack of screens; it replaces the five sections. Tests is the default.
+   - **A sidebar on the left**, what the focus holds, and **the main view** beside it showing what
+     is selected there. In Tests the sidebar is the overview and then each test, so a test's own
+     view is the main view rather than a screen pushed over a list. In Code it is the file tree
+     or the open file's outline, and the review's comments; in Docs the repository's Markdown
+     documents and their headings; in Data its datasets: CSV, JSON and the like.
+   - **The sidebar is the one thing that hides**, by one key, in both front ends. The breadcrumb
+     and the focus picker always show, since they say where one is. Zen, and the panels that
+     hid themselves while a file had the focus, go.
+   - **Review and the agent are not focuses.** Comments are where they are left, in the code and
+     in the documents, with the list of them in the Code sidebar. The agent is a panel that opens
+     over whatever focus asked it something, as `a` and `i` already did.
+   - **A pull request is a review range.** Choosing one, or a comparison of two local branches or
+     commits, which is treated as a pull request between them, narrows every focus to it: Code
+     shows its files and diffs, Tests what it did to them. The stretches of phase 6 (uncommitted
+     work, the last commit, the last week) are ranges of the same kind, in the same picker.
 
 ## Layout
 

@@ -1,5 +1,15 @@
 # TODO
 
+## One frame, four focuses (PLAN.md phase 7)
+
+- Core: branches, a comparison of two refs and their merge base in `repo.rs`; `forge.rs` with
+  GitHub through `gh`; the review range a session is narrowed to.
+- Terminal UI: the frame (breadcrumb, focus picker, sidebar, main view) and the Tests focus;
+  then Code, Docs and Data; the five sections, their stacks and auto-hiding panels removed.
+- Browser UI: the same, with addresses for ranges, pull requests and documents; tabs, the card
+  grid and zen removed.
+- End-to-end tests of each, in both harnesses; SPECS.md and the README rewritten as each lands.
+
 - Jump from a blame line to that commit's diff.
 - Language-server backend for symbol navigation, for repositories that have one running.
 - Agent: turn a review the agent writes into REVIEW.md comments automatically when it answers
