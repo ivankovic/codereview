@@ -402,6 +402,9 @@ pub(super) struct SpecQuery {
     /// The pull request's number, when the range is one.
     #[serde(default)]
     pull: Option<u64>,
+    /// What the head is called, where its revision says nothing: a worktree's snapshot.
+    #[serde(default)]
+    label: Option<String>,
     /// The question to group the tests by; `interaction` by default.
     #[serde(default)]
     by: Option<crate::classify::Question>,
@@ -419,6 +422,7 @@ fn stretch_of(q: &SpecQuery) -> Result<crate::spec::Stretch, ApiError> {
             base: base.clone(),
             head: head.clone(),
             pull: q.pull,
+            label: q.label.clone(),
         });
     }
     Ok(match (q.commit.as_deref(), q.stretch.as_deref()) {

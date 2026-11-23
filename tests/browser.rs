@@ -330,6 +330,17 @@ fn every_browser_test_passes_in_a_real_browser() {
     git(&["add", "feature.txt"]);
     git(&["commit", "-qm", "the feature"]);
     git(&["switch", "-q", &main]);
+    // An agent's worktree beside it, with a file it has written and not committed.
+    let agent = work.path().join("agent");
+    git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "agent-work",
+        agent.to_str().unwrap(),
+    ]);
+    std::fs::write(agent.join("agent-notes.txt"), "what the agent is doing\n").unwrap();
     git(&[
         "remote",
         "add",

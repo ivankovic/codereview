@@ -45,6 +45,7 @@ pub mod session;
 pub mod spec;
 pub mod stretch;
 pub mod symbols;
+pub mod targets;
 pub mod testsuite;
 pub mod theme;
 pub mod transcript;

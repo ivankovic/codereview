@@ -122,7 +122,7 @@ tests, and from the tests out. `?` shows every key. The essentials:
 | `R` | the review, over the code: every comment in REVIEW.md |
 | `A` or `Ctrl-a` | the agent panel, over the screen (`A` in the review: address every comment) |
 | `w` `b` | on the tests: the stretch marked; record the tests at its base to compare |
-| `gp` | the review range: a stretch, a branch compared with another, or a pull request |
+| `gp` | review a pull request, a worktree, a branch or a tag, then pick its base; `/` filters |
 | `q` `Esc` | back; on a focus's first screen, the tests; on the tests, quit |
 | `U` | the tests that name the open file |
 | `Tab` | switch between the side panel and the file |

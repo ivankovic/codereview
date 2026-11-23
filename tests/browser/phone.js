@@ -410,7 +410,7 @@ test('the review range is picked from the breadcrumb', async t => {
   await page.waitForSelector('#ranges .choice');
   t.ok('the picker offers the stretches', await page.evaluate(() =>
     [...document.querySelectorAll('#ranges [data-stretch]')].map(c => c.textContent.trim()).join(', ') === 'last 7 days, last commit, uncommitted'));
-  t.ok('each a finger can reach', await page.evaluate(hittable, '#ranges [data-stretch=uncommitted]'));
+  t.ok('each a finger can reach, the list scrolled to it', await t.inView('#ranges [data-stretch=uncommitted]'));
   t.step('pick the uncommitted work');
   await page.click('#ranges [data-stretch=uncommitted]');
   t.ok('the breadcrumb names it', await page.evaluate(() => document.querySelector('#range').textContent.trim() === 'uncommitted' ? true : document.querySelector('#range').textContent));
@@ -451,17 +451,44 @@ test('a branch is compared with the one checked out as a pull request would be',
   const page = t.page;
   await t.open();
   await page.waitForSelector('#tests [data-test]');
-  t.step('open the range picker and pick the feature branch');
+  t.step('open the range picker and find the feature branch');
   await page.click('#range');
-  await page.waitForSelector('#ranges .compare .choice');
-  t.ok('the branch is offered against the one checked out', await page.evaluate(() =>
-    /^feature against \S+$/.test(document.querySelector('#ranges .compare .choice').textContent.trim())));
-  await page.click('#ranges .compare .choice');
+  await page.waitForSelector('#ranges [data-head="feature"]');
+  await page.type('#ranges input.find', 'feat');
+  t.ok('the filter leaves the branch, and not the stretches', await page.evaluate(() =>
+    !document.querySelector('#ranges [data-head="feature"]').hidden && document.querySelector('#ranges [data-stretch=week]').hidden));
+  t.step('pick it, then what to compare it with');
+  await page.click('#ranges [data-head="feature"]');
+  await page.waitForFunction(() => /Compare feature with/.test(document.querySelector('#ranges').textContent));
+  t.ok('the default branch is offered first, and says why', await page.evaluate(() =>
+    /the default branch/.test(document.querySelector('#ranges .choice').textContent)));
+  await page.click('#ranges .choice');
   await page.waitForSelector('.range .files .item');
   t.ok('it opens as a comparison of the two', await page.evaluate(() =>
     /comparison\s*feature against/.test(document.querySelector('#content .panelhead').textContent)));
   t.ok('changing only what the branch did', await page.evaluate(() =>
     document.querySelectorAll('.range .files .item').length === 1));
+}, { docs: ['SPECS.md#Pull requests and comparisons'] });
+
+test('a worktree is reviewed as it is on disk, against its own last commit', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('#tests [data-test]');
+  t.step('open the range picker and pick the agent\'s worktree');
+  await page.click('#range');
+  await page.waitForSelector('#ranges [data-head="worktree agent"]');
+  await page.click('#ranges [data-head="worktree agent"]');
+  await page.waitForFunction(() => /Compare worktree agent with/.test(document.querySelector('#ranges').textContent));
+  t.ok('its own last commit is offered first, for its uncommitted work alone', await page.evaluate(() =>
+    /its last commit, agent-work\s*its uncommitted work alone/.test(document.querySelector('#ranges .choice').textContent)));
+  t.step('pick it');
+  await page.click('#ranges .choice');
+  await page.waitForSelector('.range .files .item');
+  t.ok('the range is its uncommitted work, an untracked file included', await page.evaluate(() =>
+    [...document.querySelectorAll('.range .files .item')].map(i => i.textContent.trim()).join(' | ') === 'Aagent-notes.txt' ? true
+      : [...document.querySelectorAll('.range .files .item')].map(i => i.textContent.trim()).join(' | ')));
+  t.ok('and the breadcrumb names it', await page.evaluate(() =>
+    /^worktree agent, uncommitted against [0-9a-f]{7}$/.test(document.querySelector('#range').textContent.trim()) ? true : document.querySelector('#range').textContent));
 }, { docs: ['SPECS.md#Pull requests and comparisons'] });
 
 test('the Docs and Data focuses hold the documents and the datasets', async t => {
@@ -681,7 +708,9 @@ test('a stretch says what no end-to-end test ran, and how each test ran before i
   await page.click('#tests .row.overview');
   await page.waitForSelector('.stretch-card h3');
   await page.click('.stretch-card [data-stretch=uncommitted]');
-  await page.waitForSelector('.stretch-card .unran .item', { timeout: 30000 });
+  // The card of the last 7 days is redrawn as the uncommitted work's: wait for that one.
+  await page.waitForFunction(() => /uncommitted/.test(document.querySelector('.stretch-card h3')?.textContent || '')
+    && document.querySelector('.stretch-card .unran .item'), { timeout: 30000 });
   t.ok('it says how much changed code no end-to-end test ran', await page.evaluate(() => {
     const head = document.querySelector('.stretch-card .unran-head').textContent.replace(/\s+/g, ' ').trim();
     const row = document.querySelector('.stretch-card .unran .item').textContent.replace(/\s+/g, ' ').trim();
@@ -782,6 +811,9 @@ async function run(browser, spec, server) {
     /// and `hittable` rightly refuses anything off screen.
     async inView(sel) {
       await page.evaluate(s => document.querySelector(s)?.scrollIntoView({ block: 'center' }), sel);
+      // Scrolling down puts the header away, which moves everything under it up by its
+      // height over a fraction of a second: a finger taps once the page has stopped moving.
+      await pause(300);
       return page.evaluate(hittable, sel);
     },
   };
@@ -864,6 +896,24 @@ const HOLD = 600;
 function paced(page) {
   const click = page.click.bind(page);
   page.click = async (selector, options) => {
+    // A person scrolls to what they mean to tap, and taps once the page has stopped: the
+    // header goes away as the page scrolls down, moving everything under it, and a tap made
+    // in the same instant as the scroll lands on whatever moved under the finger.
+    await page.$eval(selector, el => {
+      const r = el.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > innerHeight) el.scrollIntoView({ block: 'center' });
+    }).catch(() => {});
+    // Until it has stopped moving: two looks a beat apart that agree, or a second at most.
+    let last = null;
+    for (let i = 0; i < 10; i++) {
+      const at = await page.$eval(selector, el => {
+        const r = el.getBoundingClientRect();
+        return `${Math.round(r.top)},${Math.round(r.left)}`;
+      }).catch(() => null);
+      if (at === null || at === last) break;
+      last = at;
+      await pause(100);
+    }
     const box = await page.$eval(selector, el => {
       const r = el.getBoundingClientRect();
       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };

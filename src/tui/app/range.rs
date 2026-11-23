@@ -14,7 +14,8 @@ use anyhow::Context;
 
 use super::*;
 use crate::forge::{ForgeComment, PullRequest};
-use crate::repo::Repo;
+use crate::repo::{Repo, Worktree};
+use crate::targets::{Base, Head, Heads};
 
 /// One row of the range picker.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,18 +24,42 @@ pub enum RangeChoice {
     /// Something said that leads nowhere: that the forge is being asked, or why it cannot be.
     Note(String),
     Stretch(Stretch),
-    /// `head` compared with `base`, as a pull request from one into the other.
-    Compare {
-        base: String,
-        head: String,
-    },
     Pull(PullRequest),
+    /// Something to review, which the next step compares with a base. For a worktree, what
+    /// it has checked out, and whether it is this one.
+    Head(Head, Option<Worktree>),
+    /// What to compare the head with.
+    Base(Base),
 }
 
 impl RangeChoice {
     fn selectable(&self) -> bool {
         !matches!(self, RangeChoice::Heading(_) | RangeChoice::Note(_))
     }
+
+    /// What the filter matches against.
+    fn text(&self) -> String {
+        match self {
+            RangeChoice::Heading(_) | RangeChoice::Note(_) => String::new(),
+            RangeChoice::Stretch(s) => s.name().to_string(),
+            RangeChoice::Pull(pr) => format!("#{} {} {}", pr.number, pr.title, pr.author),
+            RangeChoice::Head(h, w) => format!(
+                "{} {}",
+                h.label(),
+                w.as_ref()
+                    .and_then(|w| w.branch.clone())
+                    .unwrap_or_default()
+            ),
+            RangeChoice::Base(b) => b.label.clone(),
+        }
+    }
+}
+
+/// Where the picker is: choosing what to review, or what to compare a head with.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Step {
+    Head,
+    Base(Head),
 }
 
 /// What the forge said about its pull requests, or that it has not yet.
@@ -47,10 +72,17 @@ enum Pulls {
 }
 
 pub struct RangePicker {
+    pub step: Step,
     pub rows: ListState<RangeChoice>,
     pulls: Pulls,
-    /// The comparisons, worked out when the picker opened.
-    compare: Vec<(String, String)>,
+    /// What can be reviewed, read when the picker opened.
+    heads: Heads,
+    /// What the chosen head can be compared with, in the second step.
+    bases: Vec<Base>,
+    /// What the rows are narrowed to, as typed after `/`.
+    pub filter: String,
+    /// Whether keys are going into the filter.
+    pub filtering: bool,
 }
 
 /// One row of a range's own screen.
@@ -103,20 +135,13 @@ impl App {
     /// The range picker, with the forge asked for its pull requests while it is up.
     pub(super) fn open_range_picker(&mut self) {
         let repo = &self.session.repo;
-        let current = repo.head_label();
-        let branches = repo.branches().unwrap_or_default();
-        let mut compare: Vec<(String, String)> = branches
-            .iter()
-            .filter(|b| !b.current)
-            .take(20)
-            .map(|b| (current.clone(), b.name.clone()))
-            .collect();
-        if let Some(default) = repo.default_branch()
-            && default != current
-            && branches.iter().any(|b| b.name == current)
-        {
-            compare.insert(0, (default, current.clone()));
-        }
+        let heads = match crate::targets::heads(repo) {
+            Ok(h) => h,
+            Err(e) => {
+                self.error(format!("{e:#}"));
+                return;
+            }
+        };
         let pulls = match crate::forge::for_repo(repo) {
             Some(_) => {
                 let (tx, rx) = channel();
@@ -137,25 +162,20 @@ impl App {
             None => Pulls::NoForge,
         };
         let mut picker = RangePicker {
+            step: Step::Head,
             rows: ListState::new(Vec::new()),
             pulls,
-            compare,
+            heads,
+            bases: Vec::new(),
+            filter: String::new(),
+            filtering: false,
         };
-        picker.rows = ListState::new(picker_rows(&picker));
+        picker.rebuild();
         let here = picker
             .rows
             .items
             .iter()
-            .position(|r| match (r, &self.stretch) {
-                (RangeChoice::Stretch(s), current) => s == current,
-                (
-                    RangeChoice::Compare { base, head },
-                    Stretch::Range {
-                        base: b, head: h, ..
-                    },
-                ) => base == b && head == h,
-                _ => false,
-            });
+            .position(|r| matches!(r, RangeChoice::Stretch(s) if *s == self.stretch));
         picker.rows.cursor = here.unwrap_or(0);
         super::end_to_end::settle(&mut picker.rows, 1, RangeChoice::selectable);
         self.range_picker = Some(picker);
@@ -166,6 +186,26 @@ impl App {
         let Some(picker) = &mut self.range_picker else {
             return;
         };
+        // Typing after `/` narrows the rows; Enter keeps the filter and goes back to moving,
+        // Esc drops it.
+        if picker.filtering {
+            match key.code {
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    picker.filter.push(c)
+                }
+                KeyCode::Backspace => {
+                    picker.filter.pop();
+                }
+                KeyCode::Enter | KeyCode::Down => picker.filtering = false,
+                KeyCode::Esc => {
+                    picker.filtering = false;
+                    picker.filter.clear();
+                }
+                _ => return,
+            }
+            picker.rebuild();
+            return;
+        }
         let before = picker.rows.cursor;
         if picker.rows.handle_nav(key, height) {
             let direction = picker.rows.cursor as isize - before as isize;
@@ -177,21 +217,53 @@ impl App {
             return;
         }
         match key.code {
+            KeyCode::Char('/') => {
+                picker.filtering = true;
+                picker.rebuild();
+            }
+            // From the second step, back to the first; from the first, away.
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace
+                if matches!(picker.step, Step::Base(_)) =>
+            {
+                picker.step = Step::Head;
+                picker.filter.clear();
+                picker.rebuild();
+            }
             KeyCode::Esc | KeyCode::Char('q') => self.range_picker = None,
             KeyCode::Enter => {
                 let choice = picker.rows.current().cloned();
-                self.range_picker = None;
                 match choice {
-                    Some(RangeChoice::Stretch(stretch)) => self.set_stretch(stretch),
-                    Some(RangeChoice::Compare { base, head }) => {
-                        let stretch = Stretch::Range {
-                            base,
-                            head,
-                            pull: None,
-                        };
-                        self.open_range(stretch, None, Ok(Vec::new()));
+                    Some(RangeChoice::Stretch(stretch)) => {
+                        self.range_picker = None;
+                        self.set_stretch(stretch);
                     }
-                    Some(RangeChoice::Pull(pr)) => self.fetch_pull(pr),
+                    Some(RangeChoice::Pull(pr)) => {
+                        self.range_picker = None;
+                        self.fetch_pull(pr);
+                    }
+                    Some(RangeChoice::Head(head, _)) => {
+                        match crate::targets::bases(&self.session.repo, &head) {
+                            Ok(bases) => {
+                                if let Some(picker) = &mut self.range_picker {
+                                    picker.bases = bases;
+                                    picker.step = Step::Base(head);
+                                    picker.filter.clear();
+                                    picker.rebuild();
+                                }
+                            }
+                            Err(e) => self.error(format!("{e:#}")),
+                        }
+                    }
+                    Some(RangeChoice::Base(base)) => {
+                        let Step::Base(head) = picker.step.clone() else {
+                            return;
+                        };
+                        self.range_picker = None;
+                        match crate::targets::range(&self.session.repo, &head, &base.rev) {
+                            Ok(stretch) => self.open_range(stretch, None, Ok(Vec::new())),
+                            Err(e) => self.error(format!("{e:#}")),
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -236,11 +308,7 @@ impl App {
             self.asking.pulls = None;
             if let Some(picker) = &mut self.range_picker {
                 picker.pulls = Pulls::Answered(answer);
-                let at = picker.rows.current().cloned();
-                picker.rows = ListState::new(picker_rows(picker));
-                if let Some(at) = at.and_then(|c| picker.rows.items.iter().position(|r| *r == c)) {
-                    picker.rows.cursor = at;
-                }
+                picker.rebuild();
             }
             changed = true;
         }
@@ -301,12 +369,9 @@ impl App {
                 None => rows.extend((0..comments.len()).map(RangeRow::Comment)),
             }
         }
-        let label = match &stretch {
-            Stretch::Range { base, head, .. } => match &pull {
-                Some(pr) => format!("{} into {}", pr.head_ref, pr.base_ref),
-                None => format!("{head} against {base}"),
-            },
-            other => other.title(),
+        let label = match &pull {
+            Some(pr) => format!("{} into {}", pr.head_ref, pr.base_ref),
+            None => stretch.title(),
         };
         let mut rows = ListState::new(rows);
         super::end_to_end::settle(&mut rows, 1, RangeRow::selectable);
@@ -397,33 +462,86 @@ impl App {
 }
 
 /// The picker's rows: the stretches, the comparisons, and what the forge said.
-fn picker_rows(picker: &RangePicker) -> Vec<RangeChoice> {
-    let mut rows = vec![RangeChoice::Heading("Stretches".into())];
-    rows.extend(Stretch::CHOICES.iter().cloned().map(RangeChoice::Stretch));
-    rows.push(RangeChoice::Heading("Comparisons".into()));
-    if picker.compare.is_empty() {
-        rows.push(RangeChoice::Note("There is no other branch.".into()));
-    }
-    rows.extend(
-        picker
-            .compare
-            .iter()
-            .map(|(base, head)| RangeChoice::Compare {
-                base: base.clone(),
-                head: head.clone(),
-            }),
-    );
-    rows.push(RangeChoice::Heading("Pull requests".into()));
-    match &picker.pulls {
-        Pulls::NoForge => rows.push(RangeChoice::Note(
-            "origin is not on GitHub, so there are none to ask for.".into(),
-        )),
-        Pulls::Asking => rows.push(RangeChoice::Note("asking GitHub…".into())),
-        Pulls::Answered(Err(e)) => rows.push(RangeChoice::Note(e.clone())),
-        Pulls::Answered(Ok(pulls)) if pulls.is_empty() => {
-            rows.push(RangeChoice::Note("None is open.".into()))
+impl RangePicker {
+    /// The rows for the step the picker is on, narrowed to the filter, the cursor kept on
+    /// what it was on where that is still there.
+    fn rebuild(&mut self) {
+        let at = self.rows.current().cloned();
+        let mut rows = match &self.step {
+            Step::Head => self.head_rows(),
+            Step::Base(_) => {
+                let mut rows = vec![RangeChoice::Heading("Against".into())];
+                rows.extend(self.bases.iter().cloned().map(RangeChoice::Base));
+                rows
+            }
+        };
+        if !self.filter.is_empty() {
+            let wanted = self.filter.to_lowercase();
+            rows.retain(|r| !r.selectable() || r.text().to_lowercase().contains(&wanted));
+            // A heading left with nothing under it says nothing.
+            let mut kept = Vec::new();
+            for (i, r) in rows.iter().enumerate() {
+                let empty_heading = matches!(r, RangeChoice::Heading(_))
+                    && !rows[i + 1..]
+                        .iter()
+                        .take_while(|n| !matches!(n, RangeChoice::Heading(_)))
+                        .any(RangeChoice::selectable);
+                if !empty_heading && !matches!(r, RangeChoice::Note(_)) {
+                    kept.push(r.clone());
+                }
+            }
+            rows = kept;
+            if rows.is_empty() {
+                rows.push(RangeChoice::Note(format!(
+                    "Nothing matches “{}”.",
+                    self.filter
+                )));
+            }
         }
-        Pulls::Answered(Ok(pulls)) => rows.extend(pulls.iter().cloned().map(RangeChoice::Pull)),
+        self.rows = ListState::new(rows);
+        if let Some(at) = at.and_then(|c| self.rows.items.iter().position(|r| *r == c)) {
+            self.rows.cursor = at;
+        }
+        super::end_to_end::settle(&mut self.rows, 1, RangeChoice::selectable);
     }
-    rows
+
+    /// What can be reviewed: the forge's pull requests, every worktree as it is on disk, the
+    /// branches local and remote, the tags, and the stretches of this checkout.
+    fn head_rows(&self) -> Vec<RangeChoice> {
+        let mut rows = vec![RangeChoice::Heading("Pull requests".into())];
+        match &self.pulls {
+            Pulls::NoForge => rows.push(RangeChoice::Note(
+                "origin is not on GitHub, so there are none to ask for.".into(),
+            )),
+            Pulls::Asking => rows.push(RangeChoice::Note("asking GitHub…".into())),
+            Pulls::Answered(Err(e)) => rows.push(RangeChoice::Note(e.clone())),
+            Pulls::Answered(Ok(pulls)) if pulls.is_empty() => {
+                rows.push(RangeChoice::Note("None is open.".into()))
+            }
+            Pulls::Answered(Ok(pulls)) => rows.extend(pulls.iter().cloned().map(RangeChoice::Pull)),
+        }
+        rows.push(RangeChoice::Heading(
+            "Worktrees, as they are on disk".into(),
+        ));
+        rows.extend(
+            self.heads
+                .worktrees
+                .iter()
+                .map(|(h, w)| RangeChoice::Head(h.clone(), Some(w.clone()))),
+        );
+        for (title, heads) in [
+            ("Branches", &self.heads.branches),
+            ("Remote branches", &self.heads.remote_branches),
+            ("Tags", &self.heads.tags),
+        ] {
+            if heads.is_empty() {
+                continue;
+            }
+            rows.push(RangeChoice::Heading(title.into()));
+            rows.extend(heads.iter().cloned().map(|h| RangeChoice::Head(h, None)));
+        }
+        rows.push(RangeChoice::Heading("Stretches of this checkout".into()));
+        rows.extend(Stretch::CHOICES.iter().cloned().map(RangeChoice::Stretch));
+        rows
+    }
 }

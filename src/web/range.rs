@@ -1,57 +1,76 @@
-//! The review range, for the page: what can be picked as one — the stretches, a local branch
-//! compared with another, the forge's pull requests — and one pull request or comparison's
-//! files and comments. A forge is a network away, so it is asked without holding the
-//! session's lock, which every other request for the repository waits on.
+//! The review range, for the page: what can be reviewed — a worktree as it is on disk, a
+//! branch, a tag, a forge's pull request — what to compare it with, and one range's files and
+//! comments. The choices are `targets`', the same the terminal UI offers. A forge is a network
+//! away, so it is asked without holding the session's lock, which every other request for the
+//! repository waits on.
 
 use super::*;
 use crate::forge::{ForgeComment, PullRequest};
 use crate::repo::Repo;
 use crate::spec::Stretch;
+use crate::targets::{Base, Head, Heads};
 
 #[derive(Serialize)]
 pub(super) struct Choices {
-    /// The comparisons: each other local branch against the one checked out, most recently
-    /// committed to first, and the checked-out one against the default branch.
-    compare: Vec<Compare>,
+    #[serde(flatten)]
+    heads: Heads,
     /// Whether `origin` is on a forge the tool can ask for pull requests.
     forge: Option<String>,
 }
 
-#[derive(Serialize)]
-struct Compare {
-    base: String,
-    head: String,
-}
-
-/// What can be picked as the review range, other than the stretches the page knows.
+/// What can be reviewed, other than the stretches the page knows and the forge's pull
+/// requests, which `/pulls` asks for.
 pub(super) async fn get_choices(state: Ctx) -> ApiResult<Choices> {
     let r = with_session(&state, |s| {
         let repo = &s.repo;
-        let current = repo.head_label();
-        let branches = repo.branches()?;
-        let mut compare: Vec<Compare> = branches
-            .iter()
-            .filter(|b| !b.current)
-            .take(20)
-            .map(|b| Compare {
-                base: current.clone(),
-                head: b.name.clone(),
-            })
-            .collect();
-        if let Some(default) = repo.default_branch()
-            && default != current
-            && branches.iter().any(|b| b.name == current)
-        {
-            compare.insert(
-                0,
-                Compare {
-                    base: default,
-                    head: current,
-                },
-            );
-        }
-        let forge = crate::forge::for_repo(repo).map(|f| f.name().to_string());
-        Ok(Choices { compare, forge })
+        Ok(Choices {
+            heads: crate::targets::heads(repo)?,
+            forge: crate::forge::for_repo(repo).map(|f| f.name().to_string()),
+        })
+    })
+    .await?;
+    Ok(Json(r))
+}
+
+/// What a head can be compared with, the likeliest first.
+pub(super) async fn post_bases(state: Ctx, Json(head): Json<Head>) -> ApiResult<Vec<Base>> {
+    let r = with_session(&state, move |s| crate::targets::bases(&s.repo, &head)).await?;
+    Ok(Json(r))
+}
+
+#[derive(Deserialize)]
+pub(super) struct Pick {
+    head: Head,
+    base: String,
+}
+
+#[derive(Serialize)]
+pub(super) struct Picked {
+    base: String,
+    /// The head's revision: a worktree's is the snapshot of it taken now.
+    head: String,
+    /// What to call it, where its revision says nothing.
+    label: Option<String>,
+    title: String,
+}
+
+/// A head and a base, made a review range: a worktree taken as it is on disk now.
+pub(super) async fn post_pick(state: Ctx, Json(p): Json<Pick>) -> ApiResult<Picked> {
+    let r = with_session(&state, move |s| {
+        let stretch = crate::targets::range(&s.repo, &p.head, &p.base)?;
+        let title = stretch.title();
+        let Stretch::Range {
+            base, head, label, ..
+        } = stretch
+        else {
+            anyhow::bail!("not a range");
+        };
+        Ok(Picked {
+            base,
+            head,
+            label,
+            title,
+        })
     })
     .await?;
     Ok(Json(r))
@@ -136,6 +155,9 @@ pub(super) struct RangeQuery {
     head: String,
     #[serde(default)]
     pull: Option<u64>,
+    /// What the head is called, where its revision says nothing.
+    #[serde(default)]
+    label: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -156,6 +178,7 @@ pub(super) async fn get_range(state: Ctx, Query(q): Query<RangeQuery>) -> ApiRes
             base: q.base,
             head: q.head,
             pull: q.pull,
+            label: q.label,
         };
         let span = crate::spec::span(s, &stretch)?;
         let to = span.to.clone().unwrap_or_default();

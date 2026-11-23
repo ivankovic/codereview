@@ -709,6 +709,8 @@ fn router(state: AppState) -> Router {
         .route("/e2e/test", get(api::get_e2e_test))
         .route("/stretch", get(api::get_stretch))
         .route("/range/choices", get(range::get_choices))
+        .route("/range/bases", post(range::post_bases))
+        .route("/range/pick", post(range::post_pick))
         .route("/range", get(range::get_range))
         .route("/pulls", get(range::get_pulls))
         .route("/pull", post(range::post_pull))

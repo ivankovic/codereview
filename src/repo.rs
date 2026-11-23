@@ -139,6 +139,45 @@ impl std::fmt::Display for NotARepository {
 
 impl std::error::Error for NotARepository {}
 
+/// A worktree of the repository: where it is, what it has checked out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Worktree {
+    pub path: PathBuf,
+    /// The branch checked out there; `None` when it is detached.
+    pub branch: Option<String>,
+    /// Its HEAD's commit; empty before its first.
+    pub head: String,
+    /// Whether it is the one this repository was opened in.
+    pub current: bool,
+}
+
+/// `git worktree list --porcelain`, read: a block per worktree, blank lines between.
+pub fn parse_worktrees(bytes: &[u8]) -> Vec<Worktree> {
+    String::from_utf8_lossy(bytes)
+        .split("\n\n")
+        .filter_map(|block| {
+            let mut path = None;
+            let mut head = String::new();
+            let mut branch = None;
+            for line in block.lines() {
+                if let Some(p) = line.strip_prefix("worktree ") {
+                    path = Some(PathBuf::from(p));
+                } else if let Some(h) = line.strip_prefix("HEAD ") {
+                    head = h.to_string();
+                } else if let Some(b) = line.strip_prefix("branch ") {
+                    branch = Some(b.trim_start_matches("refs/heads/").to_string());
+                }
+            }
+            Some(Worktree {
+                path: path?,
+                branch,
+                head,
+                current: false,
+            })
+        })
+        .collect()
+}
+
 /// A local branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Branch {
@@ -625,6 +664,130 @@ impl Repo {
             "refs/heads",
         ])?;
         Ok(parse_branches(&out))
+    }
+
+    /// Every worktree of this repository, the main checkout first, as git lists them.
+    pub fn worktrees(&self) -> Result<Vec<Worktree>> {
+        let out = self.git(&["worktree", "list", "--porcelain"])?;
+        let here = self
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| self.root.clone());
+        let mut list = parse_worktrees(&out);
+        for w in &mut list {
+            w.current = w.path.canonicalize().unwrap_or_else(|_| w.path.clone()) == here;
+        }
+        Ok(list)
+    }
+
+    /// The remote-tracking branches, most recently committed to first, without the `HEAD`
+    /// each remote has pointing at one of them.
+    pub fn remote_branches(&self) -> Result<Vec<Branch>> {
+        let out = self.git(&[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(HEAD)%00%(refname:short)%00%(objectname)%00%(committerdate:unix)",
+            "refs/remotes",
+        ])?;
+        Ok(parse_branches(&out)
+            .into_iter()
+            .filter(|b| !b.name.ends_with("/HEAD") && b.name.contains('/'))
+            .collect())
+    }
+
+    /// The tags, most recent first, at most `limit`.
+    pub fn tags(&self, limit: usize) -> Result<Vec<String>> {
+        let count = format!("--count={limit}");
+        let out = self.git(&[
+            "for-each-ref",
+            "--sort=-creatordate",
+            &count,
+            "--format=%(refname:short)",
+            "refs/tags",
+        ])?;
+        Ok(String::from_utf8_lossy(&out)
+            .lines()
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// The worktree at `path` as it is on disk, uncommitted work and untracked files
+    /// included, as a commit whose parent is its HEAD: something a diff can be taken against
+    /// like any commit. It is made in the object store alone, through an index of its own, so
+    /// the worktree, its index and every branch are left as they were; with nothing
+    /// uncommitted it is HEAD itself.
+    pub fn snapshot(&self, path: &Path) -> Result<String> {
+        let wt = Repo::open(path)?;
+        if wt.common_dir()?.canonicalize()? != self.common_dir()?.canonicalize()? {
+            bail!("{} is not a worktree of this repository", path.display());
+        }
+        let head = wt.resolve("HEAD")?;
+        // Dated as its HEAD is, so that the same work on the same commit is the same snapshot
+        // whenever it is taken, and a page asking again finds what it found before.
+        let when = format!(
+            "@{} +0000",
+            String::from_utf8_lossy(&wt.git(&["log", "-1", "--format=%ct", "HEAD"])?).trim()
+        );
+        let scratch = self.common_dir()?.join("codereview");
+        std::fs::create_dir_all(&scratch)
+            .with_context(|| format!("cannot make {}", scratch.display()))?;
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let index = scratch.join(format!("snapshot-index-{}-{nanos}", std::process::id()));
+        let with_index = |args: &[&str]| -> Result<Vec<u8>> {
+            let output = git_command(&wt.root)
+                .args(args)
+                .env("GIT_INDEX_FILE", &index)
+                .env("GIT_AUTHOR_NAME", "codereview")
+                .env("GIT_AUTHOR_EMAIL", "codereview@localhost")
+                .env("GIT_COMMITTER_NAME", "codereview")
+                .env("GIT_COMMITTER_EMAIL", "codereview@localhost")
+                .env("GIT_AUTHOR_DATE", &when)
+                .env("GIT_COMMITTER_DATE", &when)
+                .output()
+                .with_context(|| format!("cannot run git {}", args.join(" ")))?;
+            if !output.status.success() {
+                bail!("git {} failed: {}", args.join(" "), said(&output.stderr));
+            }
+            Ok(output.stdout)
+        };
+        // Another worktree inside this one (an agent's, under `.claude/worktrees`, say) is
+        // a repository of its own, not part of this one's work, whatever `.gitignore` says.
+        let nested: Vec<String> = self
+            .worktrees()?
+            .into_iter()
+            .filter_map(|w| {
+                let rel = w.path.strip_prefix(&wt.root).ok()?;
+                (!rel.as_os_str().is_empty()).then(|| format!(":(exclude){}", rel.display()))
+            })
+            .collect();
+        let made = (|| -> Result<String> {
+            with_index(&["read-tree", "HEAD"])?;
+            let mut add = vec!["add", "-A", "--", "."];
+            add.extend(nested.iter().map(String::as_str));
+            with_index(&add)?;
+            let tree = String::from_utf8_lossy(&with_index(&["write-tree"])?)
+                .trim()
+                .to_string();
+            if tree == wt.resolve_tree("HEAD")? {
+                return Ok(head.clone());
+            }
+            let message = format!("uncommitted work in {}", path.display());
+            let commit = with_index(&["commit-tree", &tree, "-p", &head, "-m", &message])?;
+            Ok(String::from_utf8_lossy(&commit).trim().to_string())
+        })();
+        let _ = std::fs::remove_file(&index);
+        made
+    }
+
+    fn resolve_tree(&self, rev: &str) -> Result<String> {
+        Self::check_rev(rev)?;
+        let spec = format!("{rev}^{{tree}}");
+        let out = self.git(&["rev-parse", "--verify", &spec])?;
+        Ok(String::from_utf8_lossy(&out).trim().to_string())
     }
 
     /// The branch pull requests usually go into: the one `origin/HEAD` names, else `main` or

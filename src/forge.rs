@@ -107,6 +107,7 @@ pub fn review_range(repo: &Repo, forge: &dyn Forge, pr: &PullRequest) -> Result<
         base: pr.base_hash.clone(),
         head: pr.head_hash.clone(),
         pull: Some(pr.number),
+        label: None,
     })
 }
 
@@ -454,7 +455,8 @@ mod tests {
             Stretch::Range {
                 base,
                 head,
-                pull: Some(7)
+                pull: Some(7),
+                label: None
             }
         );
     }

@@ -309,6 +309,10 @@ pub enum Stretch {
         base: String,
         head: String,
         pull: Option<u64>,
+        /// What the head is called where its revision says nothing: a worktree's uncommitted
+        /// work is a snapshot's hash, and `worktree ui-frame, uncommitted` to a reader.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
     },
 }
 
@@ -327,6 +331,11 @@ impl Stretch {
         };
         match self {
             Stretch::Range { pull: Some(n), .. } => format!("#{n}"),
+            Stretch::Range {
+                base,
+                label: Some(label),
+                ..
+            } => format!("{label} against {}", short(base)),
             Stretch::Range { base, head, .. } => format!("{} against {}", short(head), short(base)),
             Stretch::Commit(hash) => format!("commit {}", short(hash)),
             other => other.name().to_string(),
@@ -403,14 +412,20 @@ pub fn span(session: &Session, stretch: &Stretch) -> Result<Span> {
                 Some(commit.hash),
             )
         }
-        Stretch::Range { base, head, pull } => {
+        Stretch::Range {
+            base,
+            head,
+            pull,
+            label,
+        } => {
             let tip = repo.resolve(head)?;
             let from = repo
                 .merge_base(base, &tip)?
                 .with_context(|| format!("{base} and {head} have no commit in common"))?;
-            let label = match pull {
-                Some(n) => format!("pull request #{n}, {} into {}", short(head), short(base)),
-                None => format!("{head} against {base}"),
+            let label = match (pull, label) {
+                (Some(n), _) => format!("pull request #{n}, {} into {}", short(head), short(base)),
+                (None, Some(label)) => format!("{label} against {}", short(base)),
+                (None, None) => format!("{head} against {base}"),
             };
             (label, Some(from), Some(tip))
         }
@@ -1117,6 +1132,7 @@ mod tests {
             base: "main".into(),
             head: "feature".into(),
             pull: None,
+            label: None,
         };
         let pinned = span(&session, &range).unwrap();
         assert_eq!(pinned.label, "feature against main");
@@ -1145,6 +1161,7 @@ mod tests {
             base: "main".into(),
             head: "feature".into(),
             pull: Some(3),
+            label: None,
         };
         assert!(
             span(&session, &pull)
@@ -1157,6 +1174,7 @@ mod tests {
             base: "main".into(),
             head: "--all".into(),
             pull: None,
+            label: None,
         };
         assert!(span(&session, &nowhere).is_err());
     }

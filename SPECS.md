@@ -598,12 +598,24 @@ view shows both recordings side by side and the steps in pairs; choosing a pair 
 
 ## Pull requests and comparisons
 
-A pull request is a stretch too, and so is a comparison of two local branches or commits, which
-is treated as a pull request from one into the other. Either covers what the head has that the
-base does not: from the commit the two last had in common to the head's tip, so commits the base
-gained after the head left it are not in it. Its label names the pull request's number, or the
-two sides as they were given. A side git cannot read as a commit, or two sides with nothing in
-common, is refused.
+A pull request is a stretch too, and so is a comparison of a head with a base, which is treated
+as a pull request from one into the other. Either covers what the head has that the base does
+not: from the commit the two last had in common to the head's tip, so commits the base gained
+after the head left it are not in it. Its label names the pull request's number, or the head —
+as it was given, or as what it is when its revision says nothing, a worktree's — against the
+base. A side git cannot read as a commit, or two sides with nothing in common, is refused.
+
+What can be reviewed, besides the stretches and the forge's pull requests: every worktree of the
+repository, this one included, as it is on disk; every local branch and every remote-tracking
+branch, most recently committed to first; and the last thirty tags. A worktree as it is on disk
+is its uncommitted work and its untracked files, not ignored ones, over its last commit, taken as
+a commit made in the object store alone: through an index of its own, so that the worktree, its
+index and every branch stay as they were, and dated as its last commit is, so that the same work
+is the same commit each time it is taken. Another worktree inside it, an agent's say, is not
+part of it whatever ignores it or not. A worktree with nothing uncommitted is its last commit.
+What a head is offered to be compared with, the likeliest first: for a worktree, its own last
+commit, which leaves its uncommitted work alone; the default branch, unless it is the head; then
+every other local branch, the one checked out here said to be, and the tags.
 
 Pull requests come from the forge `origin` is on, through the forge's own command-line tool: for
 GitHub, `gh`, whichever account it is signed in to, or the program `CODEREVIEW_GH` names. Without
@@ -668,16 +680,20 @@ is closed. A list of places to go, once one is picked, is closed with it. `a` an
 agent something, open its panel over the screen they were pressed on, and `q` there comes back to
 it.
 
-`gp` opens the range picker over the screen: the three stretches; each other local branch
-compared with the one checked out, most recently committed to first, at most twenty, and the
-checked-out branch compared with the default one — the branch `origin/HEAD` names, else `main` or
-`master` — when it is another; and the forge's open pull requests, each with its number, title,
-author and whether it is a draft, which the picker says it is asking for while it does and fills
-in when the answer comes, or says why there are none. The forge is asked on a thread of its own,
-and so is the fetch a pull request may need, so nothing on screen waits for the network. A
-stretch picked is what the tests mark. A comparison or a pull request is the range the tests are
-seen through, and opens over the code on a screen of its own, titled with the pull request's
-number and title or the two branches: for a pull request, its state, its two branches and its
+`gp` opens the range picker over the screen, in two steps. First, what to review: the forge's
+open pull requests, each with its number, title, author and whether it is a draft, which the
+picker says it is asking for while it does and fills in when the answer comes, or says why there
+are none; the worktrees as they are on disk, each with what it has checked out and this one
+marked; the branches, the remote branches and the tags; and the three stretches of this checkout,
+the cursor on the one marked. `/` narrows the list to what matches what is typed, headings with
+nothing left under them gone; `Enter` keeps the filter and `Esc` drops it. A stretch picked is
+what the tests mark, and a pull request is a head and a base already. Anything else goes on to
+the second step, titled with it: what to compare it with, the likeliest first, each saying why
+it is offered where it has a reason; `Esc` there goes back to the first. The forge is asked on a
+thread of its own, and so is the fetch a pull request may need, so nothing on screen waits for
+the network. A comparison or a pull request is the range the tests are seen through, and opens
+over the code on a screen of its own, titled with the pull request's number and title or with
+the head against the base: for a pull request, its state, its two branches and its
 author, and its address, which `o` opens; then the files it changes, each opening its diff
 across the range, and, for a pull request, its comments, oldest first, each with its author and
 where it is. `Enter` on a comment on a line opens the file's diff across the range at that line,
@@ -891,13 +907,14 @@ the panel, with the button that asks the agent and one to the tests it has. On a
 and what is selected in it take turns: the panel first, the overview at `tests`, and a button on
 what is selected goes back to the panel.
 
-The breadcrumb's range is a button that opens the range picker under it, as the terminal UI's
-`gp` does: the three stretches; each other local branch compared with the one checked out, and the
-checked-out one with the default branch when it is another; and the forge's open pull requests,
-each with its number, title and author, which it says it is asking for while it does, or why
-there are none. A stretch picked is what the tests are seen through, as its button on the
-overview is. A comparison or a pull request picked is the range — the overview, the
-specification and a test's own view all ask about it, and the stretch buttons gain it as a fourth
+The breadcrumb's range is a button that opens the range picker under it, in the terminal UI's two
+steps and with its choices: what to review — the pull requests, which it says it is asking for
+while it does, or why there are none; the worktrees as they are on disk; the branches, the remote
+branches and the tags; the stretches — and then what to compare it with, the likeliest first,
+each with why. A field at its top narrows either list as it is typed into. A stretch picked is
+what the tests are seen through, as its button on the overview is. A comparison or a pull
+request picked is the range — the overview, the specification and a test's own view all ask
+about it, and the stretch buttons gain it as a fourth
 — and opens in the code at `range`, with its two sides or the pull request's number: for a pull
 request its state, its two branches, its author and a link to it on the forge, its commits
 fetched first when the repository lacks them; then the files it changes, each opening its diff

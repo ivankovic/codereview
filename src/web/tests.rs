@@ -980,9 +980,36 @@ fn a_branch_compared_through_the_api() {
     let (status, body) = request(addr, "GET", "/api/range/choices", t, None);
     assert_eq!(status, 200, "{body}");
     let choices: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(choices["compare"][0]["head"], "feature", "{body}");
-    assert_eq!(choices["compare"][0]["base"], current.as_str(), "{body}");
+    let branches: Vec<_> = choices["branches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["name"].as_str().unwrap())
+        .collect();
+    assert!(branches.contains(&"feature"), "{body}");
+    assert_eq!(choices["worktrees"].as_array().unwrap().len(), 1, "{body}");
     assert!(choices["forge"].is_null(), "no remote, no forge: {body}");
+
+    let head = serde_json::json!({ "kind": "branch", "name": "feature" }).to_string();
+    let (status, body) = request(addr, "POST", "/api/range/bases", t, Some(&head));
+    assert_eq!(status, 200, "{body}");
+    let bases: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        bases[0]["rev"],
+        current.as_str(),
+        "the default branch first: {body}"
+    );
+    let pick =
+        serde_json::json!({ "head": { "kind": "branch", "name": "feature" }, "base": current })
+            .to_string();
+    let (status, body) = request(addr, "POST", "/api/range/pick", t, Some(&pick));
+    assert_eq!(status, 200, "{body}");
+    let picked: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        picked["title"],
+        format!("feature against {current}").as_str(),
+        "{body}"
+    );
 
     let range = format!("base={current}&head=feature");
     let (status, body) = request(addr, "GET", &format!("/api/range?{range}"), t, None);

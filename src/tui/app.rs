@@ -117,7 +117,7 @@ impl<T> ListState<T> {
 pub use end_to_end::{E2eRow, EndToEndState, Player};
 pub use focus::{Explorer, Focus};
 pub use one_test::{EndToEndTestState, TestRow};
-pub use range::{RangeChoice, RangePicker, RangeRow, RangeState};
+pub use range::{RangeChoice, RangePicker, RangeRow, RangeState, Step};
 pub use screens::{
     ChangesState, DiffState, Hit, LocationsState, LogState, NotesState, ReviewState, SpecRow,
     SpecState, spec_rows,

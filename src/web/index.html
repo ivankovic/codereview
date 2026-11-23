@@ -61,6 +61,8 @@ header #range::after { content: ' ▾'; color: var(--dim); }
 #ranges .choice:hover, #ranges .choice.on { background: var(--cursor); }
 #ranges .choice .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #ranges .note { padding: 4px 12px; color: var(--dim); }
+#ranges input.find { width: calc(100% - 24px); margin: 4px 12px 2px; }
+#ranges .choice .dim { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The focus picker: what the reader is looking at, the one on screen lit. */
 header .focus { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex: none; }
 header .focus button { border: none; border-radius: 0; background: none; padding: 3px 12px; }
@@ -1910,7 +1912,7 @@ const STRETCHES = [['week', 'last 7 days'], ['last', 'last commit'], ['uncommitt
 // What a query names as the review range: one of the stretches, or the pull request or
 // comparison picked from the breadcrumb, which is the stretch called `range`.
 function stretchParams(stretch) {
-  if (stretch === 'range' && state.range) return { base: state.range.base, head: state.range.head, pull: state.range.pull || undefined };
+  if (stretch === 'range' && state.range) return { base: state.range.base, head: state.range.head, pull: state.range.pull || undefined, label: state.range.label };
   return { stretch: stretch === 'range' ? 'week' : stretch };
 }
 
@@ -3278,49 +3280,104 @@ async function showNotes() {
 
 // ----- the review range -----------------------------------------------------------------------
 
-// The picker under the breadcrumb's range: the stretches, each other branch compared with the
-// one checked out, and the forge's open pull requests, asked for while it is up.
+// What a head is called in the picker.
+const headName = h => h.kind === 'worktree' ? 'worktree ' + h.name : h.name;
+
+// The picker under the breadcrumb's range, in two steps. First what to review: the forge's
+// pull requests, every worktree as it is on disk, the branches local and remote, the tags,
+// and the stretches of this checkout. Then, for a head, what to compare it with, the likeliest
+// first. A field at the top narrows either list as it is typed into.
 async function openRanges() {
   const box = $('#ranges');
   if (!box.hidden) { box.hidden = true; return; }
   const now = state.specStretch || 'week';
-  const pick = (k, name) => `<div class="choice${now === k ? ' on' : ''}" data-stretch="${k}"><span class="label">${esc(name)}</span></div>`;
-  box.innerHTML = `<h4>Stretches</h4>${STRETCHES.map(([k, name]) => pick(k, name)).join('')}
-    <h4>Comparisons</h4><div class="compare"><div class="note">reading the branches…</div></div>
-    <h4>Pull requests</h4><div class="pulls"><div class="note">…</div></div>`;
+  box.innerHTML = `<input class="find" placeholder="filter: a branch, a worktree, a pull request…">
+    <div class="steps"><div class="note">reading what there is to review…</div></div>`;
   box.hidden = false;
-  box.querySelectorAll('[data-stretch]').forEach(el => el.onclick = () => {
-    box.hidden = true;
-    state.specStretch = el.dataset.stretch;
-    state.stretchReport = null;
-    showRangeName();
-    if (state.view === 'e2e' || state.view === 'spec') rerenderCurrentView();
-    msg('marking ' + stretchName(state.specStretch));
-  });
+  const find = box.querySelector('input.find');
+  const list = box.querySelector('.steps');
+  // Narrows what is shown to what matches, and hides a heading left with nothing under it.
+  const narrow = () => {
+    const q = find.value.trim().toLowerCase();
+    list.querySelectorAll('.choice').forEach(c => { c.hidden = !!q && !c.textContent.toLowerCase().includes(q); });
+    list.querySelectorAll('section').forEach(s => { s.hidden = !!q && !s.querySelector('.choice:not([hidden])'); });
+  };
+  find.oninput = narrow;
+  if (!TOUCH) find.focus();
+  const section = (title, rows) => {
+    const s = document.createElement('section');
+    s.innerHTML = `<h4>${esc(title)}</h4>`;
+    rows.forEach(r => s.appendChild(r));
+    list.appendChild(s);
+    return s;
+  };
+  const choice = (html, onPick, on = false) => {
+    const el = document.createElement('div');
+    el.className = 'choice' + (on ? ' on' : '');
+    el.innerHTML = html;
+    el.onclick = e => { e.stopPropagation(); onPick(); };
+    return el;
+  };
+  const note = text => { const el = document.createElement('div'); el.className = 'note'; el.textContent = text; return el; };
+
   let choices;
   try { choices = await api('/range/choices'); } catch (e) { return fail(e); }
-  const compare = box.querySelector('.compare');
-  compare.innerHTML = choices.compare.length ? '' : '<div class="note">There is no other branch.</div>';
-  for (const c of choices.compare) {
-    const el = document.createElement('div');
-    el.className = 'choice';
-    el.innerHTML = `<span class="label"><b>${esc(c.head)}</b> <span class="dim">against ${esc(c.base)}</span></span>`;
-    el.onclick = () => { box.hidden = true; showRange({ base: c.base, head: c.head }); };
-    compare.appendChild(el);
+  list.innerHTML = '';
+  const pulls = section('Pull requests', [note(choices.forge ? `asking ${choices.forge}…` : 'origin is not on GitHub, so there are none to ask for.')]);
+  pulls.classList.add('pulls');
+  section('Worktrees, as they are on disk', choices.worktrees.map(([h, w]) => choice(
+    `<span class="label">${esc(headName(h))}</span><span class="dim">${esc(w.branch || w.head.slice(0, 7))}${w.current ? ' · this one' : ''}</span>`,
+    () => pickBase(h))));
+  for (const [title, heads] of [['Branches', choices.branches], ['Remote branches', choices.remote_branches], ['Tags', choices.tags]]) {
+    if (heads.length) section(title, heads.map(h => choice(`<span class="label">${esc(h.name)}</span>`, () => pickBase(h))));
   }
-  const pulls = box.querySelector('.pulls');
-  if (!choices.forge) { pulls.innerHTML = '<div class="note">origin is not on GitHub, so there are none to ask for.</div>'; return; }
-  pulls.innerHTML = `<div class="note">asking ${esc(choices.forge)}…</div>`;
-  let list;
-  try { list = await api('/pulls'); } catch (e) { pulls.innerHTML = `<div class="note">${esc(e.message)}</div>`; return; }
-  pulls.innerHTML = list.length ? '' : '<div class="note">None is open.</div>';
-  for (const pr of list) {
-    const el = document.createElement('div');
-    el.className = 'choice';
-    el.innerHTML = `<span class="mono">#${pr.number}</span><span class="label">${esc(pr.title)}</span><span class="dim">${esc(pr.author)}${pr.draft ? ', a draft' : ''}</span>`;
-    el.onclick = () => { box.hidden = true; showRange({ pull: pr.number }); };
-    pulls.appendChild(el);
+  section('Stretches of this checkout', STRETCHES.map(([k, name]) => {
+    const el = choice(`<span class="label">${esc(name)}</span>`, () => {
+      box.hidden = true;
+      state.specStretch = k;
+      state.stretchReport = null;
+      showRangeName();
+      if (state.view === 'e2e' || state.view === 'spec') rerenderCurrentView();
+      msg('marking ' + stretchName(state.specStretch));
+    }, now === k);
+    el.dataset.stretch = k;
+    return el;
+  }));
+  list.querySelectorAll('section').forEach(s => s.querySelectorAll('.choice').forEach(c => {
+    const label = c.querySelector('.label');
+    if (label && !c.dataset.stretch) c.dataset.head = label.textContent;
+  }));
+  narrow();
+
+  // The second step: what to compare `head` with.
+  async function pickBase(head) {
+    let bases;
+    try { bases = await api('/range/bases', { body: head }); } catch (e) { return fail(e); }
+    find.value = '';
+    find.placeholder = `compare ${headName(head)} with…`;
+    list.innerHTML = '';
+    section(`Compare ${headName(head)} with`, bases.map(b => choice(
+      `<span class="label">${esc(b.label)}</span>${b.why ? `<span class="dim">${esc(b.why)}</span>` : ''}`,
+      async () => {
+        box.hidden = true;
+        let picked;
+        try { picked = await api('/range/pick', { body: { head, base: b.rev } }); } catch (e) { return fail(e); }
+        showRange({ base: picked.base, head: picked.head, label: picked.label || undefined });
+      })));
+    list.querySelector('.choice')?.classList.add('on');
+    if (!TOUCH) find.focus();
   }
+
+  if (!choices.forge) return;
+  let found;
+  try { found = await api('/pulls'); } catch (e) { pulls.querySelector('.note').textContent = e.message; return; }
+  pulls.querySelector('.note').remove();
+  if (!found.length) pulls.appendChild(note('None is open.'));
+  for (const pr of found) {
+    pulls.appendChild(choice(`<span class="mono">#${pr.number}</span><span class="label">${esc(pr.title)}</span><span class="dim">${esc(pr.author)}${pr.draft ? ', a draft' : ''}</span>`,
+      () => { box.hidden = true; showRange({ pull: pr.number }); }));
+  }
+  narrow();
 }
 $('#range').onclick = e => { e.stopPropagation(); openRanges().catch(fail); };
 document.addEventListener('click', e => { if (!e.target.closest('#ranges')) $('#ranges').hidden = true; });
@@ -3341,10 +3398,11 @@ async function showRange(params) {
       commentsError = r.comments_error;
       base = r.base; head = r.head;
     }
-    const route = routes.range(params.pull ? { pull: params.pull } : { base, head });
+    const label = params.pull ? undefined : params.label;
+    const route = routes.range(params.pull ? { pull: params.pull } : { base, head, label });
     navigate(route);
-    const r = await api('/range?' + qs({ base, head, pull: params.pull }));
-    state.range = { base, head, pull: params.pull ? Number(params.pull) : null, title: pull ? '#' + pull.number : `${head} against ${base}` };
+    const r = await api('/range?' + qs({ base, head, pull: params.pull, label }));
+    state.range = { base, head, label, pull: params.pull ? Number(params.pull) : null, title: pull ? '#' + pull.number : r.label };
     state.specStretch = 'range';
     state.stretchReport = null;
     showRangeName();
@@ -3443,7 +3501,7 @@ function rerenderCurrentView() {
     case 'notes': return showNotes();
     case 'agent': return showAgent();
     case 'diff': return state.diff && renderDiff();
-    case 'range': return state.range && showRange(state.range.pull ? { pull: state.range.pull } : { base: state.range.base, head: state.range.head });
+    case 'range': return state.range && showRange(state.range.pull ? { pull: state.range.pull } : { base: state.range.base, head: state.range.head, label: state.range.label });
     default:
       setTabs('explore');
       return renderFile();

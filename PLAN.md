@@ -264,6 +264,8 @@ src/agent.rs       the agent as the front ends see it, either backend
 src/fakes.rs       in-process stand-ins for both backends, tests only
 src/forge.rs       pull requests from the forge origin is on, through its own command-line
                    tool: GitHub through gh
+src/targets.rs     what can be reviewed (worktrees as they are on disk, branches, tags) and
+                   what each is worth comparing against
 src/tui.rs, src/tui/  Ratatui front end (feature `tui`); workspace.rs holds one app per repository,
                    app/focus.rs the four focuses, their stacks and explorers, app/range.rs the
                    review range and a pull request's screen, outline.rs the side panel listing

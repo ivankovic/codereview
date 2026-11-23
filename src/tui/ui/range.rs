@@ -2,7 +2,7 @@
 //! pull request or a comparison.
 
 use super::*;
-use crate::tui::app::{RangeChoice, RangeRow};
+use crate::tui::app::{RangeChoice, RangeRow, Step};
 
 /// A pull request or a comparison: what it is, the files it changes, and its comments.
 pub(super) fn draw_range(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -95,14 +95,20 @@ pub(super) fn draw_range(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(lines), list);
 }
 
-/// The range picker over the screen: the stretches, the comparisons and the pull requests.
+/// The range picker over the screen. First what to review — the pull requests, the worktrees
+/// as they are on disk, the branches, the tags, the stretches — then what to compare it with;
+/// `/` narrows either list to what matches.
 pub(super) fn draw_range_picker(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.theme.clone();
     let Some(picker) = &mut app.range_picker else {
         return;
     };
-    let width = area.width.min(90);
-    let height = area.height.min(picker.rows.items.len() as u16 + 2).max(5);
+    let width = area.width.min(96);
+    let filter_row = u16::from(picker.filtering || !picker.filter.is_empty());
+    let height = area
+        .height
+        .min(picker.rows.items.len() as u16 + 2 + filter_row)
+        .max(6);
     let popup = Rect {
         x: (area.width - width) / 2,
         y: (area.height - height) / 2,
@@ -110,12 +116,31 @@ pub(super) fn draw_range_picker(frame: &mut Frame, app: &mut App, area: Rect) {
         height,
     };
     frame.render_widget(Clear, popup);
+    let title = match &picker.step {
+        Step::Head => " review what? Enter picks · / filters · Esc closes ".to_string(),
+        Step::Base(head) => format!(
+            " compare {} with what? Enter picks · / filters · Esc back ",
+            head.label()
+        ),
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" review range (Enter picks, Esc closes) ")
+        .title(title)
         .border_style(style::accent(&theme));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
+    let [filter_area, inner] =
+        Layout::vertical([Constraint::Length(filter_row), Constraint::Fill(1)]).areas(inner);
+    if filter_row > 0 {
+        let cursor = if picker.filtering { "▏" } else { "" };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" / ", style::accent(&theme)),
+                Span::raw(format!("{}{cursor}", picker.filter)),
+            ])),
+            filter_area,
+        );
+    }
     let inner_width = inner.width as usize;
     picker.rows.ensure_visible(inner.height as usize);
     let dim = style::dim(&theme);
@@ -135,10 +160,31 @@ pub(super) fn draw_range_picker(frame: &mut Frame, app: &mut App, area: Rect) {
                 Line::from(Span::styled(clip(&format!("  {text}"), inner_width), dim))
             }
             RangeChoice::Stretch(s) => Line::from(clip(&format!("  {}", s.name()), inner_width)),
-            RangeChoice::Compare { base, head } => Line::from(vec![
-                Span::raw(clip(&format!("  {head}"), inner_width / 2)),
-                Span::styled(format!(" against {base}"), dim),
-            ]),
+            RangeChoice::Head(head, worktree) => {
+                let lead = format!("  {}", head.label());
+                let tail = match worktree {
+                    Some(w) => format!(
+                        " {}{}",
+                        w.branch
+                            .clone()
+                            .unwrap_or_else(|| w.head.chars().take(7).collect()),
+                        if w.current { " · this one" } else { "" }
+                    ),
+                    None => String::new(),
+                };
+                let room = inner_width.saturating_sub(tail.chars().count());
+                Line::from(vec![Span::raw(clip(&lead, room)), Span::styled(tail, dim)])
+            }
+            RangeChoice::Base(base) => {
+                let lead = format!("  {}", base.label);
+                let tail = base
+                    .why
+                    .as_ref()
+                    .map(|w| format!(" — {w}"))
+                    .unwrap_or_default();
+                let room = inner_width.saturating_sub(tail.chars().count());
+                Line::from(vec![Span::raw(clip(&lead, room)), Span::styled(tail, dim)])
+            }
             RangeChoice::Pull(pr) => {
                 let lead = format!("  #{} ", pr.number);
                 let tail = format!(

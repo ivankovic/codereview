@@ -335,7 +335,7 @@ fn a_stretch_picked_from_the_range_picker_is_what_the_tests_mark() {
     t.step("open the range picker and pick the uncommitted work");
     t.keys("g");
     t.keys("p");
-    t.wait_for("review range");
+    t.wait_for("review what?");
     t.keys("j");
     t.keys("j");
     t.keys(ENTER);
@@ -349,21 +349,64 @@ fn a_stretch_picked_from_the_range_picker_is_what_the_tests_mark() {
 }
 
 #[test]
+fn a_worktree_s_uncommitted_work_is_reviewed_against_its_last_commit() {
+    let mut t = term!(|root: &Path| {
+        // An agent's worktree beside the checkout, with work it has not committed.
+        let agent = root.with_file_name(format!(
+            "{}-agent",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        let out = std::process::Command::new("git")
+            .args(["worktree", "add", "-q", "-b", "agent-work"])
+            .arg(&agent)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        std::fs::write(agent.join("src/review.rs"), "pub fn parse_review() {}\n").unwrap();
+        std::fs::write(agent.join("NEW.txt"), "the agent wrote this\n").unwrap();
+    });
+    t.documents("SPECS.md#Pull requests and comparisons");
+    t.on_the_tests();
+    t.step("open the range picker, and find the agent's worktree");
+    t.keys("g");
+    t.keys("p");
+    t.wait_for("Worktrees, as they are on disk");
+    t.keys("/");
+    t.keys("-agent");
+    t.keys(ENTER);
+    t.wait_for("agent-work");
+    t.step("pick it, and compare it with its own last commit, offered first");
+    t.keys(ENTER);
+    t.wait_for("its last commit, agent-work — its uncommitted work alone");
+    t.keys(ENTER);
+    t.wait_for("-agent, uncommitted against");
+    t.wait_for("Files it changes 2");
+    t.wait_for("NEW.txt");
+    t.step("open the new file's diff");
+    t.keys(ENTER);
+    t.wait_for("the agent wrote this");
+}
+
+#[test]
 fn a_branch_is_compared_as_a_pull_request_into_the_current_one() {
     let mut t = term!(|root: &Path| {
         feature_branch(root);
     });
     t.documents("SPECS.md#Pull requests and comparisons");
     t.on_the_tests();
-    t.step("open the range picker");
+    t.step("open the range picker, and find the feature branch");
     t.keys("g");
     t.keys("p");
-    t.wait_for("review range");
-    t.wait_for("feature against main");
-    t.step("pick the comparison of feature with main");
-    t.keys("j");
-    t.keys("j");
-    t.keys("j");
+    t.wait_for("review what?");
+    t.keys("/");
+    t.keys("feature");
+    t.keys(ENTER);
+    t.wait_for("  feature");
+    t.step("pick it, and compare it with the default branch, offered first");
+    t.keys(ENTER);
+    t.wait_for("compare feature with what?");
+    t.wait_for("main — the default branch, where pull requests go");
     t.keys(ENTER);
     t.wait_for(" comparison feature against main ");
     t.wait_for("Files it changes 1");
@@ -434,8 +477,10 @@ fn a_pull_request_from_the_forge_opens_with_its_files_and_comments() {
     t.keys("g");
     t.keys("p");
     t.wait_for("#7 Say what the feature does — ana");
-    t.step("pick the pull request");
-    t.keys("G");
+    t.step("pick the pull request, which is a base and a head already");
+    t.keys("/");
+    t.keys("#7");
+    t.keys(ENTER);
     t.keys(ENTER);
     t.wait_for(" pull request #7 Say what the feature does ");
     t.wait_for("open · feature into main by ana");
