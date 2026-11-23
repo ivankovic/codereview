@@ -81,7 +81,7 @@ test('a repository opens on its end-to-end tests, each with its recording', asyn
   await t.open();
   await page.waitForSelector('.e2e .e2e-test');
   t.ok('it opens on the end-to-end tests', await page.evaluate(() =>
-    document.querySelector('header .tabs [data-view=e2e]').classList.contains('active') && location.hash === '#/'), await page.evaluate(() => location.hash));
+    document.querySelector('header .focus [data-focus=tests]').classList.contains('active') && location.hash === '#/'), await page.evaluate(() => location.hash));
   t.ok('which say how many there are, and how many failed', await page.evaluate(() => {
     const head = document.querySelector('.e2e .e2e-head').textContent.replace(/\s+/g, ' ').trim();
     return /^2 end-to-end tests of \d+ tests · 1 failed/.test(head) ? true : head;
@@ -316,45 +316,91 @@ test('the tests read as sentences, folded by how they interact and by file', asy
   t.ok('and goes back', await page.evaluate(() => location.hash === '#/summary'), await page.evaluate(() => location.hash));
 });
 
-test('the tabs are Tests, All tests, Code, Review and Agent, and the page opens on Tests', async t => {
+test('the focuses are Tests, Code, Docs and Data, and the page opens on Tests', async t => {
   const page = t.page;
   await t.open();
   await page.waitForSelector('.e2e .e2e-test');
-  // Tests first: what the repository demonstrably does is the top of the page, and the code
-  // is a tab further along, not the floor everything falls back to.
-  t.ok('the tabs are in that order', await page.evaluate(() => {
-    const names = [...document.querySelectorAll('header .tabs button')].map(b => b.firstChild.textContent.trim()).join(', ');
-    return names === 'Tests, All tests, Code, Review, Agent' ? true : names;
+  t.ok('the focus picker is in that order', await page.evaluate(() => {
+    const names = [...document.querySelectorAll('header .focus button')].map(b => b.textContent.trim()).join(', ');
+    return names === 'Tests, Code, Docs, Data' ? true : names;
   }));
   t.ok('Tests is lit, at the root address', await page.evaluate(() =>
-    document.querySelector('header .tabs [data-group=tests]').classList.contains('active') && location.hash === '#/'), await page.evaluate(() => location.hash));
-  t.ok('and no other is', await page.evaluate(() => document.querySelectorAll('header .tabs button.active').length === 1));
-  // Five tabs across a phone: each must be where a finger lands, and say its whole name.
-  for (const group of ['tests', 'spec', 'code', 'review', 'agent']) {
-    t.ok(`the ${group} tab can be tapped`, await page.evaluate(hittable, `header .tabs [data-group=${group}]`));
+    document.querySelector('header .focus [data-focus=tests]').classList.contains('active') && location.hash === '#/'), await page.evaluate(() => location.hash));
+  t.ok('and no other is', await page.evaluate(() => document.querySelectorAll('header .focus button.active').length === 1));
+  // Four focuses in a phone's header: each must be where a finger lands, and say its name.
+  for (const focus of ['tests', 'code', 'docs', 'data']) {
+    t.ok(`the ${focus} focus can be tapped`, await page.evaluate(hittable, `header .focus [data-focus=${focus}]`));
   }
-  t.ok('no tab name is cut short', await page.evaluate(() => {
-    const cut = [...document.querySelectorAll('header .tabs button')].filter(b => b.scrollWidth > b.clientWidth + 1).map(b => b.textContent.trim());
+  t.ok('no focus name is cut short', await page.evaluate(() => {
+    const cut = [...document.querySelectorAll('header .focus button')].filter(b => b.scrollWidth > b.clientWidth + 1).map(b => b.textContent.trim());
     return cut.length ? 'cut: ' + cut.join(', ') : true;
   }));
+  t.ok('there is no tab bar along the bottom', await page.evaluate(() => {
+    const at = document.elementFromPoint(innerWidth / 2, innerHeight - 10);
+    return !at || !at.closest('header') ? true : 'the header is at the bottom edge';
+  }));
   t.step('tap All tests');
-  await page.click('header .tabs [data-group=spec]');
+  await page.click('#subnav [data-sub=spec]');
   await page.waitForSelector('.spec');
-  t.ok('All tests is every test, a tab of its own', await page.evaluate(() =>
-    location.hash.startsWith('#/spec') && document.querySelector('header .tabs [data-group=spec]').classList.contains('active') && document.querySelector('#subnav').hidden), await page.evaluate(() => location.hash));
+  t.ok('every test is a view the tests hold', await page.evaluate(() =>
+    location.hash.startsWith('#/spec') && document.querySelector('header .focus [data-focus=tests]').classList.contains('active')), await page.evaluate(() => location.hash));
 }, { docs: ['SPECS.md#Browser UI'] });
 
-test('the Code tab lands on the summary, with the files, the changes and the log beside it', async t => {
+test('the breadcrumb names the branch and the range the tests are seen through', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('.e2e');
+  t.ok('the branch is in the header', await page.evaluate(hittable, '#branch'));
+  t.ok('and so is the range', await page.evaluate(() => document.querySelector('#range').textContent.trim() === 'last 7 days' ? true : document.querySelector('#range').textContent));
+  t.ok('the header is two rows: the breadcrumb, Agent and the menu, then the focus picker', await page.evaluate(() => {
+    const mid = el => { const r = document.querySelector(el).getBoundingClientRect(); return Math.round((r.top + r.bottom) / 2); };
+    const row = [mid('#branch'), mid('#agentbtn'), mid('#more')];
+    return Math.max(...row) - Math.min(...row) < 8 && mid('header .focus') > Math.max(...row) ? true : `rows at ${row}, focus at ${mid('header .focus')}`;
+  }));
+  t.ok('neither is under the focus picker', await page.evaluate(() => {
+    const a = document.querySelector('header .crumbs').getBoundingClientRect(), b = document.querySelector('header .focus').getBoundingClientRect();
+    const apart = a.right <= b.left + 1 || b.right <= a.left + 1 || a.bottom <= b.top + 1 || b.bottom <= a.top + 1;
+    return apart ? true : 'the breadcrumb overlaps the focus picker';
+  }));
+}, { docs: ['SPECS.md#Browser UI'] });
+
+test('the Docs and Data focuses hold the documents and the datasets', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('.e2e');
+  t.step('tap Docs');
+  await page.click('header .focus [data-focus=docs]');
+  await page.waitForSelector('#tree .row');
+  t.ok('Docs is a tree of the Markdown documents', await page.evaluate(() => {
+    const files = [...document.querySelectorAll('#tree [data-file]')].map(r => r.dataset.file).join(' ');
+    return files === 'README.md' ? true : files;
+  }));
+  t.ok('at an address of its own', await page.evaluate(() => location.hash.endsWith('/docs')), await page.evaluate(() => location.hash));
+  t.step('tap Data');
+  await page.click('header .focus [data-focus=data]');
+  await page.waitForFunction(() => location.hash.endsWith('/data'));
+  t.ok('Data is a tree of the datasets', await page.evaluate(() => {
+    const files = [...document.querySelectorAll('#tree [data-file]')].map(r => r.dataset.file).join(' ');
+    return files === 'data/scores.csv' ? true : files;
+  }));
+  t.step('open the dataset');
+  await page.click('#tree [data-file="data/scores.csv"]');
+  await page.waitForSelector('table.code td.n');
+  t.ok('it opens in the Data focus', await page.evaluate(() => location.hash.includes('in=data')
+    && document.querySelector('header .focus [data-focus=data]').classList.contains('active')), await page.evaluate(() => location.hash));
+}, { docs: ['SPECS.md#Browser UI'] });
+
+test('the Code focus lands on the summary, with the files, changes, log and review beside it', async t => {
   const page = t.page;
   await t.open();
   await page.waitForSelector('.e2e');
   t.step('tap Code');
-  await page.click('header .tabs [data-group=code]');
+  await page.click('header .focus [data-focus=code]');
   await page.waitForSelector('.overview .summary');
   t.ok('Code opens on the summary', await page.evaluate(() => location.hash === '#/summary'), await page.evaluate(() => location.hash));
-  t.ok('Code holds the summary, the files, the changes and the log', await page.evaluate(() => {
+  t.ok('Code holds the summary, the files, the changes, the log, the comments and the notes', await page.evaluate(() => {
     const subs = [...document.querySelectorAll('#subnav button')].map(b => b.dataset.sub).join(' ');
-    return subs === 'overview explore changes log' ? true : subs;
+    return subs === 'overview explore changes log review notes' ? true : subs;
   }));
   t.ok('and each can be tapped', await page.evaluate(hittable, '#subnav [data-sub=log]'));
   t.step('tap Files');
@@ -362,31 +408,23 @@ test('the Code tab lands on the summary, with the files, the changes and the log
   await page.waitForSelector('#tree .row');
   t.ok('Files with nothing open is the tree', await page.evaluate(() => location.hash.endsWith('/tree')), await page.evaluate(() => location.hash));
   t.step('tap Tests, then Code again');
-  await page.click('header .tabs [data-group=tests]');
+  await page.click('header .focus [data-focus=tests]');
   await page.waitForSelector('.e2e');
-  await page.click('header .tabs [data-group=code]');
+  await page.click('header .focus [data-focus=code]');
   await page.waitForSelector('#tree .row');
   t.ok('Code goes back to the view it was last on', await page.evaluate(() => location.hash.endsWith('/tree')), await page.evaluate(() => location.hash));
 }, { docs: ['SPECS.md#Browser UI'] });
 
-test('the agent is a tab of its own', async t => {
+test('the agent opens from the header, over what was on screen', async t => {
   const page = t.page;
   await t.open();
   await page.waitForSelector('.e2e');
   t.step('tap Agent');
-  await page.click('header .tabs [data-group=agent]');
+  await page.click('#agentbtn');
   await page.waitForSelector('#agent');
   t.ok('the agent opens at its own address', await page.evaluate(() => location.hash === '#/agent'), await page.evaluate(() => location.hash));
-  t.ok('Agent is lit, and Review is not', await page.evaluate(() =>
-    document.querySelector('header .tabs [data-group=agent]').classList.contains('active')
-    && !document.querySelector('header .tabs [data-group=review]').classList.contains('active')));
-  t.step('tap Review');
-  await page.click('header .tabs [data-group=review]');
-  await page.waitForSelector('#subnav [data-sub=notes]');
-  t.ok('Review holds the comments and the notes, and not the agent', await page.evaluate(() => {
-    const subs = [...document.querySelectorAll('#subnav button')].map(b => b.dataset.sub).join(' ');
-    return subs === 'review notes' ? true : subs;
-  }));
+  t.ok('the tests are still the focus', await page.evaluate(() =>
+    document.querySelector('header .focus [data-focus=tests]').classList.contains('active')));
 }, { docs: ['SPECS.md#Browser UI'] });
 
 test('the header menu refreshes, and Files opens the tree', async t => {
@@ -436,7 +474,7 @@ test('a file keeps its header and menu in reach while it scrolls', async t => {
   t.ok('and the rest is behind one button', await page.evaluate(hittable, '#content .panelhead [data-act=menu]'));
   t.step('open the file menu');
   await page.click('#content .panelhead [data-act=menu]');
-  t.ok('the file menu opens', await page.evaluate(hittable, '#content .acts [data-act=zen]'));
+  t.ok('the file menu opens', await page.evaluate(hittable, '#content .acts [data-act=wrap]'));
   // A header that scrolls away with the code takes the button that opens that menu with it.
   t.step('scroll down the file');
   await page.evaluate(() => { document.querySelector('#content .acts').classList.remove('open'); $('#content').scrollTop = 600; });
@@ -470,22 +508,18 @@ test('writing a comment takes over the screen', async t => {
   await pause(200);
 }, { docs: ['SPECS.md#Browser UI'] });
 
-test('zen leaves the code and one way back', async t => {
+test('a backslash hides the side panel and brings it back', async t => {
   const page = t.page;
-  await t.open('#/file/long.rs');
-  await page.waitForSelector('table.code td.n');
-  t.step('choose Zen from the file menu');
-  await page.click('#content .panelhead [data-act=menu]');
-  await page.click('#content .acts [data-act=zen]');
-  const gone = await page.evaluate(() => ['header', 'footer', '#content .panelhead']
-    .filter(s => { const el = document.querySelector(s); return el && el.getBoundingClientRect().height > 0; }));
-  t.ok('zen takes the frame away', gone.length === 0, 'still showing: ' + gone.join(', '));
-  t.ok('and leaves the way back', await page.evaluate(hittable, '#zen'));
-  t.ok('the code is still there', await page.evaluate(() => !!document.querySelector('table.code td.c')));
-  t.step('leave zen');
-  await page.click('#zen');
-  t.ok('the frame comes back', await page.evaluate(hittable, '#content .panelhead [data-act=menu]'));
-});
+  await t.open('#/tree');
+  await page.waitForSelector('#tree .row');
+  t.ok('the tree is there', await page.evaluate(hittable, '#tree .row'));
+  t.step('press \\');
+  await page.keyboard.press('Backslash');
+  t.ok('the side panel is gone', await page.evaluate(() => document.querySelector('#tree').getBoundingClientRect().width === 0));
+  t.step('press \\ again');
+  await page.keyboard.press('Backslash');
+  t.ok('and back', await page.evaluate(hittable, '#tree .row'));
+}, { docs: ['SPECS.md#Browser UI'] });
 
 test('long lines wrap where the screen ends', async t => {
   const page = t.page;

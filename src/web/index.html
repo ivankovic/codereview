@@ -44,13 +44,26 @@ header { display: flex; align-items: center; gap: 10px; padding: 6px 12px; borde
 /* On a wide screen the tools sit in the header row as if the wrapper were not there. */
 header .tools { display: contents; }
 header .brand { font-weight: 700; color: var(--accent); }
-header #branch { max-width: 28vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-header .tabs button { border-radius: 0; border: none; border-bottom: 2px solid transparent; background: none; }
-header .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
+/* The breadcrumb: where in the repository the page is, each part a way somewhere else. */
+header .crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+header .crumbs > * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+header .crumbs .sep { color: var(--dim); flex: none; }
+header #address { font-weight: 600; max-width: 30vw; }
+header #branch { max-width: 20vw; }
+header #range { color: var(--accent); max-width: 24vw; }
+/* The focus picker: what the reader is looking at, the one on screen lit. */
+header .focus { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex: none; }
+header .focus button { border: none; border-radius: 0; background: none; padding: 3px 12px; }
+header .focus button + button { border-left: 1px solid var(--border); }
+header .focus button.active { background: var(--cursor); color: var(--accent); }
+/* The side panel, hidden by its button or by \\. */
+body.nosidebar aside#tree { display: none !important; }
+#pending:empty { display: none; }
 .spacer { flex: 1; }
 #back { font-size: 18px; line-height: 1; padding: 2px 10px; }
-/* The views inside a tab: Code is files, changes and history; Review is comments, notes and
-   the agent. One row under the header, the one shown lit. */
+/* The views a focus holds: the tests are the end-to-end ones and every test; the code is its
+   summary, files, changes, history, comments and notes. One row under the header, the one
+   shown lit. */
 #subnav { display: flex; gap: 4px; padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
 #subnav[hidden] { display: none; }
 #subnav button { border: none; background: none; border-radius: 14px; padding: 3px 12px; }
@@ -343,16 +356,6 @@ footer .msg.error { color: var(--del-fg); }
 #help h3 { margin: 8px 0 4px; color: var(--accent); }
 #help table td { padding: 1px 12px 1px 0; }
 #help kbd { font-family: ui-monospace, monospace; background: var(--bg); padding: 0 4px; border-radius: 3px; border: 1px solid var(--border); }
-/* Zen: the file and nothing else. Everything that frames it goes, and one button stays to
-   bring it back, at the bottom right, clear of the code, of the drawer's own close button and
-   of a phone's notch; the tab bar that usually sits there is gone in zen too. The comment rows
-   stay: they are part of the file, not of the frame. */
-#zen { position: fixed; z-index: 8; opacity: .4; box-shadow: 0 2px 8px rgba(0,0,0,.3);
-  bottom: calc(10px + env(safe-area-inset-bottom)); right: calc(12px + env(safe-area-inset-right)); }
-#zen:hover, #zen:focus { opacity: 1; }
-body.zen header, body.zen footer, body.zen #tree, body.zen #content .panelhead { display: none; }
-/* Without this an error would have nowhere to appear; it goes again with the message. */
-body.zen.hasmsg footer { display: flex; }
 /* The text editor: what used to be the browser's prompt(). A sheet on a phone. */
 #editor { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
 #editor .sheet { background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; padding: 12px 16px; width: min(560px, calc(100vw - 32px)); }
@@ -397,31 +400,36 @@ body.zen.hasmsg footer { display: flex; }
   input, textarea, select { font-size: 16px; }  /* below 16px iOS zooms the page into a focused field */
   button { padding: 8px 12px; }
   button.small { padding: 6px 10px; font-size: 13px; }
-  header .tabs button { min-height: 44px; }
+  header .focus button { min-height: 44px; }
   aside#tree .row { min-height: 40px; }
   .list .item { min-height: 44px; }
   table.code { font-size: 13px; line-height: 1.7; }
   table.code td.n { min-width: 44px; padding: 0 8px; }
   #drawer .list .item { min-height: 48px; }
   aside#tree { resize: none; }
-  #zen { opacity: .75; min-height: 44px; }
 }
-/* A phone, upright or on its side: one header row, the tabs along the bottom edge, and one
-   pane at a time. */
+/* A phone, upright or on its side: one header row, the breadcrumb cut to the branch and the
+   range, and one pane at a time. */
 @media (max-width: 700px), (max-height: 500px) {
   .phone { display: revert; }
-  body { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
-  body.zen { padding-bottom: 0; }
+  body { padding-bottom: env(safe-area-inset-bottom); }
   header { padding: 6px 10px; gap: 8px; }
-  header #branch { max-width: 40vw; }
+  header #address, header .crumbs .sep.a, header #commit, header .crumbs .sep.c { display: none; }
+  header #branch { max-width: 24vw; }
+  header #range { max-width: 26vw; }
+  /* The breadcrumb takes what the first row has left, and gives way before Agent and the menu
+     do; the focus picker is a row of its own under it, a quarter of the width each. */
+  header .crumbs { flex: 1 1 0; }
+  header #repo { max-width: 22vw; flex: none; }
+  header > .spacer { display: none; }
+  /* The focus picker is a row of its own under the breadcrumb, a quarter of the width each. */
+  header .focus { order: 10; flex-basis: 100%; }
+  header .focus button { flex: 1; padding: 4px 8px; }
+  #sidebarbtn { display: none; }
   header #more { padding: 4px 10px; font-size: 16px; line-height: 1; }
   header .tools { display: none; }
   header.open .tools { display: flex; flex-direction: column; gap: 8px; position: absolute; top: 100%; left: 0; right: 0; padding: 10px 12px 12px; background: var(--panel); border-bottom: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
   header.open .tools input, header.open .tools select, header.open .tools button { width: 100%; }
-  header .tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; background: var(--panel); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
-  header .tabs button { flex: 1; min-width: 0; padding: 6px 2px; font-size: 12px; border-bottom: none; border-top: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  header .tabs button.active { border-top-color: var(--accent); }
-  header .tabs .badge { padding: 0 4px; }
   /* One row, measured rather than hoped for: the path gives way before the buttons do, and
      the line count goes — the file it counts is directly underneath. */
   .panelhead .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -453,7 +461,7 @@ body.zen.hasmsg footer { display: flex; }
   /* Sized for a finger: text a phone can be read at, and nothing to tap under 44 pixels. */
   body { font-size: 16px; }
   button.small { font-size: 13px; padding: 6px 10px; }
-  header .tabs button { font-size: 13px; min-height: 56px; }
+  header .focus button { font-size: 14px; min-height: 44px; }
   #back { font-size: 24px; min-width: 44px; min-height: 40px; }
   #subnav { position: sticky; top: 0; z-index: 4; padding: 6px 10px; gap: 6px; overflow-x: auto; }
   #subnav button { flex: 1; min-height: 40px; font-size: 15px; border: 1px solid var(--border); }
@@ -502,10 +510,10 @@ body.zen.hasmsg footer { display: flex; }
   .list .item .grow:not(.mono) { flex-basis: 100%; order: 2; }
   .list .item .actions { flex-basis: 100%; order: 3; }
   .cmt .text { flex-basis: 100%; }
-  #drawer { position: fixed; left: 0; right: 0; bottom: calc(56px + env(safe-area-inset-bottom)); height: 50vh; width: auto; min-width: 0; max-width: none; border-left: none; border-top: 1px solid var(--accent); z-index: 4; box-shadow: 0 -8px 24px rgba(0,0,0,.3); }
+  #drawer { position: fixed; left: 0; right: 0; bottom: env(safe-area-inset-bottom); height: 50vh; width: auto; min-width: 0; max-width: none; border-left: none; border-top: 1px solid var(--accent); z-index: 4; box-shadow: 0 -8px 24px rgba(0,0,0,.3); }
   .sbs { grid-template-columns: 1fr; }
   [data-act=layout] { display: none; }
-  .hunknav { display: flex; flex-direction: column; gap: 6px; position: fixed; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 4; }
+  .hunknav { display: flex; flex-direction: column; gap: 6px; position: fixed; right: 12px; bottom: calc(28px + env(safe-area-inset-bottom)); z-index: 4; }
   .hunknav button { min-width: 44px; min-height: 44px; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
   footer { gap: 8px; }
   footer span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -530,20 +538,29 @@ body.zen.hasmsg footer { display: flex; }
 }
 </style>
 </head>
-<body data-view="e2e">
+<body data-view="e2e" data-focus="tests">
 <header>
   <button id="back" title="back to where you were" hidden>‹</button>
-  <span class="brand">codereview</span>
-  <select id="repo" title="which repository the page shows" hidden></select>
-  <span id="branch" class="dim"></span>
-  <nav class="tabs">
-    <button data-view="e2e" data-group="tests" class="active" title="what it demonstrably does: the end-to-end tests and their recordings">Tests</button>
-    <button data-view="spec" data-group="spec" title="every test, by what kind of test it is">All tests</button>
-    <button data-view="overview" data-group="code" title="how the repository is doing, its files, changes and history">Code</button>
-    <button data-view="review" data-group="review" title="comments and notes">Review <span id="pending" class="badge"></span></button>
-    <button data-view="agent" data-group="agent" title="the coding agent">Agent <span id="agentdot" class="badge" hidden></span></button>
+  <nav class="crumbs" aria-label="where in the repository">
+    <select id="repo" title="which repository the page shows" hidden></select>
+    <span id="address" title="the repository"></span>
+    <span class="sep a">›</span>
+    <span id="branch" title="the branch checked out"></span>
+    <span class="sep">›</span>
+    <span id="range" title="the review range the tests are seen through">last 7 days</span>
+    <span class="sep c">›</span>
+    <span id="commit" class="dim" title="the commit checked out"></span>
   </nav>
   <span class="spacer"></span>
+  <span id="pending" class="badge" title="pending comments"></span>
+  <button id="agentbtn" title="the coding agent, over what is on screen">Agent <span id="agentdot" class="badge" hidden></span></button>
+  <nav class="focus" aria-label="what to look at">
+    <button data-focus="tests" class="active" title="what it demonstrably does: the end-to-end tests and every test">Tests</button>
+    <button data-focus="code" title="the code: its summary, files, changes, history and review">Code</button>
+    <button data-focus="docs" title="the repository's Markdown documents">Docs</button>
+    <button data-focus="data" title="its datasets: CSV, JSON and the like">Data</button>
+  </nav>
+  <button id="sidebarbtn" title="hide or show the side panel (\\)">☰</button>
   <button id="more" class="phone" title="search, colour scheme, and more">⋯</button>
   <div class="tools">
     <input id="symbol" placeholder="find symbol (#)" size="16" title="definitions whose name contains this">
@@ -560,7 +577,6 @@ body.zen.hasmsg footer { display: flex; }
   <section id="content"><div class="center">Pick a file from the tree.</div></section>
   <aside id="drawer" hidden></aside>
 </main>
-<button id="zen" hidden title="leave zen mode (z, or Esc)">✕ zen</button>
 <div id="popover" hidden></div>
 <div id="editor" hidden><div class="sheet"><div class="title"></div><div class="note" hidden></div><textarea></textarea>
   <div class="form"><div class="row"><button class="primary" data-act="ok">Save</button><button data-act="cancel">Cancel</button></div></div></div></div>
@@ -578,7 +594,9 @@ const watch = { version: null, busy: false, every: 2000 };
 
 const state = {
   repo: 0, repos: [],
-  view: 'explore', files: [], zen: false, wrap: false,
+  view: 'explore', files: [], documents: [], datasets: [], wrap: false,
+  // What the reader is looking at, and the file last open in each focus that has files.
+  focus: 'tests', fileOf: {},
   // path -> the one-letter change mark, which is not the same shape as a ChangedFile's
   // `status`, a word.
   statusLetters: {}, pending: 0, hasCommits: true,
@@ -745,6 +763,8 @@ function applyTheme(t) {
 async function loadState() {
   const s = await api('/state');
   state.files = s.files;
+  state.documents = s.documents;
+  state.datasets = s.datasets;
   state.theme = s.theme;
   const sel = $('#theme');
   // Only when the list itself changed: rebuilding it would close an open dropdown.
@@ -756,8 +776,11 @@ async function loadState() {
   state.statusLetters = Object.fromEntries(s.status);
   state.pending = s.pending;
   state.hasCommits = s.has_commits;
-  $('#branch').textContent = s.branch + ' · ' + s.root;
-  $('#pending').textContent = s.pending;
+  $('#address').textContent = s.address;
+  $('#address').title = s.root;
+  $('#branch').textContent = s.branch;
+  $('#commit').textContent = s.commit;
+  $('#pending').textContent = s.pending ? '●' + s.pending : '';
   renderTree();
 }
 
@@ -798,9 +821,17 @@ $('#repo').onchange = e => switchRepo(Number(e.target.value)).then(() => navigat
 // How many files a directory shows before the rest fold behind "… N more".
 const TREE_FOLD = 10;
 
+// The files the focus on screen holds: every file for the code, the documents for Docs, the
+// datasets for Data. The server says which are which.
+function focusFiles() {
+  if (state.focus === 'docs') return state.documents;
+  if (state.focus === 'data') return state.datasets;
+  return state.files;
+}
+
 function buildTree() {
   const root = { dirs: new Map(), files: [] };
-  for (const f of state.files) {
+  for (const f of focusFiles()) {
     if (state.tree.filter && !f.toLowerCase().includes(state.tree.filter.toLowerCase())) continue;
     const parts = f.split('/');
     let node = root;
@@ -848,6 +879,7 @@ function renderTree() {
     else if (shown) parts.push(`<div class="row more" data-fewer="${esc(dirPath)}" style="padding-left:${8 + depth * 14}px"><span class="st"></span>… fewer</div>`);
   };
   walk(buildTree(), 0);
+  state.treeFocus = state.focus;
   const tree = $('#tree');
   tree.innerHTML = parts.join('');
   $('#filter').oninput = e => { state.tree.filter = e.target.value; renderTree(); $('#filter').focus(); $('#filter').setSelectionRange(1e9, 1e9); };
@@ -1046,6 +1078,8 @@ async function openFile(path, line) {
     // The fingerprint stamps the open file, so another file is another baseline.
     watch.version = null;
     state.file = { ...f, blame: null };
+    if (!['code', 'docs', 'data'].includes(state.focus)) state.focus = 'code';
+    state.fileOf[state.focus] = path;
     state.view = 'explore';
     navigate(routes.file(path, line));
     // On a phone the file replaces the tree.
@@ -1072,23 +1106,14 @@ function setWrap(on) {
   else if (state.view === 'diff' && state.diff && state.diff.data) renderDiff();
 }
 
-// Zen: the file, its line numbers and its comments, with the header, the tabs, the tree, the
-// file's own toolbar and the footer out of the way. It is a way of reading rather than a view,
-// so it has no address of its own, and anything that leaves the file leaves it as well.
-// On a phone the explorer shows the tree or the file, and zen over the tree would leave an
-// empty screen, so the key only works where the Zen button itself would be.
-const fileOnScreen = () => state.view === 'explore' && !!state.file
-  && (!phone() || document.body.classList.contains('showfile'));
-
-function setZen(on) {
-  state.zen = on;
-  document.body.classList.toggle('zen', on);
-  $('#zen').hidden = !on;
+// The side panel, hidden or shown: by its button in the header, or by \\. It is how this browser
+// is set up to read rather than where it is, so it has no address.
+function setSidebar(hidden) {
+  document.body.classList.toggle('nosidebar', hidden);
 }
 
 // Back to the tree, on a phone; on a wide screen the tree never left.
 function showTree() {
-  setZen(false);
   setTabs('explore');
   document.body.classList.remove('showfile');
   // With nothing open, whatever view was up would sit beside the tree under the wrong tab.
@@ -1135,7 +1160,6 @@ function renderFile() {
       <button data-act="diff" ${st && st !== '?' ? '' : 'disabled'}>Diff vs HEAD</button>
       <button data-act="blame" ${state.hasCommits && st !== '?' ? '' : 'disabled'}>${f.blame ? 'Hide blame' : 'Blame'}</button>
       <button data-act="wrap" title="${TOUCH ? 'wrap long lines instead of scrolling sideways' : 'wrap long lines instead of scrolling sideways (w)'}">${state.wrap ? 'No wrap' : 'Wrap lines'}</button>
-      <button data-act="zen" title="${TOUCH ? 'the file and nothing else' : 'the file and nothing else (z)'}">Zen</button>
     </span>`;
   content.appendChild(head);
   if (state.ran && state.ran.path === f.path) {
@@ -1157,7 +1181,6 @@ function renderFile() {
   on(head, 'symbols', () => showFileSymbols(f.path));
   on(head, 'history', () => showLog(f.path));
   on(head, 'diff', () => showDiff({ kind: 'working', path: f.path, status: st }, [{ path: f.path, status: st, old_path: null }], 0));
-  on(head, 'zen', () => setZen(true));
   on(head, 'wrap', () => setWrap(!state.wrap));
   // The menu stays open for one choice only; every button in it closes it by acting.
   on(head, 'menu', e => { e.stopPropagation(); head.querySelector('.acts').classList.toggle('open'); });
@@ -1584,7 +1607,6 @@ async function commitChanges(staged, files) {
 // parsing, and the checks are their own: the page draws what it has and fills the rest in as
 // it arrives.
 async function showOverview() {
-  setZen(false);
   setTabs('overview');
   navigate(routes.overview());
   document.body.classList.remove('showfile');
@@ -1855,7 +1877,6 @@ const STRETCHES = [['week', 'last 7 days'], ['last', 'last commit'], ['uncommitt
 // What a repository opens on: its end-to-end tests, the ones that drive it the way a person
 // does, each with the recording its last run left. Everything else is reached from here.
 async function showEndToEnd() {
-  setZen(false);
   setTabs('e2e');
   state.testView = null;
   const route = routes.e2e();
@@ -1946,7 +1967,6 @@ function renderEndToEnd(content, o) {
 // code its run executed, what only it ran first; the documentation it demonstrates; and the
 // smaller tests that reach the same code.
 async function showTestView(file, name) {
-  setZen(false);
   setTabs('e2e');
   state.testView = { file, name };
   const route = routes.test(file, name);
@@ -3142,27 +3162,33 @@ async function showNotes() {
 
 // ----- chrome ---------------------------------------------------------------------------------
 
-// Five tabs, tests first, in the order the terminal UI has its sections: what it demonstrably
-// does, every test, the code, what is to be done about it, and the agent doing it. Two of them
-// hold several views, picked from a row under the header; a tab remembers which of its views
-// was last open and goes back to it.
+// Four focuses, picked at the top right, tests first, as in the terminal UI: what it
+// demonstrably does, the code, the documents and the data. The tests and the code hold several
+// views each, picked from a row under the header, and a focus remembers which of them was
+// last open and goes back to it; the documents and the data are a file tree each. The agent
+// is not a focus: its button in the header opens it over whatever the reader was looking at.
 const GROUPS = {
-  code: [['overview', 'Summary'], ['explore', 'Files'], ['changes', 'Changes'], ['log', 'Log']],
-  review: [['review', 'Comments'], ['notes', 'Notes']],
+  tests: [['e2e', 'End to end'], ['spec', 'All tests']],
+  code: [['overview', 'Summary'], ['explore', 'Files'], ['changes', 'Changes'], ['log', 'Log'],
+    ['review', 'Comments'], ['notes', 'Notes']],
 };
-const GROUP_OF = { e2e: 'tests', spec: 'spec', overview: 'code', explore: 'code', changes: 'code', log: 'code', diff: 'code',
-  review: 'review', notes: 'review', agent: 'agent' };
+const FOCUS_OF = { e2e: 'tests', spec: 'tests', overview: 'code', changes: 'code', log: 'code', diff: 'code',
+  review: 'code', notes: 'code' };
 const lastInGroup = {};
 
 function setTabs(view) {
   state.view = view;
-  const group = GROUP_OF[view] || view;
+  // The explorer is the code's, unless the documents or the data are what is being read.
+  if (view === 'explore') { if (!['code', 'docs', 'data'].includes(state.focus)) state.focus = 'code'; }
+  else if (FOCUS_OF[view]) state.focus = FOCUS_OF[view];
+  const group = state.focus;
   if (GROUPS[group] && GROUPS[group].some(([v]) => v === view)) lastInGroup[group] = view;
-  document.querySelectorAll('header .tabs button').forEach(b => b.classList.toggle('active', b.dataset.group === group));
+  document.querySelectorAll('header .focus button').forEach(b => b.classList.toggle('active', b.dataset.focus === group));
   renderSubnav(group, view);
   // The stylesheet shows the tree for the explorer only, and on a phone either it or the file.
   document.body.dataset.view = view;
-  if (view !== 'explore') setZen(false);
+  document.body.dataset.focus = group;
+  if (state.treeFocus !== state.focus) renderTree();
   document.querySelector('header').classList.remove('open');
   hidePopover();
   if (view !== 'explore') $('#drawer').hidden = true;
@@ -3189,7 +3215,7 @@ function rerenderCurrentView() {
 
 function renderSubnav(group, view) {
   const nav = $('#subnav');
-  const items = GROUPS[group];
+  const items = view === 'agent' ? null : GROUPS[group];
   nav.hidden = !items;
   if (!items) return;
   if (nav.dataset.group !== group) {
@@ -3200,15 +3226,29 @@ function renderSubnav(group, view) {
   nav.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.sub === view));
 }
 
-document.querySelectorAll('header .tabs button').forEach(b => b.onclick = () => {
-  const group = b.dataset.group;
-  // Another tab: the view it was last on. The tab already lit: its first view, as a way home.
-  const here = GROUP_OF[state.view] === group;
-  const v = GROUPS[group] && !here ? (lastInGroup[group] || b.dataset.view) : b.dataset.view;
-  openView(v, here);
-});
+document.querySelectorAll('header .focus button').forEach(b => b.onclick = () => openFocus(b.dataset.focus));
+$('#agentbtn').onclick = () => openView('agent');
+$('#sidebarbtn').onclick = () => setSidebar(!document.body.classList.contains('nosidebar'));
 
-// Opens one of the views a tab or a sub-tab names. `again` is a tap on what is already lit.
+// Goes to a focus where it was left: the view it was last on, or the file last open in it.
+// The focus already lit goes to its first view, as a way home.
+function openFocus(focus) {
+  const here = state.focus === focus && state.view !== 'agent';
+  if (focus === 'docs' || focus === 'data') {
+    state.focus = focus;
+    const path = state.fileOf[focus];
+    if (path && !here) return openFile(path);
+    state.file = null;
+    return showTree();
+  }
+  const first = GROUPS[focus][0][0];
+  const v = here ? first : (lastInGroup[focus] || first);
+  state.focus = focus;
+  if (v === 'explore' && state.fileOf.code && !here) return openFile(state.fileOf.code);
+  openView(v, here);
+}
+
+// Opens one of the views a focus holds. `again` is a tap on what is already lit.
 function openView(v, again = false) {
   // A tab always starts its view afresh, rather than redrawing what was there. Explore
   // goes back to the open file, or, tapped again on a phone while a file is up, to the tree.
@@ -3299,8 +3339,12 @@ $('#search').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; s
 
 const HELP = `
 <h3>Tests</h3><table>
-<tr><td><kbd>Tests</kbd></td><td>the first tab, what the repository opens on: every test that drives it the way a person does, each with the recording its last run left, whether it passed, and how far the code has moved since. Tap a step to go to that moment of the recording; the file name opens the test</td></tr>
+<tr><td><kbd>Tests</kbd></td><td>the first focus, top right, what the repository opens on: every test that drives it the way a person does, each with the recording its last run left, whether it passed, and how far the code has moved since. Tap a step to go to that moment of the recording; the file name opens the test</td></tr>
 <tr><td><kbd>Ask the agent to write the first ones</kbd></td><td>where there are none: the agent writes them, each leaving a recording</td></tr></table>
+<h3>The frame</h3><table>
+<tr><td><kbd>Tests</kbd> <kbd>Code</kbd> <kbd>Docs</kbd> <kbd>Data</kbd></td><td>what to look at: the tests, the code, the Markdown documents, the datasets</td></tr>
+<tr><td><kbd>☰</kbd> or <kbd>\\</kbd></td><td>hide or show the side panel</td></tr>
+<tr><td><kbd>Agent</kbd></td><td>the coding agent, over what is on screen</td></tr></table>
 <h3>All tests</h3><table>
 <tr><td><kbd>All tests</kbd></td><td>every test as a sentence, grouped by one of nine questions about what kind of test it is; a test's kind opens to all nine answers and why</td></tr>
 <tr><td><kbd>last 7 days</kbd> <kbd>last commit</kbd> <kbd>uncommitted</kbd></td><td>what that stretch did to the tests, the ones that now ask less first: removed, skipped, fewer assertions</td></tr>
@@ -3313,7 +3357,6 @@ const HELP = `
 <tr><td><kbd>History</kbd></td><td>every commit that touched the file, and the diff of each</td></tr>
 <tr><td><kbd>Diff vs HEAD</kbd></td><td>what changed in the working tree</td></tr>
 <tr><td><kbd>Blame</kbd></td><td>last commit per line</td></tr>
-<tr><td><kbd>Zen</kbd> or <kbd>z</kbd></td><td>the file, its line numbers and its comments, and nothing else; <kbd>z</kbd> or <kbd>Esc</kbd> comes back</td></tr>
 <tr><td><kbd>Wrap lines</kbd> or <kbd>w</kbd></td><td>wrap long lines instead of scrolling sideways, with the continuation indented; remembered in this browser</td></tr></table>
 <h3>Changes</h3><table>
 <tr><td><kbd>Commit</kbd></td><td>in the working tree view, stages everything listed and commits it; in the staged view, commits what is staged. The sheet names the files and any comment still pending on them, and hooks run as they do on the command line</td></tr></table>
@@ -3338,25 +3381,21 @@ const HELP = `
 <p class="dim">Comments live in REVIEW.md, notes in NOTES.md, both at the repository root. Every view has an address, so the browser's back returns to the previous one and a file or a diff can be linked to. Esc closes this.</p>`;
 $('#help').innerHTML = HELP;
 $('#helpbtn').onclick = () => { $('#help').hidden = !$('#help').hidden; };
-$('#zen').onclick = () => setZen(false);
 
 document.addEventListener('keydown', e => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea') return;
   if (e.key === 'Escape') {
-    // Esc closes whatever is open, innermost first, and only then leaves zen.
-    const help = !$('#help').hidden, form = $('#content .form')?.closest('tr');
+    // Esc closes whatever is open, innermost first.
     $('#help').hidden = true;
-    form?.remove();
-    if (!help && !form && state.zen) setZen(false);
+    $('#content .form')?.closest('tr')?.remove();
     return;
   }
   if (e.key === '?') { $('#help').hidden = !$('#help').hidden; return; }
-  if (e.key === 'z' && fileOnScreen()) { setZen(!state.zen); return; }
+  if (e.key === '\\') { setSidebar(!document.body.classList.contains('nosidebar')); return; }
   if (e.key === 'w' && !e.ctrlKey && !e.metaKey) { setWrap(!state.wrap); return; }
-  // Both fields live in the header, which zen hides, so reaching for one comes out of zen.
-  if (e.key === '/') { e.preventDefault(); setZen(false); $('#search').focus(); $('#search').select(); return; }
-  if (e.key === '#') { e.preventDefault(); setZen(false); $('#symbol').focus(); $('#symbol').select(); return; }
+  if (e.key === '/') { e.preventDefault(); $('#search').focus(); $('#search').select(); return; }
+  if (e.key === '#') { e.preventDefault(); $('#symbol').focus(); $('#symbol').select(); return; }
   if (e.key === '@' && state.file) { showFileSymbols(state.file.path); return; }
   if (e.key === 'r' && !e.ctrlKey && !e.metaKey) { $('#refresh').click(); return; }
   if (state.diff && document.querySelector('#content table.code') && state.view !== 'explore') {
@@ -3391,8 +3430,12 @@ const routes = {
   e2e: () => routes.prefix() + '/',
   test: (file, name) => routes.prefix() + '/test?' + qs({ file, name }),
   overview: () => routes.prefix() + '/summary',
-  tree: () => routes.prefix() + '/tree',
-  file: (path, line) => routes.prefix() + '/file/' + encodeURIComponent(path).replace(/%2F/g, '/') + (line ? '?line=' + line : ''),
+  // The documents and the data are trees of their own; a file opened in one says so.
+  tree: () => routes.prefix() + (state.focus === 'docs' ? '/docs' : state.focus === 'data' ? '/data' : '/tree'),
+  file: (path, line) => {
+    const q = qs({ line: line || undefined, in: ['docs', 'data'].includes(state.focus) ? state.focus : undefined });
+    return routes.prefix() + '/file/' + encodeURIComponent(path).replace(/%2F/g, '/') + (q ? '?' + q : '');
+  },
   changes: staged => routes.prefix() + '/changes' + (staged ? '?staged=1' : ''),
   log: (path, commit) => routes.prefix() + '/log' + (path || commit ? '?' + qs({ path, commit }) : ''),
   diff: params => routes.prefix() + '/diff?' + qs(params),
@@ -3434,11 +3477,15 @@ async function route() {
   const q = rest.indexOf('?');
   const params = Object.fromEntries(new URLSearchParams(q >= 0 ? rest.slice(q + 1) : ''));
   const path = q >= 0 ? rest.slice(0, q) : rest;
-  if (path.startsWith('/file/')) return openFile(decodeURIComponent(path.slice(6)), params.line ? Number(params.line) : undefined);
+  if (path.startsWith('/file/')) {
+    state.focus = ['docs', 'data'].includes(params.in) ? params.in : 'code';
+    return openFile(decodeURIComponent(path.slice(6)), params.line ? Number(params.line) : undefined);
+  }
+  if (path === '/docs' || path === '/data') { state.focus = path.slice(1); state.file = null; return showTree(); }
   if (path === '/changes') return showChanges(params.staged === '1');
   if (path === '/log') return showLog(params.path || null, true, params.commit || null);
   if (path === '/diff' && params.path) return showDiff(params, [{ path: params.path, old_path: params.old_path || null, status: params.status || 'M' }], 0);
-  if (path === '/tree') return showTree();
+  if (path === '/tree') { state.focus = 'code'; return showTree(); }
   if (path === '/review') return showReview();
   if (path === '/notes') return showNotes();
   if (path === '/agent') return showAgent();

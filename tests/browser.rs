@@ -224,6 +224,9 @@ fn every_browser_test_passes_in_a_real_browser() {
     std::fs::create_dir_all(repo.join("src")).unwrap();
     // A picture, for the file view to show rather than call binary.
     std::fs::write(repo.join("logo.png"), include_bytes!("../src/web/icon.png")).unwrap();
+    // A dataset, for the Data focus to list.
+    std::fs::create_dir_all(repo.join("data")).unwrap();
+    std::fs::write(repo.join("data/scores.csv"), "name,score\nana,3\n").unwrap();
     std::fs::write(
         repo.join("src/core.rs"),
         "pub fn parse_review() {}\npub fn write_review() {}\npub struct ReviewFile;\n\n\

@@ -518,8 +518,16 @@ pub(super) async fn get_leans_on(
 pub(super) struct StateResponse {
     name: String,
     root: String,
+    /// What the breadcrumb starts with: where `origin` points, or the checkout's path.
+    address: String,
     branch: String,
+    /// HEAD, abbreviated; empty before the first commit.
+    commit: String,
     files: Vec<String>,
+    /// The files the Docs focus holds: Markdown that is not the tool's own bookkeeping.
+    documents: Vec<String>,
+    /// The files the Data focus holds: CSV, JSON and the like.
+    datasets: Vec<String>,
     /// path -> status letter
     status: Vec<(String, char)>,
     pending: usize,
@@ -542,8 +550,22 @@ pub(super) async fn get_state(state: Ctx) -> ApiResult<StateResponse> {
         Ok(StateResponse {
             name: s.name(),
             root: s.root().display().to_string(),
+            address: s.repo.address(),
             branch: s.repo.head_label(),
+            commit: s.repo.short_hash("HEAD").unwrap_or_default(),
             files: s.files.clone(),
+            documents: s
+                .files
+                .iter()
+                .filter(|f| crate::docs::is_document(f))
+                .cloned()
+                .collect(),
+            datasets: s
+                .files
+                .iter()
+                .filter(|f| crate::media::is_dataset(f))
+                .cloned()
+                .collect(),
             status,
             pending: s.review.pending_count(),
             author: s.author.clone(),

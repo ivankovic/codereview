@@ -580,6 +580,14 @@ impl Repo {
         github_name(&self.remote_url()?)
     }
 
+    /// The repository's address as the breadcrumb shows it: where `origin` points, without the
+    /// scheme, or the checkout's path with the home directory as `~`.
+    pub fn address(&self) -> String {
+        self.remote_url()
+            .map(|u| short_address(&u))
+            .unwrap_or_else(|| tilde(&self.root))
+    }
+
     /// Where `origin` points, as git has it: the repository's address, for the breadcrumb.
     pub fn remote_url(&self) -> Option<String> {
         let out = self.git(&["remote", "get-url", "origin"]).ok()?;
@@ -822,6 +830,36 @@ fn complaint(output: &std::process::Output) -> String {
     lines.join("\n")
 }
 
+/// An address as the breadcrumb shows it: `github.com/o/n` for any of git's ways of writing
+/// one, the path for a local remote.
+pub fn short_address(url: &str) -> String {
+    let rest = url
+        .split_once("://")
+        .map(|(_, r)| r)
+        .unwrap_or(url)
+        .trim_start_matches("git@");
+    let rest = rest.rsplit_once('@').map(|(_, r)| r).unwrap_or(rest);
+    let rest = match rest.split_once(':') {
+        Some((host, path)) if !host.contains('/') && !path.starts_with("//") => {
+            format!("{host}/{path}")
+        }
+        _ => rest.to_string(),
+    };
+    rest.trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_string()
+}
+
+/// A path with the home directory written `~`.
+pub fn tilde(path: &std::path::Path) -> String {
+    match std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        Some(home) if path.starts_with(&home) && home.as_os_str().len() > 1 => {
+            format!("~/{}", path.strip_prefix(&home).unwrap_or(path).display())
+        }
+        _ => path.display().to_string(),
+    }
+}
+
 /// Whether git would call this a binary file: a NUL byte in the first 8 KiB, which is its
 /// own rule. Text is what this tool can show, diff and index; the rest is skipped.
 /// The `owner/name` a GitHub remote URL names, in any of the forms git accepts:
@@ -1051,6 +1089,22 @@ mod tests {
         }
         assert_eq!(github_name("https://gitlab.com/a/b.git"), None);
         assert_eq!(github_name("https://github.com/a"), None);
+    }
+
+    #[test]
+    fn an_address_is_shown_without_its_scheme() {
+        for url in [
+            "https://github.com/ivankovic/codereview.git",
+            "git@github.com:ivankovic/codereview.git",
+            "ssh://git@github.com/ivankovic/codereview",
+        ] {
+            assert_eq!(
+                short_address(url),
+                "github.com/ivankovic/codereview",
+                "{url}"
+            );
+        }
+        assert_eq!(short_address("/srv/git/a.git"), "/srv/git/a");
     }
 
     #[test]

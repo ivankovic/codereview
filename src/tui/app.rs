@@ -223,36 +223,6 @@ pub struct Crumbs {
     pub elsewhere_asks: bool,
 }
 
-/// An address as the breadcrumb shows it: `github.com/o/n` for any of git's ways of writing
-/// one, the path for a local remote.
-pub fn short_address(url: &str) -> String {
-    let rest = url
-        .split_once("://")
-        .map(|(_, r)| r)
-        .unwrap_or(url)
-        .trim_start_matches("git@");
-    let rest = rest.rsplit_once('@').map(|(_, r)| r).unwrap_or(rest);
-    let rest = match rest.split_once(':') {
-        Some((host, path)) if !host.contains('/') && !path.starts_with("//") => {
-            format!("{host}/{path}")
-        }
-        _ => rest.to_string(),
-    };
-    rest.trim_end_matches('/')
-        .trim_end_matches(".git")
-        .to_string()
-}
-
-/// A path with the home directory written `~`.
-fn tilde(path: &std::path::Path) -> String {
-    match std::env::var_os("HOME").map(PathBuf::from) {
-        Some(home) if path.starts_with(&home) && home.as_os_str().len() > 1 => {
-            format!("~/{}", path.strip_prefix(&home).unwrap_or(path).display())
-        }
-        _ => path.display().to_string(),
-    }
-}
-
 /// What the draw pass measured last time, so key handling can page by the right amount.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Measured {
@@ -420,10 +390,7 @@ impl App {
     fn read_crumbs(&mut self) {
         let repo = &self.session.repo;
         self.crumbs = Crumbs {
-            address: repo
-                .remote_url()
-                .map(|u| short_address(&u))
-                .unwrap_or_else(|| tilde(repo.root())),
+            address: repo.address(),
             branch: repo.head_label(),
             commit: repo.short_hash("HEAD").unwrap_or_default(),
             ..std::mem::take(&mut self.crumbs)

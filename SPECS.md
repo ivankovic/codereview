@@ -817,27 +817,27 @@ either way. The server writes the transcript itself, the same way the terminal d
 poll with the entries that changed since the version the page names, each with the position it
 belongs at: a tool call is one entry, filled in as it runs, so entries are not append-only. It also
 sends what the turn is doing and what it has cost, already worded, so the page only draws. The page
-has the terminal UI's sections as its five tabs, in the same order — Tests, All tests, Code, Review,
-Agent — and otherwise the same views: explorer with tree and file, changes, log and history, diff,
-review, notes and the agent, and an overview the terminal UI has not; clicking a name in code offers
-its definition and usages in a side drawer. A picture in the working tree is shown in the file view,
-fitted to it on a checkerboard, with its size in pixels and bytes under it; an SVG has its source
-below it. The page fetches the bytes with the API token and shows them from memory, which the
-content security policy allows as `blob:` images; the endpoint serves an SVG under a policy that
-runs nothing. A comment left in a commit's diff sends that commit with it. A comment on a whole file
-comes from the Comment button in the file header and is shown above the first line; one on a
-directory from the `+` on its row in the tree. A range is chosen with shift-click, or with the
-comment form's Extend range button followed by the line number at the other end, which keeps the
-text typed so far. Editing a comment or a note, and commenting on a file or a directory, opens a
-text sheet of the page's own rather than the browser's prompt. The file header's Zen button, and
-`z`, leave the file alone on the screen: the header, the tabs, the tree, that header itself and the
-footer go, and what stays is the code, its line numbers, its comment rows and one button at the
-bottom right to come back, which `z` and `Esc` also do. A message still shows the footer for as long
-as it has something to say, and a key that reaches for a field in the header comes out of zen first.
-Zen is a way of reading rather than a view, so it has no address, and leaving the file leaves it.
-`w`, and the same menu's Wrap lines, wraps long lines where the screen ends instead of scrolling
-sideways, with each continuation indented past the start of the code so a wrapped line still reads
-as one; the choice is kept in that browser's own storage.
+has the terminal UI's frame: across the top a breadcrumb — the repository's address (or, with
+several served, the selector that switches between them), the branch, the review range and the
+commit — and at the right the focus picker, Tests, Code, Docs and Data, in that order, the one on
+screen lit; beside it a button for the agent, which opens it over whatever focus was on screen and
+carries the mark that it is working or waiting for an answer, and the pending comments counted. The
+side panel hides and shows again with the header's ☰ or `\`, which is how this browser reads rather
+than where it is, so it has no address. Otherwise the page has the same views: explorer with tree
+and file, changes, log and history, diff, review, notes and the agent, and an overview the terminal
+UI has not; clicking a name in code offers its definition and usages in a side drawer. A picture in
+the working tree is shown in the file view, fitted to it on a checkerboard, with its size in pixels
+and bytes under it; an SVG has its source below it. The page fetches the bytes with the API token
+and shows them from memory, which the content security policy allows as `blob:` images; the endpoint
+serves an SVG under a policy that runs nothing. A comment left in a commit's diff sends that commit
+with it. A comment on a whole file comes from the Comment button in the file header and is shown
+above the first line; one on a directory from the `+` on its row in the tree. A range is chosen with
+shift-click, or with the comment form's Extend range button followed by the line number at the other
+end, which keeps the text typed so far. Editing a comment or a note, and commenting on a file or a
+directory, opens a text sheet of the page's own rather than the browser's prompt. `w`, and the same
+menu's Wrap lines, wraps long lines where the screen ends instead of scrolling sideways, with each
+continuation indented past the start of the code so a wrapped line still reads as one; the choice is
+kept in that browser's own storage.
 
 A review that ends in "this is good" ends in a commit, from the changes view: the working tree
 side stages everything it lists and commits that, the staged side commits the index as it
@@ -858,12 +858,14 @@ keeps the scroll where it was, says nothing in the footer, and leaves the agent'
 agent's own poll. A write of the page's own moves the version too, so the next reading after one
 becomes the baseline instead of redrawing what the page has just drawn.
 
-A repository opens on its end-to-end tests, under the Tests tab, at the root address, with nothing
-of the code drawn first. The tabs are Tests, which holds them and a test's own view; All tests, the
-specification; Code, whose row under the header holds Summary (the overview, at `summary`), Files,
-Changes and Log; Review, whose row holds the comments and the notes; and Agent, which carries the
-mark that the agent is working or waiting for an answer. Code lands on the view it was last on in
-this page, the summary to begin with, and a tab already lit goes to its first view. Each
+A repository opens on its end-to-end tests, in the Tests focus, at the root address, with nothing
+of the code drawn first. The views a focus holds are a row under the header: the tests hold the
+end-to-end ones, with a test's own view, and All tests, the specification; the code holds Summary
+(the overview, at `summary`), Files, Changes, Log, Comments and Notes. Docs and Data are a file tree
+each, of the documents and of the datasets as the terminal UI has them, at `docs` and `data`, and
+a file opened from one says so in its address, so a reload keeps the focus; each remembers the
+file last open in it. A focus lands on the view or file it was last on in this page, the first of
+them to begin with, and the focus already lit goes to its first view. Each
 end-to-end test is a card, grouped by file, in a grid as wide as the screen allows: a mark for how
 its last run went, its sentence, a security or skipped badge, its file and line (which opens it),
 why it counts, when it ran and whether the tree has moved since, then its recording, what any failed
@@ -945,22 +947,23 @@ about one repository; the header's selector switches to another.
 Every view has an address in the URL fragment, which never reaches the server: the end-to-end
 tests at the root, the overview, the specification, the tree, a file
 with an optional line, the working tree or staged changes, the log with an optional path and
-commit, a diff with its parameters, and the review, notes and agent tabs, prefixed with the
+commit, a diff with its parameters, the documents and the data, and the review, notes and agent,
+prefixed with the
 repository's number when it is not the first. The browser's back returns to the previous view, a
 reload keeps the place, and a diff's back button goes to whatever opened it. Paging through the
 files of one change replaces the address instead of adding to the history.
 
-**On a phone.** Below 700 pixels of width, or 500 of height, the header is one row with the tools
-(symbol and file search, colour scheme, refresh, sign out, help) behind one button, and it gets
-out of the way as the content scrolls down and comes back as it scrolls up, except while its own
-menu is open. The five tabs run along the bottom edge, each a fifth of the width and none
-cut short; the views a tab holds are the row under the header, which sticks, the log is also a
-button in the changes view's header and the notes in the review's, each keeps its own address,
-and the tab that leads to one is the one lit while it shows. Views
+**On a phone.** Below 700 pixels of width, or 500 of height, the header is two rows: the
+breadcrumb, cut to the branch and the range, with the agent and the tools (symbol and file search,
+colour scheme, refresh, sign out, help) behind one button; and under it the focus picker, a quarter
+of the width each and none cut short. It gets out of the way as the content scrolls down and comes
+back as it scrolls up, except while its own menu is open. Nothing runs along the bottom edge. The
+views a focus holds are the row under the header, which sticks; the log is also a button in the
+changes view's header and the notes in the review's, each keeps its own address. Views
 show one pane at a time: the tree or the file, the commits or one commit, each with a back button,
 and the symbol drawer as a sheet over the lower half. Everything the file's header can do except
 Comment is behind one button, as a menu under it: seven buttons are three rows of a small screen,
-more than the header, the tabs and the footer together. The footer is there while it has something
+more than the header and the footer together. The footer is there while it has something
 to say and gone otherwise, since a permanent row of instructions is a row a phone does not have.
 Lists lay each item out as a card with its buttons underneath. The diff is unified, with the hunk
 buttons floating at the bottom right. Writing a comment takes over the screen rather than opening

@@ -181,18 +181,20 @@ all of that, and nothing turns it off.
 
 Click a line number to comment, shift-click to extend the range (or the form's Extend range button
 and another line number, on a phone); the Comment button in the file header comments on the whole
-file, and the `+` on a directory in the tree on the directory. The tabs are the terminal UI's
-sections, in its order: Tests, All tests, Code (the summary, files, changes and log), Review
-(comments and notes) and Agent; everything else the terminal UI does is a button. Every view has an
+file, and the `+` on a directory in the tree on the directory. The frame is the terminal UI's: a
+breadcrumb across the top, and the focus at the right — Tests (end to end, and every test), Code
+(the summary, files, changes, log, comments and notes), Docs and Data — with the agent a button
+beside it and the side panel hidden by ☰ or `\`; everything else the terminal UI does is a
+button. Every view has an
 address, so the browser's back returns to the previous view and a file, a diff or a commit can be
 linked to. The page keeps itself current: when the agent, another window or a git command changes
 the repository, it notices within a couple of seconds and redraws where you are, without moving the
-scroll. The `Zen` button, or `z`, leaves the file alone on the screen. When the change reads well,
+scroll. When the change reads well,
 **Commit** in the changes view records it: the sheet names the files going in and any comment on
 them still pending, and the repository's hooks run as they would in a terminal.
 
-The page works on a phone: one pane at a time, the five tabs along the bottom, and it can be added
-to the home screen as an app. Review comments, diffs and the agent's transcript are what a
+The page works on a phone: one pane at a time, the focus picker under the breadcrumb, and it can be
+added to the home screen as an app. Review comments, diffs and the agent's transcript are what a
 phone is good for; symbol navigation is there but is desk work.
 
 ### Symbols
