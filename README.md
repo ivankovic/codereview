@@ -114,7 +114,8 @@ tests, and from the tests out. `?` shows every key. The essentials:
 
 | Key | What |
 | --- | --- |
-| `1` or `E` | Tests, what it opens on: `Space` plays, `Enter` a test on its own, `s` source |
+| `1` or `E` | Tests: the overview, then each test, the selected one beside them; `Enter` goes in |
+| `Space` `s` | play the selected test's recording; open its source |
 | `2` `3` `4` | Code, Docs, Data: the file tree, or outline, and the file |
 | `\` | hide or show the side panel |
 | `P` | every test, by kind: `c` the next question, `K` a test's answers |

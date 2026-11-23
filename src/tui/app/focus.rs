@@ -148,7 +148,7 @@ impl App {
         let files = self.focus.files(&self.session.files);
         self.tree.replace_files(&files);
         match self.screen() {
-            Screen::EndToEnd(_) | Screen::EndToEndTest(_) => self.refresh_end_to_end(false),
+            Screen::EndToEnd(_) => self.refresh_end_to_end(false),
             Screen::Review(_) => self.refresh_review(),
             Screen::Notes(_) => self.refresh_notes(),
             _ => {}

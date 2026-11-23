@@ -674,63 +674,64 @@ a repository that appears later in a directory of checkouts too. `E` or `1` brin
 any screen, where they were left; the tests that name the open file, which `E` used to show, are
 on `U`. Until the symbol index is built the tests are
 those `OVERVIEW.md` lists, and with no such file the screen says it is reading them; either way
-it reads them again once the index is in, and again on `r`, staying on the same test. The list
-has each test file as a heading with its tests under it, each marked passed, failed or without
-a recording, and a security mark where it has one; recordings whose test is gone follow under a
-heading of their own. The title counts the end-to-end tests against all the tests, the failed
-and those without a recording. Beside the list is the selected test: its label, file and line,
-why it is end to end, how its last run went and when, how long it took, how many commits and
-changed files the tree has moved on since (or that it matches the tree), the commit it was
-recorded at and whether that had uncommitted changes, and up to three failed checks with the
-first line of what was seen instead. A terminal recording is played into frames when its test
-is first selected, shown paused at its first frame in a box titled with the position, the
-length and whether it plays, and cropped to the box with a note when it is bigger; `z` gives it
-the whole screen. Under it are the test's steps with their times, the one the position is in
-highlighted. `Space` or `p` plays and pauses, from the start again once it has ended; `]` and
-`[` go to the next and previous step; `0` goes back to the start; while it plays the screen is
-drawn every 40 ms. A video cannot be drawn, so it is named, and `o` hands it to the system's
-opener (`xdg-open`, or `open` on macOS). `s` opens the test's source at its line. A
+it reads them again once the index is in, and again on `r`, staying on the same test. The side
+panel starts with the overview, selected when the tests open, then has each test file as a
+heading with its tests under it, each marked passed, failed or without a recording, and a
+security mark where it has one; recordings whose test is gone follow under a heading of their
+own. The title counts the end-to-end tests against all the tests, the failed and those without a
+recording. Beside the side panel is what is selected in it: on the overview, what the stretch
+did, described below; on a test, the test's own view; on a recording whose test is gone, its
+label, file and line, how its last run went, and its recording with its steps. `Enter`, `Tab`,
+`l` or `→` give what is beside the panel the keys, which move a cursor of its own while the
+panel's stays, dimmed, on what is shown; `q`, `Esc`, `Tab`, `h` or `←` give the panel the keys
+back. `\` hides the panel and shows it again. A terminal recording is played into frames when
+its test is first selected, shown paused at its first frame in a box titled with the position,
+the length and whether it plays, and cropped to the box with a note when it is bigger; `z`
+gives it the whole of the tests' screen. `Space` or `p` plays and pauses, from the start again
+once it has ended; `]` and `[` go to the next and previous step; `0` goes back to the start;
+these work from the panel as well, on the selected test; while it plays the screen is drawn
+every 40 ms. A video cannot be drawn, so it is named, and `o` hands it to the system's opener
+(`xdg-open`, or `open` on macOS). `s` in the panel opens the test's source at its line. A
 repository with no end-to-end tests opens on that finding instead: what one would look like for
 the kind of software it seems to be, how many tests of other kinds it has, and `a`, which sends
 the agent the request for the first ones, each leaving a recording.
 
-`Enter` opens a test on a screen of its own, over the list: where it is and why it counts, how
-its last run went and what any failed check saw, its recording with the same keys as the list,
-and below it one list in four parts. Its steps, each with its moment and its mark and, under it,
-the line of the test that took it, the step playback is at marked; `Enter` on one goes to its
-moment and `s` to its line. The code it ran, a file a row with how many lines it ran and how many
-of those no other end-to-end test ran, those first; or, without coverage, that its run left none
-and, where the Makefile has an `e2e-coverage` target, that it records it. `Enter` opens the file
-at the first line it ran, with every line it ran marked by a bar in the gutter and the status
-line naming the test on a marked line; the mark lasts while that file stays open and through a
-refresh, and a file opened any other way has none. The documentation it names, or the closest
-sections as a guess with the words they share, each opening at its heading. The smaller tests
-that name a file it ran or live in one, with how they interact and the files they share, each
-opening at its source. A screen opened while the symbols are still being read says so and fills
-in when they are. `q` goes back to the list. The terminal end-to-end tests name the section they
-demonstrate (`documents`), and under `cargo llvm-cov` each writes the coverage of its own run.
+A test's own view, beside the panel: where it is and why it counts, how its last run went and when,
+how long it took, how many commits and changed files the tree has moved on since, and what any
+failed check saw; its recording; and below it one list in four parts. Its steps, each with its
+moment and its mark and, under it, the line of the test that took it, the step playback is at
+marked; `Enter` on one goes to its moment and `s` to its line. The code it ran, a file a row with
+how many lines it ran and how many of those no other end-to-end test ran, those first; or, without
+coverage, that its run left none and, where the Makefile has an `e2e-coverage` target, that it
+records it. `Enter` opens the file at the first line it ran, with every line it ran marked by a bar
+in the gutter and the status line naming the test on a marked line; the mark lasts while that file
+stays open and through a refresh, and a file opened any other way has none. The documentation it
+names, or the closest sections as a guess with the words they share, each opening at its heading.
+The smaller tests that name a file it ran or live in one, with how they interact and the files they
+share, each opening at its source. A view made while the symbols are still being read says so and
+fills in when they are. The terminal end-to-end tests name the section they demonstrate
+(`documents`), and under `cargo llvm-cov` each writes the coverage of its own run.
 
-Both screens mark a stretch of history, the last 7 days to begin with; `w` moves on to the last
-commit, then the uncommitted work, then back, and the list's title names it. Above the tests the
-list says what the stretch did: under `In <stretch>`, the tests it removed, skipped or made to
-check less, each opening on the diff of its file across the stretch, or that it did none of
-that; then `No end-to-end test ran N of M changed lines` and a row per file of such lines, the
-first eight with the rest folded under `… N more files` until `Enter` unfolds them, each opening
-on the file at the first of them with every one marked by a bar of the colour of a moved
-line and the status line saying it was changed in the stretch and run by no end-to-end test, or
-that it changed no code, or that every changed line ran; a warning when some end-to-end tests
-left no coverage, whose runs are then not counted; and the stretch's base commit, when it has
-one: recorded, with how many tests, or not, with `b` to record it, or that no command records
-the tests. Beside the list, a row of the stretch explains itself. `b` makes the worktree of the
-base and runs the end-to-end command there in the background; the row says it is recording, for
-how long and the last line it printed, and when it ends the status line says how it went and
-both screens read the stretch again. Each test in the list carries `Δn` for the changed lines it
-ran, its result before and now when they differ (`✗→✓`), and `screen changed`, or `steps
-changed`, when its run differs from the one at the base. On a test's own screen, once the base is
-recorded, its recording at the base is played beside the one now (one above the other when both
-do not fit across), and its steps are paired: both times, both marks, the step, and `only now`,
-`only before` or `screen changed`; `Enter` on a pair takes both recordings to it, and `Space`,
-`]`, `[` and `0` move both.
+The tests mark a stretch of history, the last 7 days to begin with; `w` moves on to the last commit,
+then the uncommitted work, then back, and the title names it. The overview says what the stretch
+did, a row at a time: under `In <stretch>`, the tests it removed, skipped or made to check less,
+each opening on the diff of its file across the stretch, or that it did none of that; then `No
+end-to-end test ran N of M changed lines` and a row per file of such lines, the first eight with the
+rest folded under `… N more files` until `Enter` unfolds them, each opening on the file at the first
+of them with every one marked by a bar of the colour of a moved line and the status line saying it
+was changed in the stretch and run by no end-to-end test, or that it changed no code, or that every
+changed line ran; a warning when some end-to-end tests left no coverage, whose runs are then not
+counted; and the stretch's base commit, when it has one: recorded, with how many tests, or not, with
+`b` to record it, or that no command records the tests. While the overview has the keys, the row
+under its cursor explains itself beside it. `b` makes the worktree of the base and runs the
+end-to-end command there in the background; the row says it is recording, for how long and the last
+line it printed, and when it ends the status line says how it went and both screens read the stretch
+again. Each test in the list carries `Δn` for the changed lines it ran, its result before and now
+when they differ (`✗→✓`), and `screen changed`, or `steps changed`, when its run differs from the
+one at the base. In a test's own view, once the base is recorded, its recording at the base is
+played beside the one now (one above the other when both do not fit across), and its steps are
+paired: both times, both marks, the step, and `only now`, `only before` or `screen changed`; `Enter`
+on a pair takes both recordings to it, and `Space`, `]`, `[` and `0` move both.
 
 The explorer has a side panel — the file tree (folding, filter, status letters, pending-comment
 counts for files and directories; past the tenth file of a directory the rest fold behind `… N

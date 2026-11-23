@@ -176,6 +176,23 @@ mod tests {
         }
     }
 
+    /// The selected test's view, beside the end-to-end tests.
+    fn test_view(app: &App) -> &super::app::EndToEndTestState {
+        match app.screen() {
+            Screen::EndToEnd(state) => state.test.as_deref().expect("a test beside the list"),
+            _ => panic!("not the end-to-end tests"),
+        }
+    }
+
+    fn test_view_mut(app: &mut App) -> &mut super::app::EndToEndTestState {
+        match app.screens.last_mut() {
+            Some(Screen::EndToEnd(state)) => {
+                state.test.as_deref_mut().expect("a test beside the list")
+            }
+            _ => panic!("not the end-to-end tests"),
+        }
+    }
+
     fn draw(term: &mut Terminal<TestBackend>, app: &mut App) -> String {
         term.draw(|f| super::ui::draw(f, app)).unwrap();
         let buffer = term.backend().buffer().clone();
@@ -741,6 +758,10 @@ mod tests {
         );
         assert!(screen.contains("✓ a file opens"), "{screen}");
         assert!(screen.contains("○ a comment is saved"), "{screen}");
+        // It opens on the overview; the first test is a row down.
+        assert!(screen.contains("In the last 7 days"), "{screen}");
+        press(&mut app, &[KeyCode::Char('j')]);
+        let screen = draw(&mut term, &mut app);
         assert!(
             screen.contains("tests/cli.rs:3 · it drives a terminal"),
             "{screen}"
@@ -906,13 +927,14 @@ mod tests {
             panic!("the list");
         };
         let unran = state
-            .rows
+            .overview
             .items
             .iter()
             .position(|r| *r == E2eRow::Unran(0))
             .unwrap();
         if let Some(Screen::EndToEnd(state)) = app.screens.last_mut() {
-            state.rows.cursor = unran;
+            state.main = true;
+            state.overview.cursor = unran;
         }
         let screen = draw(&mut term, &mut app);
         assert!(
@@ -943,7 +965,7 @@ mod tests {
         let Screen::EndToEnd(state) = app.screen() else {
             panic!("back on the list");
         };
-        assert_eq!(state.rows.cursor, unran);
+        assert_eq!(state.overview.cursor, unran);
         let test = state
             .rows
             .items
@@ -951,14 +973,13 @@ mod tests {
             .position(|r| matches!(r, E2eRow::Test(_)))
             .unwrap();
         if let Some(Screen::EndToEnd(state)) = app.screens.last_mut() {
+            state.main = false;
             state.rows.cursor = test;
         }
 
-        // The test on its own: before and after, side by side, the steps paired.
+        // The test beside the list: before and after, side by side, the steps paired.
         press(&mut app, &[KeyCode::Enter]);
-        let Screen::EndToEndTest(state) = app.screen() else {
-            panic!("the test's own screen");
-        };
+        let state = test_view(&app);
         let rows = state.rows.items.clone();
         assert!(rows.contains(&TestRow::Pair(1)), "{rows:?}");
         let screen = draw(&mut term, &mut app);
@@ -970,9 +991,7 @@ mod tests {
         assert!(screen.contains("now · "), "{screen}");
         assert!(screen.contains("it is saved  screen changed"), "{screen}");
         let pair = rows.iter().position(|r| *r == TestRow::Pair(1)).unwrap();
-        if let Some(Screen::EndToEndTest(state)) = app.screens.last_mut() {
-            state.rows.cursor = pair;
-        }
+        test_view_mut(&mut app).rows.cursor = pair;
         press(&mut app, &[KeyCode::Enter]);
         let screen = draw(&mut term, &mut app);
         assert!(
@@ -1032,11 +1051,9 @@ mod tests {
         press(&mut app, &[KeyCode::Char('E')]);
         until_indexed(&mut app);
 
-        // Enter opens the test on its own.
-        press(&mut app, &[KeyCode::Enter]);
-        let Screen::EndToEndTest(state) = app.screen() else {
-            panic!("the test's own screen");
-        };
+        // The test is beside the list once selected; Enter gives it the keys.
+        press(&mut app, &[KeyCode::Char('j'), KeyCode::Enter]);
+        let state = test_view(&app);
         let rows = state.rows.items.clone();
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("test a review is saved"), "{screen}");
@@ -1067,15 +1084,13 @@ mod tests {
             "{screen}"
         );
         assert!(
-            screen.contains("saving works · api · src/unit.rs:2 · shares src/review.rs"),
+            screen.contains("saving works · api · src/unit.rs:2 · shares src/review"),
             "{screen}"
         );
 
         // Enter on a step goes to its moment of the recording.
         let step = rows.iter().position(|r| *r == TestRow::Step(1)).unwrap();
-        if let Some(Screen::EndToEndTest(state)) = app.screens.last_mut() {
-            state.rows.cursor = step;
-        }
+        test_view_mut(&mut app).rows.cursor = step;
         press(&mut app, &[KeyCode::Enter]);
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("saved"), "{screen}");
@@ -1086,9 +1101,7 @@ mod tests {
 
         // A file it ran opens with those lines marked.
         let ran = rows.iter().position(|r| *r == TestRow::Ran(0)).unwrap();
-        if let Some(Screen::EndToEndTest(state)) = app.screens.last_mut() {
-            state.rows.cursor = ran;
-        }
+        test_view_mut(&mut app).rows.cursor = ran;
         press(&mut app, &[KeyCode::Enter]);
         assert!(matches!(app.screen(), Screen::Explorer));
         let viewer = app.viewer.as_ref().unwrap();
@@ -1101,19 +1114,14 @@ mod tests {
         assert!(screen.contains("ran by “a review is saved”"), "{screen}");
 
         // The documentation opens at its heading.
-        press(&mut app, &[KeyCode::Char('E'), KeyCode::Enter]);
-        let doc = match app.screen() {
-            Screen::EndToEndTest(state) => state
-                .rows
-                .items
-                .iter()
-                .position(|r| *r == TestRow::Doc(0))
-                .unwrap(),
-            _ => panic!("the test's own screen"),
-        };
-        if let Some(Screen::EndToEndTest(state)) = app.screens.last_mut() {
-            state.rows.cursor = doc;
-        }
+        press(&mut app, &[KeyCode::Char('E')]);
+        let doc = test_view(&app)
+            .rows
+            .items
+            .iter()
+            .position(|r| *r == TestRow::Doc(0))
+            .unwrap();
+        test_view_mut(&mut app).rows.cursor = doc;
         press(&mut app, &[KeyCode::Enter]);
         let viewer = app.viewer.as_ref().unwrap();
         assert_eq!(viewer.path, "README.md");
@@ -1123,12 +1131,10 @@ mod tests {
             "a file opened otherwise is not marked"
         );
 
-        // q goes back to the list.
-        press(
-            &mut app,
-            &[KeyCode::Char('E'), KeyCode::Enter, KeyCode::Char('q')],
-        );
-        assert!(matches!(app.screen(), Screen::EndToEnd(_)));
+        // E comes back to the test beside the list, and q gives the list the keys again.
+        press(&mut app, &[KeyCode::Char('E'), KeyCode::Char('q')]);
+        assert!(matches!(app.screen(), Screen::EndToEnd(state) if !state.main));
+        assert!(!app.quit);
     }
 
     #[test]

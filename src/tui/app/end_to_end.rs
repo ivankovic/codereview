@@ -18,10 +18,12 @@ use crate::recording::{Cast, Kind, Recording};
 use crate::stretch::{Outcome, Report, Touched};
 use crate::tui::viewer::RanBy;
 
-/// One row of the list: what the stretch did, then a file's heading, a test, or a recording
-/// whose test is gone.
+/// One row of the side panel — the overview, a file's heading, a test, or a recording whose
+/// test is gone — or of the overview beside it, which is what the stretch did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum E2eRow {
+    /// The first row of the side panel: what the tests are, and what the stretch did to them.
+    Overview,
     /// The heading over what the stretch of history did.
     Stretch,
     /// Something said that leads nowhere; `true` when it is a warning.
@@ -50,7 +52,8 @@ impl E2eRow {
     fn selectable(&self) -> bool {
         matches!(
             self,
-            E2eRow::Test(_)
+            E2eRow::Overview
+                | E2eRow::Test(_)
                 | E2eRow::Orphan(_)
                 | E2eRow::Change(_)
                 | E2eRow::Unran(_)
@@ -79,6 +82,13 @@ pub struct EndToEndState {
     pub full: bool,
     /// Every file of changed code no end-to-end test ran is listed, not only the first few.
     pub all_unran: bool,
+    /// What the stretch did, the overview's own rows, beside the side panel while it is on
+    /// the overview.
+    pub overview: ListState<E2eRow>,
+    /// The selected test's own view, beside the side panel.
+    pub test: Option<Box<EndToEndTestState>>,
+    /// Whether the keys go to what is beside the side panel rather than to the panel.
+    pub main: bool,
 }
 
 /// A terminal recording played into frames, or why it could not be; shared between the list
@@ -194,10 +204,9 @@ impl EndToEndState {
         report: Option<std::result::Result<Report, String>>,
         all_unran: bool,
     ) -> Self {
-        let rows = opening
-            .as_ref()
-            .map(|o| rows_of(o, report.as_ref(), all_unran))
-            .unwrap_or_default();
+        let rows = opening.as_ref().map(rows_of).unwrap_or_default();
+        let mut overview = ListState::new(overview_rows(report.as_ref(), all_unran));
+        settle(&mut overview, 1, E2eRow::selectable);
         let mut state = Self {
             opening,
             from_overview,
@@ -207,17 +216,11 @@ impl EndToEndState {
             player: Player::default(),
             full: false,
             all_unran,
+            overview,
+            test: None,
+            main: false,
         };
-        // On the first test, whatever the stretch has to say above it: the tests are what a
-        // repository opens on.
-        if let Some(first) = state
-            .rows
-            .items
-            .iter()
-            .position(|r| matches!(r, E2eRow::Test(_)))
-        {
-            state.rows.cursor = first;
-        }
+        // On the overview, the first row: what a repository opens on.
         state.settle(1);
         state
     }
@@ -354,21 +357,10 @@ pub(super) fn played(
 
 /// The list: what the stretch did, each file's tests under its name, then the recordings of
 /// tests no longer here.
-fn rows_of(
-    opening: &Opening,
-    report: Option<&std::result::Result<Report, String>>,
-    all_unran: bool,
-) -> Vec<E2eRow> {
+fn rows_of(opening: &Opening) -> Vec<E2eRow> {
     let mut rows = Vec::new();
     if !opening.missing() {
-        match report {
-            Some(Ok(report)) => stretch_rows(report, all_unran, &mut rows),
-            Some(Err(e)) => {
-                rows.push(E2eRow::Stretch);
-                rows.push(E2eRow::Note(e.clone(), true));
-            }
-            None => {}
-        }
+        rows.push(E2eRow::Overview);
     }
     let counts = crate::e2e::by_file(&opening.tests);
     let mut last: Option<&str> = None;
@@ -385,6 +377,23 @@ fn rows_of(
     if !opening.orphans.is_empty() {
         rows.push(E2eRow::Orphans(opening.orphans.len()));
         rows.extend((0..opening.orphans.len()).map(E2eRow::Orphan));
+    }
+    rows
+}
+
+/// The overview's rows: what the stretch did, why it cannot be said, or that it is being read.
+fn overview_rows(
+    report: Option<&std::result::Result<Report, String>>,
+    all_unran: bool,
+) -> Vec<E2eRow> {
+    let mut rows = Vec::new();
+    match report {
+        Some(Ok(report)) => stretch_rows(report, all_unran, &mut rows),
+        Some(Err(e)) => {
+            rows.push(E2eRow::Stretch);
+            rows.push(E2eRow::Note(e.clone(), true));
+        }
+        None => rows.push(E2eRow::Note("Reading what the stretch did…".into(), false)),
     }
     rows
 }
@@ -472,15 +481,18 @@ impl App {
             _ => false,
         };
         let mut state = EndToEndState::new(opening, from_overview, report, all_unran);
-        if let Some(Screen::EndToEnd(old)) = self.screens.last() {
+        if let Some(Screen::EndToEnd(old)) = self.screens.last_mut() {
             if let Some(key) = old.key() {
                 state.find(&key);
             }
             state.full = old.full;
+            state.main = old.main;
+            state.test = old.test.take();
             self.screens.pop();
         }
         self.screens.push(Screen::EndToEnd(Box::new(state)));
         self.load_cast();
+        self.load_test_view(true);
     }
 
     /// The opening as it can be had now: from the index once it is built, from
@@ -514,7 +526,14 @@ impl App {
             _ => false,
         });
         if !stale {
-            self.refresh_end_to_end_tests(only_provisional);
+            let waiting = matches!(
+                self.screens.last(),
+                Some(Screen::EndToEnd(state))
+                    if state.test.as_ref().is_some_and(|t| t.detail.is_none())
+            );
+            if !only_provisional || waiting {
+                self.load_test_view(true);
+            }
             return;
         }
         let (opening, from_overview) = self.read_opening();
@@ -534,11 +553,13 @@ impl App {
                 fresh.find(&key);
             }
             fresh.full = state.full;
+            fresh.main = state.main;
+            fresh.test = state.test.take();
             fresh.casts = std::mem::take(&mut state.casts);
             **state = fresh;
         }
         self.load_cast();
-        self.refresh_end_to_end_tests(only_provisional);
+        self.load_test_view(true);
     }
 
     /// Plays the selected terminal recording into frames, the first time it is selected,
@@ -558,38 +579,154 @@ impl App {
     /// Whether a recording is playing, so the screen has to be drawn again soon.
     pub fn animating(&self) -> bool {
         match self.screen() {
-            Screen::EndToEnd(s) => s.player.playing.is_some(),
-            Screen::EndToEndTest(s) => s.player.playing.is_some() || s.before.playing.is_some(),
+            Screen::EndToEnd(s) => {
+                s.player.playing.is_some()
+                    || s.test
+                        .as_ref()
+                        .is_some_and(|t| t.player.playing.is_some() || t.before.playing.is_some())
+            }
             _ => false,
         }
     }
 
     /// Moves a playing recording on. True when it moved.
     pub(super) fn advance_playback(&mut self) -> bool {
+        let now = Instant::now();
         match self.screens.last_mut() {
-            Some(Screen::EndToEnd(state)) => state.player.advance(Instant::now()),
-            Some(Screen::EndToEndTest(state)) => {
-                let now = Instant::now();
-                state.player.advance(now) | state.before.advance(now)
+            Some(Screen::EndToEnd(state)) => {
+                let mut moved = state.player.advance(now);
+                if let Some(t) = &mut state.test {
+                    moved |= t.player.advance(now) | t.before.advance(now);
+                }
+                moved
             }
             _ => false,
         }
     }
 
-    /// Moves the cursor by `delta` rows, past headings, as the mouse wheel does.
+    /// Moves the cursor of whatever has the keys by `delta` rows, past headings, as the mouse
+    /// wheel does.
     pub(super) fn move_end_to_end(&mut self, delta: isize) {
         let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
             return;
         };
+        if state.main {
+            match (state.rows.current(), &mut state.test) {
+                (Some(E2eRow::Overview), _) => {
+                    state.overview.move_by(delta);
+                    settle(&mut state.overview, delta, E2eRow::selectable);
+                }
+                (Some(E2eRow::Test(_)), Some(t)) => {
+                    t.rows.move_by(delta);
+                    settle(&mut t.rows, delta, super::one_test::TestRow::selectable);
+                }
+                _ => {}
+            }
+            return;
+        }
         let before = state.rows.cursor;
         state.rows.move_by(delta);
         state.settle(delta);
         if state.rows.cursor != before {
             self.load_cast();
+            self.load_test_view(false);
+        }
+    }
+
+    /// Makes the view of the test under the side panel's cursor, beside it: when the cursor
+    /// came to another test, or, `again`, to read the same one afresh, where it was left.
+    pub(super) fn load_test_view(&mut self, again: bool) {
+        let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
+            return;
+        };
+        let Some(t) = state.test() else {
+            state.test = None;
+            if !matches!(state.rows.current(), Some(E2eRow::Overview)) {
+                state.main = false;
+            }
+            return;
+        };
+        let key = (t.test.path.clone(), t.test.name.clone());
+        let old = state.test.take();
+        if !again && old.as_ref().is_some_and(|o| o.key == key) {
+            state.test = old;
+            return;
+        }
+        let mut fresh = self.read_test_view(key);
+        if let Some(old) = old.filter(|o| o.key == fresh.key) {
+            fresh.keep_place_of(&old);
+        }
+        if let Some(Screen::EndToEnd(state)) = self.screens.last_mut() {
+            state.test = Some(Box::new(fresh));
         }
     }
 
     pub(super) fn handle_end_to_end_key(&mut self, key: KeyEvent) {
+        // The view beside the list follows its cursor, however the cursor got there.
+        self.load_test_view(false);
+        let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
+            return;
+        };
+        let back = matches!(
+            key.code,
+            KeyCode::Char('q') | KeyCode::Esc | KeyCode::Tab | KeyCode::Char('h') | KeyCode::Left
+        );
+        match (state.main, state.rows.current()) {
+            (true, Some(E2eRow::Overview)) if back => state.main = false,
+            (true, Some(E2eRow::Overview)) => self.handle_overview_key(key),
+            (true, Some(E2eRow::Test(_)))
+                if back && state.test.as_ref().is_some_and(|t| t.full) =>
+            {
+                if let Some(t) = &mut state.test {
+                    t.full = false;
+                }
+            }
+            (true, Some(E2eRow::Test(_))) if back => state.main = false,
+            (true, Some(E2eRow::Test(_))) => self.handle_end_to_end_test_key(key),
+            _ => self.handle_end_to_end_list_key(key),
+        }
+    }
+
+    /// The overview beside the side panel: what the stretch did, each row leading to it.
+    fn handle_overview_key(&mut self, key: KeyEvent) {
+        let height = self.measured.list_height.max(1) as isize;
+        let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
+            return;
+        };
+        let before = state.overview.cursor;
+        if state.overview.handle_nav(key, height) {
+            let direction = state.overview.cursor as isize - before as isize;
+            settle(
+                &mut state.overview,
+                if direction < 0 { -1 } else { 1 },
+                E2eRow::selectable,
+            );
+            return;
+        }
+        match key.code {
+            KeyCode::Char('w') => self.next_stretch(),
+            KeyCode::Char('b') => self.record_base(),
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                if matches!(state.overview.current(), Some(E2eRow::MoreUnran(_))) {
+                    let cursor = state.overview.cursor;
+                    state.all_unran = true;
+                    state.overview = ListState::new(overview_rows(state.report.as_ref(), true));
+                    state.overview.cursor = cursor;
+                    settle(&mut state.overview, 1, E2eRow::selectable);
+                    return;
+                }
+                let row = state.overview.current().cloned();
+                let report = state.report().cloned();
+                if let (Some(row), Some(report)) = (row, report) {
+                    self.open_stretch_row(&row, &report);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The side panel: the overview, the tests, and the recordings of tests no longer here.
+    fn handle_end_to_end_list_key(&mut self, key: KeyEvent) {
         let height = self.measured.list_height.max(1) as isize;
         let now = Instant::now();
         let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
@@ -601,11 +738,17 @@ impl App {
             state.settle(if direction < 0 { -1 } else { 1 });
             if state.rows.cursor != before {
                 self.load_cast();
+                self.load_test_view(false);
             }
             return;
         }
         let missing = state.opening.as_ref().is_some_and(Opening::missing);
+        let on_test = state.test.is_some() && state.test().is_some();
         match key.code {
+            // The selected test's recording, played and moved through from the side panel.
+            KeyCode::Char(' ' | 'p' | ']' | '[' | '0' | 'z' | 'o') if on_test => {
+                self.handle_end_to_end_test_key(key)
+            }
             KeyCode::Char('q') | KeyCode::Esc if state.full => state.full = false,
             KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
             KeyCode::Char(' ') | KeyCode::Char('p') => {
@@ -637,42 +780,13 @@ impl App {
             }
             KeyCode::Char('w') => self.next_stretch(),
             KeyCode::Char('b') => self.record_base(),
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right
-                if matches!(
-                    state.rows.current(),
-                    Some(
-                        E2eRow::Change(_) | E2eRow::Unran(_) | E2eRow::MoreUnran(_) | E2eRow::Base
-                    )
-                ) =>
+            // The overview and a test are beside the panel: the keys go there.
+            KeyCode::Enter | KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right
+                if matches!(state.rows.current(), Some(E2eRow::Overview)) || on_test =>
             {
-                if matches!(state.rows.current(), Some(E2eRow::MoreUnran(_))) {
-                    let cursor = state.rows.cursor;
-                    let opening = state.opening.clone();
-                    let report = state.report.clone();
-                    state.all_unran = true;
-                    state.rows = ListState::new(
-                        opening
-                            .as_ref()
-                            .map(|o| rows_of(o, report.as_ref(), true))
-                            .unwrap_or_default(),
-                    );
-                    state.rows.cursor = cursor;
-                    state.settle(1);
-                    return;
-                }
-                let row = state.rows.current().cloned();
-                let report = state.report().cloned();
-                if let (Some(row), Some(report)) = (row, report) {
-                    self.open_stretch_row(&row, &report);
-                }
+                state.main = true;
             }
-            // A test opens on its own screen; an orphan, whose test is gone, has nothing
-            // more to show than the list does.
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right if state.test().is_some() => {
-                let t = state.test().expect("a test");
-                let (path, name) = (t.test.path.clone(), t.test.name.clone());
-                self.push_end_to_end_test(&path, &name);
-            }
+            // An orphan, whose test is gone, has nothing more to show than its source.
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('s') => {
                 let target = match (state.test(), state.recording()) {
                     (Some(t), _) => Some((t.test.path.clone(), t.test.line)),
@@ -695,11 +809,8 @@ impl App {
             .position(|c| *c == self.stretch)
             .unwrap_or(0);
         self.stretch = Stretch::CHOICES[(at + 1) % Stretch::CHOICES.len()].clone();
-        match self.screen() {
-            Screen::EndToEnd(_) => self.push_end_to_end(),
-            // The test's screen, and the list under it, which marks the same stretch.
-            Screen::EndToEndTest(_) => self.refresh_end_to_end(false),
-            _ => {}
+        if let Screen::EndToEnd(_) = self.screen() {
+            self.push_end_to_end();
         }
         self.info(format!("marking {}", self.stretch.name()));
     }
@@ -962,8 +1073,8 @@ mod tests {
             base: None,
             outcomes: Vec::new(),
         };
-        // No tests at all is its own finding, and says nothing of the stretch.
-        assert!(rows_of(&opening, Some(&Ok(report.clone())), false).is_empty());
+        // No tests at all is its own finding, with no overview to say what the stretch did.
+        assert!(rows_of(&opening).is_empty());
         let mut stretch = Vec::new();
         stretch_rows(&report, false, &mut stretch);
         let files = stretch

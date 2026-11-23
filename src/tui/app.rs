@@ -132,8 +132,6 @@ pub enum Screen {
     Spec(Box<SpecState>),
     /// The end-to-end tests: what a repository opens on.
     EndToEnd(Box<EndToEndState>),
-    /// One end-to-end test on its own: its recording, steps, code, documentation.
-    EndToEndTest(Box<EndToEndTestState>),
     Agent,
 }
 
@@ -150,7 +148,6 @@ impl Screen {
             Screen::Locations(_) => "locations",
             Screen::Spec(_) => "spec",
             Screen::EndToEnd(_) => "end to end",
-            Screen::EndToEndTest(_) => "test",
             Screen::Agent => "agent",
         }
     }
@@ -1260,7 +1257,6 @@ impl App {
             Screen::Locations(_) => self.handle_locations_key(key),
             Screen::Spec(_) => self.handle_spec_key(key),
             Screen::EndToEnd(_) => self.handle_end_to_end_key(key),
-            Screen::EndToEndTest(_) => self.handle_end_to_end_test_key(key),
             Screen::Agent => {
                 let height = self.measured.main_height;
                 let config = self.session.config.agent.clone();
@@ -1685,7 +1681,6 @@ impl App {
             Screen::Notes(n) => n.items.move_by(delta),
             Screen::Spec(state) => state.rows.move_by(delta),
             Screen::EndToEnd(_) => self.move_end_to_end(delta),
-            Screen::EndToEndTest(_) => self.move_end_to_end_test(delta),
         }
     }
 }

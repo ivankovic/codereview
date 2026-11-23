@@ -19,7 +19,7 @@ mod end_to_end;
 mod explorer;
 mod screens;
 
-use end_to_end::{draw_end_to_end, draw_end_to_end_test};
+use end_to_end::draw_end_to_end;
 use explorer::draw_explorer;
 use screens::{
     draw_changes, draw_diff, draw_locations, draw_log, draw_notes, draw_review, draw_spec,
@@ -165,7 +165,6 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
         Screen::Locations(_) => draw_locations(frame, app, main),
         Screen::Spec(_) => draw_spec(frame, app, main),
         Screen::EndToEnd(_) => draw_end_to_end(frame, app, main),
-        Screen::EndToEndTest(_) => draw_end_to_end_test(frame, app, main),
         Screen::Agent => {
             let theme = app.theme.clone();
             let label = app.agent_label();
@@ -464,11 +463,14 @@ fn hint_for(screen: &Screen) -> &'static str {
         Screen::Spec(_) => {
             "Enter open/close, diff, test or area  h close fold  / search  c group by  K kind  f files a test names  s stretch  q back"
         }
-        Screen::EndToEnd(_) => {
-            "Enter the test  Space play  ] [ steps  w stretch  b record before  s source  o video  1-4 focus  q quit"
+        Screen::EndToEnd(state) if state.main && state.test.is_some() => {
+            "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q/Tab the list"
         }
-        Screen::EndToEndTest(_) => {
-            "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q back"
+        Screen::EndToEnd(state) if state.main => {
+            "Enter go there  b record before  w stretch  q/Tab the list"
+        }
+        Screen::EndToEnd(_) => {
+            "Enter/Tab beside  Space play  ] [ steps  w stretch  b record before  s source  o video  \\ panel  1-4 focus  q quit"
         }
         Screen::Agent => {
             "i ask  A address all pending  Esc cancel  1-9/y/n answer  t thoughts  l log  C clear  R restart  q back"

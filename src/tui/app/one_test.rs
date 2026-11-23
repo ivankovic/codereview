@@ -35,7 +35,7 @@ pub enum TestRow {
 }
 
 impl TestRow {
-    fn selectable(&self) -> bool {
+    pub(super) fn selectable(&self) -> bool {
         matches!(
             self,
             TestRow::Step(_)
@@ -66,6 +66,24 @@ pub struct EndToEndTestState {
 }
 
 impl EndToEndTestState {
+    /// Takes over where `old`, a view of the same test, was: its cursor, whether its
+    /// recording had the whole screen, and where playback was in each recording still there.
+    pub fn keep_place_of(&mut self, old: &EndToEndTestState) {
+        self.rows.cursor = old.rows.cursor.min(self.rows.items.len().saturating_sub(1));
+        settle(&mut self.rows, 1, TestRow::selectable);
+        self.full = old.full;
+        if self.player.recording.as_ref().map(|r| &r.dir)
+            == old.player.recording.as_ref().map(|r| &r.dir)
+        {
+            self.player.position_ms = old.player.position_ms;
+        }
+        if self.before.recording.as_ref().map(|r| &r.dir)
+            == old.before.recording.as_ref().map(|r| &r.dir)
+        {
+            self.before.position_ms = old.before.position_ms;
+        }
+    }
+
     fn new(
         key: (String, String),
         detail: Option<Detail>,
@@ -196,17 +214,20 @@ fn rows_of(
 }
 
 impl App {
-    /// The end-to-end test in `path` called `name`, on a screen of its own over the list.
-    pub fn push_end_to_end_test(&mut self, path: &str, name: &str) {
-        let key = (path.to_string(), name.to_string());
+    /// The view of the end-to-end test `key` names, by file and name, as it can be read now.
+    pub(super) fn read_test_view(&mut self, key: (String, String)) -> EndToEndTestState {
         let detail = self.read_detail(&key);
         let cast = self.cast_for(detail.as_ref());
         let compared = self.read_comparison(&key);
-        let state = EndToEndTestState::new(key, detail, cast, compared, self.has_coverage_target());
-        if matches!(self.screen(), Screen::EndToEndTest(_)) {
-            self.screens.pop();
+        EndToEndTestState::new(key, detail, cast, compared, self.has_coverage_target())
+    }
+
+    /// The selected test's view, when the end-to-end tests are on screen and one is selected.
+    fn test_view_mut(&mut self) -> Option<&mut EndToEndTestState> {
+        match self.screens.last_mut()? {
+            Screen::EndToEnd(state) => state.test.as_deref_mut(),
+            _ => None,
         }
-        self.screens.push(Screen::EndToEndTest(Box::new(state)));
     }
 
     /// The test's detail as it can be had now: not while another thread builds the symbol
@@ -252,71 +273,10 @@ impl App {
             .is_ok_and(|m| m.lines().any(|l| l.starts_with("e2e-coverage:")))
     }
 
-    /// Reads every test screen on the stack again, keeping each where it was: after a
-    /// refresh, and, for the ones still waiting for it, when the index arrives.
-    pub(super) fn refresh_end_to_end_tests(&mut self, only_provisional: bool) {
-        let keys: Vec<(String, String)> = self
-            .every_screen_mut()
-            .filter_map(|s| match s {
-                Screen::EndToEndTest(state) if !only_provisional || state.detail.is_none() => {
-                    Some(state.key.clone())
-                }
-                _ => None,
-            })
-            .collect();
-        for key in keys {
-            let detail = self.read_detail(&key);
-            let cast = self.cast_for(detail.as_ref());
-            let compared = self.read_comparison(&key);
-            let coverage_target = self.has_coverage_target();
-            for screen in self.every_screen_mut() {
-                let Screen::EndToEndTest(state) = screen else {
-                    continue;
-                };
-                if state.key != key {
-                    continue;
-                }
-                let mut fresh = EndToEndTestState::new(
-                    key.clone(),
-                    detail.clone(),
-                    cast.clone(),
-                    compared.clone(),
-                    coverage_target,
-                );
-                fresh.rows.cursor = state
-                    .rows
-                    .cursor
-                    .min(fresh.rows.items.len().saturating_sub(1));
-                settle(&mut fresh.rows, 1, TestRow::selectable);
-                fresh.full = state.full;
-                if fresh.player.recording.as_ref().map(|r| &r.dir)
-                    == state.player.recording.as_ref().map(|r| &r.dir)
-                {
-                    fresh.player.position_ms = state.player.position_ms;
-                }
-                if fresh.before.recording.as_ref().map(|r| &r.dir)
-                    == state.before.recording.as_ref().map(|r| &r.dir)
-                {
-                    fresh.before.position_ms = state.before.position_ms;
-                }
-                **state = fresh;
-            }
-        }
-    }
-
-    /// Moves the cursor by `delta` rows, past what leads nowhere, as the mouse wheel does.
-    pub(super) fn move_end_to_end_test(&mut self, delta: isize) {
-        let Some(Screen::EndToEndTest(state)) = self.screens.last_mut() else {
-            return;
-        };
-        state.rows.move_by(delta);
-        settle(&mut state.rows, delta, TestRow::selectable);
-    }
-
     pub(super) fn handle_end_to_end_test_key(&mut self, key: KeyEvent) {
         let height = self.measured.list_height.max(1) as isize;
         let now = Instant::now();
-        let Some(Screen::EndToEndTest(state)) = self.screens.last_mut() else {
+        let Some(state) = self.test_view_mut() else {
             return;
         };
         let before = state.rows.cursor;
@@ -330,8 +290,6 @@ impl App {
             return;
         }
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc if state.full => state.full = false,
-            KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
             // Both recordings, when there are two: the same test, before and after, side by
             // side and in step.
             KeyCode::Char(' ') | KeyCode::Char('p') => {

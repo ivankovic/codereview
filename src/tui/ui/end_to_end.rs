@@ -70,19 +70,70 @@ pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
         draw_recording(frame, &theme, &state.player, inner, true, "");
         return;
     }
-    // Wider while the stretch has something to say, since its rows are sentences.
-    let share = if state.report().is_some() { 2 } else { 1 };
-    let list_width = (inner.width * share / (share + 2)).clamp(24.min(inner.width), 64);
-    let [list, gap, detail] = Layout::horizontal([
+    if let Some(test) = state.test.as_mut().filter(|t| t.full) {
+        draw_test_view(frame, &theme, test, inner, true);
+        return;
+    }
+    // The side panel, which `\\` hides while there is something beside it, and beside it the
+    // overview or the selected test.
+    let list_width = if app.sidebar_hidden {
+        0
+    } else {
+        (inner.width / 3).clamp(24.min(inner.width), 48)
+    };
+    let [list, gap, main] = Layout::horizontal([
         Constraint::Length(list_width),
-        Constraint::Length(1),
+        Constraint::Length(u16::from(list_width > 0)),
         Constraint::Fill(1),
     ])
     .areas(inner);
     let _ = gap;
-    app.measured.list_height = list.height as usize;
-    draw_list(frame, &theme, state, base_status.as_deref(), list);
-    draw_detail(frame, &theme, state, detail);
+    let main_keys = state.main;
+    if list_width > 0 {
+        draw_list(frame, &theme, state, base_status.as_deref(), list, false);
+    }
+    let height = match (state.rows.current(), &mut state.test) {
+        (Some(E2eRow::Overview), _) => {
+            draw_overview(frame, &theme, state, base_status.as_deref(), main);
+            main.height
+        }
+        (Some(E2eRow::Test(_)), Some(test)) => draw_test_view(frame, &theme, test, main, main_keys),
+        _ => {
+            draw_detail(frame, &theme, state, main);
+            list.height
+        }
+    };
+    app.measured.list_height = if main_keys {
+        height as usize
+    } else {
+        list.height as usize
+    };
+}
+
+/// Beside the side panel, while it is on the overview: what the stretch did to the tests and
+/// the code, each row leading to it, and what the one under the cursor means.
+fn draw_overview(
+    frame: &mut Frame,
+    theme: &Theme,
+    state: &mut EndToEndState,
+    base_status: Option<&str>,
+    area: Rect,
+) {
+    let explained = matches!(
+        state.overview.current(),
+        Some(E2eRow::Change(_) | E2eRow::Unran(_) | E2eRow::Base)
+    ) && state.main;
+    let [rows, gap, detail] = Layout::horizontal([
+        Constraint::Fill(3),
+        Constraint::Length(u16::from(explained)),
+        Constraint::Fill(if explained { 2 } else { 0 }),
+    ])
+    .areas(area);
+    let _ = gap;
+    draw_list(frame, theme, state, base_status, rows, true);
+    if explained {
+        draw_stretch_detail(frame, theme, state, detail);
+    }
 }
 
 /// The repository has none: the first finding, what one would look like, and the offer.
@@ -162,23 +213,44 @@ fn draw_list(
     state: &mut EndToEndState,
     base_status: Option<&str>,
     area: Rect,
+    overview: bool,
 ) {
     let Some(opening) = &state.opening else {
         return;
     };
-    state.rows.ensure_visible(area.height as usize);
+    // The side panel's cursor shows while it has the keys, and stays, dimmer, while what is
+    // beside it has them, so it says what that is; the overview's shows only with the keys.
+    if overview {
+        state.overview.ensure_visible(area.height as usize);
+    } else {
+        state.rows.ensure_visible(area.height as usize);
+    }
     let state = &*state;
+    let rows = if overview {
+        &state.overview
+    } else {
+        &state.rows
+    };
+    let focused = overview == state.main;
+    let cursor_style = if focused {
+        style::cursor(theme)
+    } else {
+        style::cursor(theme).add_modifier(Modifier::DIM)
+    };
     let report = state.report();
     let width = area.width as usize;
     let dim = style::dim(theme);
     let lines = list_lines(
-        style::cursor(theme),
-        state.rows.items.iter(),
-        state.rows.cursor,
-        state.rows.scroll,
+        cursor_style,
+        rows.items.iter(),
+        rows.cursor,
+        rows.scroll,
         area.height as usize,
-        true,
+        focused || !overview,
         |row| match row {
+            E2eRow::Overview => {
+                Line::from(Span::styled(clip("Overview", width), Style::new().bold()))
+            }
             E2eRow::Stretch => Line::from(Span::styled(
                 clip(
                     &format!(
@@ -339,7 +411,7 @@ fn badges(
 
 /// What a row of the stretch says, beside the list.
 fn draw_stretch_detail(frame: &mut Frame, theme: &Theme, state: &EndToEndState, area: Rect) {
-    let (Some(report), Some(row)) = (state.report(), state.rows.current()) else {
+    let (Some(report), Some(row)) = (state.report(), state.overview.current()) else {
         return;
     };
     let width = area.width as usize;
@@ -433,7 +505,7 @@ fn draw_stretch_detail(frame: &mut Frame, theme: &Theme, state: &EndToEndState, 
             )));
             let said = if b.recorded > 0 {
                 format!(
-                    "The tests are recorded as they ran at {}, where {} starts. Each test shows how it went then against now; a test's own screen plays both.",
+                    "The tests are recorded as they ran at {}, where {} starts. Each test shows how it went then against now; a test's own view plays both.",
                     b.short, report.span.label
                 )
             } else {
@@ -453,13 +525,6 @@ fn draw_stretch_detail(frame: &mut Frame, theme: &Theme, state: &EndToEndState, 
 }
 
 fn draw_detail(frame: &mut Frame, theme: &Theme, state: &EndToEndState, area: Rect) {
-    if matches!(
-        state.rows.current(),
-        Some(E2eRow::Change(_) | E2eRow::Unran(_) | E2eRow::Base)
-    ) {
-        draw_stretch_detail(frame, theme, state, area);
-        return;
-    }
     let width = area.width as usize;
     let dim = style::dim(theme);
     let mut lines: Vec<Line> = Vec::new();
@@ -803,13 +868,17 @@ fn clip(text: &str, width: usize) -> String {
     out
 }
 
-/// One end-to-end test on its own: how its last run went, its recording, and the list that
-/// leads into the code and the documentation.
-pub(super) fn draw_end_to_end_test(frame: &mut Frame, app: &mut App, area: Rect) {
-    let theme = app.theme.clone();
-    let Screen::EndToEndTest(state) = app.screens.last_mut().expect("screen") else {
-        return;
-    };
+/// One end-to-end test, beside the side panel: how its last run went, its recording, and the
+/// list that leads into the code and the documentation. Returns the height of that list, for
+/// paging through it.
+fn draw_test_view(
+    frame: &mut Frame,
+    theme: &Theme,
+    state: &mut EndToEndTestState,
+    area: Rect,
+    focused: bool,
+) -> u16 {
+    let theme = theme.clone();
     let title: Line = match &state.detail {
         Some(d) => vec![" test ".into(), format!("{} ", d.test.test.label).bold()].into(),
         None => " test ".into(),
@@ -840,7 +909,7 @@ pub(super) fn draw_end_to_end_test(frame: &mut Frame, app: &mut App, area: Rect)
         } else {
             draw_recording(frame, &theme, &state.player, inner, true, "");
         }
-        return;
+        return inner.height;
     }
     let width = inner.width as usize;
     let dim = style::dim(&theme);
@@ -934,11 +1003,17 @@ pub(super) fn draw_end_to_end_test(frame: &mut Frame, app: &mut App, area: Rect)
         }
         None => {}
     }
-    app.measured.list_height = list.height as usize;
-    draw_test_rows(frame, &theme, state, list);
+    draw_test_rows(frame, &theme, state, list, focused);
+    list.height
 }
 
-fn draw_test_rows(frame: &mut Frame, theme: &Theme, state: &mut EndToEndTestState, area: Rect) {
+fn draw_test_rows(
+    frame: &mut Frame,
+    theme: &Theme,
+    state: &mut EndToEndTestState,
+    area: Rect,
+    focused: bool,
+) {
     state.rows.ensure_visible(area.height as usize);
     let width = area.width as usize;
     let dim = style::dim(theme);
@@ -965,7 +1040,7 @@ fn draw_test_rows(frame: &mut Frame, theme: &Theme, state: &mut EndToEndTestStat
         state.rows.cursor,
         state.rows.scroll,
         area.height as usize,
-        true,
+        focused,
         |row| {
             let Some(d) = detail else {
                 return match row {

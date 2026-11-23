@@ -2,7 +2,6 @@
 
 ## One frame, four focuses (PLAN.md phase 7)
 
-- Terminal UI: the Tests focus as a sidebar (overview, then each test) beside the main view.
 - Terminal UI: the breadcrumb's pickers choosing a branch, a pull request or a comparison as the
   range; Docs rendered rather than shown as source; CSV shown as a table.
 - Terminal UI: the review's comments in the Code sidebar rather than a screen over the code.
