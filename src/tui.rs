@@ -87,6 +87,10 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, ws: &mut Workspace) -> Re
         if ws.quit() {
             return Ok(());
         }
+        // Work a key deferred until its loading bar was on screen, which it is now.
+        if ws.app_mut().run_deferred() {
+            continue;
+        }
         if let Some((path, line)) = ws.app_mut().editor_request.take() {
             let app = ws.app_mut();
             let _ = execute!(stdout(), DisableMouseCapture);
@@ -260,6 +264,43 @@ mod tests {
 
     /// `o` is open, wherever one is: what to review. Opening something elsewhere — the file in
     /// `$EDITOR` — is `ge`.
+    /// Work a key asks for that takes a while is behind a bar in the middle of the screen,
+    /// drawn before the work runs and gone once it has; work in the background shows its bar
+    /// only when it has taken more than a moment.
+    #[test]
+    fn a_loading_bar_is_up_while_the_work_is_done() {
+        let dir = scratch_repo();
+        let mut app = App::new(scratch_session(dir.path()), None);
+        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        app.done_loading_for_tests();
+        app.later("working out each file's size…", |app| {
+            app.info("worked out")
+        });
+        let screen = draw(&mut term, &mut app);
+        let middle: Vec<&str> = screen.lines().skip(9).take(6).collect();
+        assert!(
+            middle
+                .iter()
+                .any(|l| l.contains("working out each file's size…")),
+            "{screen}"
+        );
+        assert!(middle.iter().any(|l| l.contains('█')), "the bar: {screen}");
+        assert!(app.run_deferred());
+        assert!(app.loading.is_none(), "taken down with its work");
+        let screen = draw(&mut term, &mut app);
+        assert!(!screen.contains("working out each file's size"), "{screen}");
+
+        app.show_loading_unless_quick("reading the symbols…");
+        let screen = draw(&mut term, &mut app);
+        assert!(
+            !screen.contains("reading the symbols"),
+            "not in its first moment: {screen}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(450));
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("reading the symbols"), "{screen}");
+    }
+
     #[test]
     fn o_opens_what_to_review_and_ge_opens_elsewhere() {
         let dir = scratch_repo();

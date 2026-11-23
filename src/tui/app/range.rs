@@ -323,10 +323,18 @@ impl App {
                             return;
                         };
                         self.range_picker = None;
-                        match crate::targets::range(&self.session.repo, &head, &base.rev) {
-                            Ok(stretch) => self.open_range(stretch, None, Ok(Vec::new())),
-                            Err(e) => self.error(format!("{e:#}")),
-                        }
+                        let label = match &head {
+                            Head::Worktree { name, .. } => {
+                                format!("taking worktree {name} as it is on disk…")
+                            }
+                            other => format!("comparing {} with {}…", other.label(), base.label),
+                        };
+                        self.later(label, move |app| {
+                            match crate::targets::range(&app.session.repo, &head, &base.rev) {
+                                Ok(stretch) => app.open_range(stretch, None, Ok(Vec::new())),
+                                Err(e) => app.error(format!("{e:#}")),
+                            }
+                        });
                     }
                     _ => {}
                 }
@@ -347,7 +355,7 @@ impl App {
     fn fetch_pull(&mut self, pr: PullRequest) {
         let (tx, rx) = channel();
         let root = self.session.root().to_path_buf();
-        self.info(format!("fetching pull request #{}…", pr.number));
+        self.show_loading(format!("fetching pull request #{}…", pr.number));
         std::thread::spawn(move || {
             let fetched = Repo::open(&root)
                 .and_then(|repo| {
@@ -380,8 +388,12 @@ impl App {
             && let Ok(fetched) = rx.try_recv()
         {
             self.asking.pull = None;
+            self.done_loading();
             match fetched {
-                Ok((pr, stretch, comments)) => self.open_range(stretch, Some(pr), comments),
+                Ok((pr, stretch, comments)) => self.later(
+                    format!("reading pull request #{}…", pr.number),
+                    move |app| app.open_range(stretch, Some(pr), comments),
+                ),
                 Err(e) => self.error(e),
             }
             changed = true;
@@ -516,7 +528,7 @@ impl App {
                         let target = state.target.clone();
                         let files = state.files.clone();
                         let sizes = state.sizes.clone();
-                        self.push_omni(target, files, sizes, i);
+                        self.push_omni(target, files, sizes, i, None);
                     }
                     Some(RangeRow::Comment(i)) => {
                         let Some(c) = state.comments.get(i).cloned() else {
@@ -532,12 +544,8 @@ impl App {
                         match files.iter().position(|f| f.path == path) {
                             Some(at) => {
                                 let sizes = state.sizes.clone();
-                                self.push_omni(target, files, sizes, at);
-                                if let (Some(Screen::Omni(o)), Some(line)) =
-                                    (self.screens.last_mut(), c.line)
-                                {
-                                    o.view.go_to_after_row(line.saturating_sub(1) as usize);
-                                }
+                                let row = c.line.map(|l| l.saturating_sub(1) as usize);
+                                self.push_omni(target, files, sizes, at, row);
                             }
                             None => self.jump_to(&path, c.line.unwrap_or(1) as usize),
                         }

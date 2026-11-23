@@ -385,11 +385,22 @@ fn a_worktree_s_uncommitted_work_is_reviewed_against_its_last_commit() {
     t.wait_for("-agent, uncommitted against");
     t.wait_for("Files it changes 2 · +1 −9");
     t.wait_for("NEW.txt");
-    t.step("open the new file's diff, in omnidiff's view, on the after side");
+    t.step("open the new file: a whole file added reads as code, not as a diff");
     t.keys(ENTER);
-    t.wait_for("A NEW.txt  +1  file 1/2");
+    t.wait_for("Added: the whole file is new · s: as a diff");
+    t.wait_for("1 │the agent wrote this");
+    t.wait_for("+1  file 1/2");
+    let top = t.screen().lines().next().unwrap_or_default().to_string();
+    t.check(
+        "the breadcrumb ends in the file, on the row it already had",
+        top.contains("› NEW.txt "),
+        || top.clone(),
+    );
+    t.step("switch to its diff, and back to its code");
+    t.keys("s");
     t.wait_for("After  - NEW.txt");
-    t.wait_for("the agent wrote this");
+    t.keys("s");
+    t.wait_for("Added: the whole file is new");
     t.step("comment on its first line");
     t.keys("c");
     t.wait_for("comment on NEW.txt:1");
@@ -402,10 +413,17 @@ fn a_worktree_s_uncommitted_work_is_reviewed_against_its_last_commit() {
         review.contains("In NEW.txt on line 1: who reads this?"),
         || review.clone(),
     );
-    t.step("the next file of the range");
+    t.step("the next file of the range, changed, so its diff");
     t.keys("]");
-    t.wait_for("M src/review.rs");
+    t.wait_for("› src/review.rs ");
     t.wait_for("file 2/2");
+    t.wait_for("After  - review.rs");
+    t.step("its code as it is in the worktree, then as it was at the base");
+    t.keys("s");
+    t.wait_for("As it is at the head");
+    t.keys("s");
+    t.wait_for("As it was at the base");
+    t.wait_for("fn a_review_round_trips()");
 }
 
 #[test]
@@ -526,7 +544,8 @@ fn a_pull_request_from_the_forge_opens_with_its_files_and_comments() {
     t.keys("G");
     t.keys(ENTER);
     t.wait_for("A line the feature adds.");
-    t.wait_for("M README.md  +1  file 1/1  change 1/1");
+    t.wait_for("+1  file 1/1  change 1/1");
+    t.wait_for("› README.md ");
 }
 
 #[test]

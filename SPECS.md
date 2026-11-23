@@ -653,9 +653,20 @@ The top row is a breadcrumb on the left and the focus picker on the right. The b
 where in the repository one is: its address — where `origin` points, without the scheme, or the
 checkout's path with the home directory as `~` — with its place among the open repositories when
 there are several and a `?` when another one's agent is asking, then the branch, the review range
-(the stretch the tests are seen through) and HEAD's abbreviated commit. It is read when the
-repository is. The focus picker is the four focuses, Tests, Code, Docs and Data, each with the
-digit that goes there, `1` to `4`, the one on screen lit; before it, the number of pending
+(the stretch the tests are seen through) and HEAD's abbreviated commit, and last, while a file is
+open — in the explorer, a diff, a range's file — that file's path, in the row the breadcrumb
+already has rather than one of its own. It is read when the repository is. Where it is too long
+for the row, the range and then the address give way from their ends, so the path stays whole.
+
+Whatever a key asks for that takes a while — taking a worktree as it is on disk, working out a
+range's sizes, a pull request's fetch, diffing a file — puts up a loading bar in the middle of the
+screen, over everything: what it is doing, a block running back and forth along a track, and the
+seconds it has taken. Work done on the interface's own thread is started once the bar is drawn,
+and the bar goes with it; work on another thread keeps it up until its answer is in. Reading the
+symbol index in the background puts the bar up only once it has taken longer than a moment.
+
+The focus picker is the four focuses, Tests, Code, Docs and Data, each with the digit that goes
+there, `1` to `4`, the one on screen lit; before it, the number of pending
 comments and whether the agent is working or asking. A focus is what the reader is looking at:
 the end-to-end tests and every test by its kind; the code; the repository's Markdown documents,
 other than `REVIEW.md`, `NOTES.md`, `OVERVIEW.md` and a changelog; and its datasets — CSV, TSV,
@@ -703,11 +714,18 @@ each with its own size: `+` inserted, `−` deleted, `~` updated and `↷` moved
 counts them, a line that is on both sides once, `no change in its code` when only what omnidiff
 ignores changed, and `not text` for a file that is not; and, for a pull request, its comments on
 those files, oldest first, each with its author and where it is, the ones on the whole pull
-request with the code. `Enter` on a file opens it in omnidiff's own diff view, hosted in the
-screen under a row naming the file, its size, which file of the range it is and which change the
-cursor is on: the two sides matched node by node, one panel at a time where both do not fit, the
-after side first; `n` and `p` go from change to change, `v` changes the layout, Tab the panel,
-and omnidiff's other keys work as they do in it. Around it, `]` and `[` go to the range's next and
+request with the code. `Enter` on a file opens it, its path in the breadcrumb and its size, which
+file of the range it is and which change the cursor is on in the status line. A changed file
+opens as a diff, in omnidiff's own diff view hosted in the screen: the two sides matched node by
+node, one panel at a time where both do not fit, the after side first; `n` and `p` go from change
+to change, `v` changes the layout, Tab the panel, and omnidiff's other keys work as they do in it.
+A file added or deleted opens as code instead — the file as it is at the head, or as it was at the
+base, syntax highlighted and nothing painted as changed — under a title saying that the whole
+file is new or gone, since a diff against nothing is half a screen of nothing and the other half
+one colour. `s` goes from the diff to the code at the head, to the code at the base, and back,
+leaving out a side the file does not have; the title says which end the code is. The code moves
+as a file does (`j`/`k`, Ctrl-d/u, Page Up/Down, Home/End, `G`), and the after side keeps the
+review's comments under their lines. Around either, `]` and `[` go to the range's next and
 previous file, `c` comments on the after side's line under the cursor, recording its text and the
 head's commit as a comment from a diff does, `/` searches, `ge` opens the line in `$EDITOR` and
 `q` goes back. A file that is not text opens in the plain diff. `Enter` on a comment on a line
@@ -850,8 +868,9 @@ poll with the entries that changed since the version the page names, each with t
 belongs at: a tool call is one entry, filled in as it runs, so entries are not append-only. It also
 sends what the turn is doing and what it has cost, already worded, so the page only draws. The page
 has the terminal UI's frame: across the top a breadcrumb — the repository's address (or, with
-several served, the selector that switches between them), the branch, the review range and the
-commit — and at the right the focus picker, Tests, Code, Docs and Data, in that order, the one on
+several served, the selector that switches between them), the branch, the review range, the
+commit and, in a file or a diff, the file's path, which the file's own header no longer repeats —
+and at the right the focus picker, Tests, Code, Docs and Data, in that order, the one on
 screen lit; beside it a button for the agent, which opens it over whatever focus was on screen and
 carries the mark that it is working or waiting for an answer, and the pending comments counted. The
 side panel hides and shows again with the header's ☰ or `\`, which is how this browser reads rather
@@ -870,6 +889,17 @@ directory, opens a text sheet of the page's own rather than the browser's prompt
 menu's Wrap lines, wraps long lines where the screen ends instead of scrolling sideways, with each
 continuation indented past the start of the code so a wrapped line still reads as one; the choice is
 kept in that browser's own storage.
+
+A request that takes longer than 300 milliseconds puts up a loading bar in the middle of the page:
+what it is doing — fetching the pull request, working out what a range changed, diffing,
+reading the tests — over a block running back and forth, gone when the last such request is in.
+Taps go through it to the page. The page's own polls (the repository's fingerprint, the agent's
+events, a recording's progress, the checks) and a refresh nobody asked for put up none.
+
+A diff of a file added or deleted opens as code — that side's lines in their own colours, nothing
+painted as changed, comments kept — with the header saying the whole file is new or gone instead
+of counting changes. A button in the header, or `s`, goes from the diff to the code at the head,
+to the code at the base, and back, leaving out a side the file does not have.
 
 A review that ends in "this is good" ends in a commit, from the changes view: the working tree
 side stages everything it lists and commits that, the staged side commits the index as it

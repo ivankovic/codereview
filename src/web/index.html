@@ -51,6 +51,7 @@ header .crumbs .sep { color: var(--dim); flex: none; }
 header #address { font-weight: 600; max-width: 30vw; }
 header #branch { max-width: 20vw; }
 header #range { color: var(--accent); max-width: 24vw; border: none; background: none; padding: 2px 4px; }
+header #crumbfile { font-weight: 600; max-width: 34vw; }
 header #range::after { content: ' ▾'; color: var(--dim); }
 /* The range picker, hanging from the breadcrumb: the stretches, the comparisons, the pull
    requests. A sheet over the lower part of a phone. */
@@ -61,6 +62,14 @@ header #range::after { content: ' ▾'; color: var(--dim); }
 #ranges .choice:hover, #ranges .choice.on { background: var(--cursor); }
 #ranges .choice .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #ranges .note { padding: 4px 12px; color: var(--dim); }
+/* The loading bar, in the middle of the page while a request takes a while: what it is doing,
+   and a block running back and forth along a track. Taps go through to the page under it. */
+#loading { position: fixed; z-index: 40; left: 50%; top: 45%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 48px));
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; padding: 12px 16px; box-shadow: 0 8px 24px rgba(0,0,0,.3); pointer-events: none; }
+#loading .label { margin-bottom: 8px; }
+#loading .track { height: 6px; border-radius: 3px; background: var(--cursor); overflow: hidden; position: relative; }
+#loading .bar { position: absolute; top: 0; bottom: 0; width: 30%; border-radius: 3px; background: var(--accent); animation: loading-run 1.1s ease-in-out infinite alternate; }
+@keyframes loading-run { from { left: 0; } to { left: 70%; } }
 #ranges input.find { width: calc(100% - 24px); margin: 4px 12px 2px; }
 #ranges .choice .dim { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The focus picker: what the reader is looking at, the one on screen lit. */
@@ -584,6 +593,8 @@ footer .msg.error { color: var(--del-fg); }
     <button id="range" class="crumb" title="open (o): a pull request, a worktree, a branch or a tag to review, or a stretch">last 7 days</button>
     <span class="sep c">›</span>
     <span id="commit" class="dim" title="the commit checked out"></span>
+    <span class="sep fsep" hidden>›</span>
+    <span id="crumbfile" class="mono" hidden title="the file on screen"></span>
   </nav>
   <span class="spacer"></span>
   <span id="pending" class="badge" title="pending comments"></span>
@@ -614,6 +625,7 @@ footer .msg.error { color: var(--del-fg); }
 </main>
 <div id="popover" hidden></div>
 <div id="ranges" hidden></div>
+<div id="loading" hidden role="status" aria-live="polite"><div class="label">loading…</div><div class="track"><div class="bar"></div></div></div>
 <div id="editor" hidden><div class="sheet"><div class="title"></div><div class="note" hidden></div><textarea></textarea>
   <div class="form"><div class="row"><button class="primary" data-act="ok">Save</button><button data-act="cancel">Cancel</button></div></div></div></div>
 <footer><span id="hint" class="dim"></span><span id="msg" class="msg"></span></footer>
@@ -668,7 +680,44 @@ function qs(params) {
     .join('&');
 }
 
+// What a request is doing, as the loading bar says it.
+const LOADING = [
+  ['/pulls', 'asking the forge for its pull requests…'], ['/pull', 'fetching the pull request…'],
+  ['/range/pick', 'taking what to review…'], ['/range', 'working out what it changed…'],
+  ['/e2e/test', 'reading the test…'], ['/e2e', 'reading the tests…'],
+  ['/stretch', 'working out what the stretch did…'], ['/spec', 'reading every test…'],
+  ['/diff', 'diffing…'], ['/file', 'reading the file…'], ['/log', 'reading the history…'],
+  ['/overview', 'reading the repository…'], ['/leans_on', 'reading the symbols…'],
+];
+
+// The bar in the middle of the page while requests take longer than a moment: drawn only past
+// 300 ms, so a quick answer never flashes it, and gone when the last of them is in.
+const loading = { running: 0, labels: [] };
+function startLoading(path) {
+  const label = (LOADING.find(([p]) => path.startsWith(p)) || [, 'loading…'])[1];
+  const entry = { label, shown: false };
+  entry.timer = setTimeout(() => { entry.shown = true; drawLoading(); }, 300);
+  loading.labels.push(entry);
+  return () => {
+    clearTimeout(entry.timer);
+    loading.labels = loading.labels.filter(e => e !== entry);
+    drawLoading();
+  };
+}
+function drawLoading() {
+  const shown = loading.labels.filter(e => e.shown);
+  const el = $('#loading');
+  el.hidden = !shown.length;
+  if (shown.length) el.querySelector('.label').textContent = shown[shown.length - 1].label;
+}
+
 async function api(path, opts = {}) {
+  // Polls and refreshes nobody asked for say nothing; anything else that takes a while does.
+  const done = opts.quiet || state.quietLoads ? () => {} : startLoading(path);
+  try { return await apiNow(path, opts); } finally { done(); }
+}
+
+async function apiNow(path, opts = {}) {
   const init = { headers: { 'Authorization': 'Bearer ' + TOKEN } };
   if (opts.body !== undefined) {
     init.method = 'POST';
@@ -1122,6 +1171,7 @@ async function openFile(path, line) {
     // On a phone the file replaces the tree.
     document.body.classList.add('showfile');
     renderFile.upToLine = line || 0;
+    setCrumbFile(path);
     renderFile();
     renderTree();
     if (line) scrollToLine(line);
@@ -1182,7 +1232,7 @@ function renderFile() {
   const st = state.statusLetters[f.path] || '';
   const head = document.createElement('div');
   head.className = 'panelhead file';
-  head.innerHTML = `<button class="phone" data-act="up" title="back to the file tree">‹ files</button><span class="path">${esc(f.path)}</span>
+  head.innerHTML = `<button class="phone" data-act="up" title="back to the file tree">‹ files</button>
     ${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
     <span class="dim lines">${f.total_lines > f.lines.length ? 'first ' + f.lines.length + ' of ' + f.total_lines : f.lines.length} lines</span>
     <span class="spacer"></span>
@@ -1440,7 +1490,7 @@ const agent = { version: 0, entries: [], status: 'not started', running: false, 
 
 async function agentPoll() {
   try {
-    const r = await api('/agent/events?since=' + agent.version);
+    const r = await api('/agent/events?since=' + agent.version, { quiet: true });
     agent.running = r.running; agent.status = r.status; agent.name = r.name; agent.permission = r.permission; agent.command = r.command;
     agent.progress = r.progress || ''; agent.usage = r.usage || '';
     // The server writes the transcript; this only puts each line where it says. Entries are
@@ -1754,7 +1804,7 @@ async function loadSymbolParts(content, link) {
 // more: what the week did to the tests, how the last run went, and what each area has.
 async function loadSummary(content) {
   const card = name => content.querySelector(`[data-card=${name}]`);
-  api('/analysis').then(checks => { if (card('run')) renderRunCard(card('run'), checks); })
+  api('/analysis', { quiet: true }).then(checks => { if (card('run')) renderRunCard(card('run'), checks); })
     .catch(e => { if (card('run')) card('run').innerHTML = '<h3>Last test run</h3><div class="dim">could not read the checks: ' + esc(e.message) + '</div>'; });
   try {
     const spec = await api('/spec');
@@ -2290,7 +2340,7 @@ function renderBase(into, r, root, stretch) {
   const watch = async () => {
     if (!into.isConnected) return;
     let run;
-    try { run = await api('/stretch/record?' + qs({ commit: b.commit })); } catch (e) { return fail(e); }
+    try { run = await api('/stretch/record?' + qs({ commit: b.commit }), { quiet: true }); } catch (e) { return fail(e); }
     if (!run) return;
     progress.hidden = false;
     progress.textContent = (run.running ? `recording at ${b.short}… ${Math.round((Date.now() - Date.parse(run.started)) / 1000)} s\n` : `${run.exit === 0 ? 'recorded' : 'the command failed'} in ${run.seconds.toFixed(0)} s\n`) + run.output.split('\n').slice(-6).join('\n');
@@ -2886,7 +2936,7 @@ function ago(iso) {
 // `into`, and again every two seconds while one runs, for as long as `into` is on the page.
 async function renderChecks(into) {
   let checks;
-  try { checks = await api('/analysis'); } catch (e) {
+  try { checks = await api('/analysis', { quiet: true }); } catch (e) {
     into.textContent = 'could not read the checks: ' + e.message;
     return;
   }
@@ -3038,7 +3088,9 @@ async function showDiff(params, siblings, index, { replace = false } = {}) {
     // Side by side needs room for two columns of code; below that it is unreadable. The
     // choice then sticks, so paging through files with ] and [ does not keep flipping layout.
     const unified = state.diff ? state.diff.unified : window.innerWidth < 1100;
-    state.diff = { params, data, unified, siblings, index };
+    // A whole file added or removed reads as code, not as a diff against nothing.
+    const shown = params.status === 'A' || params.status === '?' ? 'after' : params.status === 'D' ? 'before' : 'diff';
+    state.diff = { params, data, unified, siblings, index, shown };
     // A diff is a view of its own, whatever opened it. Without this a diff reached from the
     // explorer left the view as 'explore', where the keys below do nothing and typing in the
     // search box would put the file back.
@@ -3065,15 +3117,28 @@ function renderDiff() {
   const d = diff.data;
   const content = $('#content');
   content.innerHTML = '';
+  setCrumbFile(diff.params.old_path ? `${diff.params.old_path} → ${diff.params.path}` : diff.params.path);
   const changes = d.before.line_ops.filter(o => o !== 'none').length + '/' + d.after.line_ops.filter(o => o !== 'none').length;
+  // The diff, or one side as code: what `s` and the header's button go through, each side
+  // that has any text.
+  const choices = ['diff', ...(d.after.text ? ['after'] : []), ...(d.before.text ? ['before'] : [])];
+  if (!choices.includes(diff.shown)) diff.shown = 'diff';
+  const next = choices[(choices.indexOf(diff.shown) + 1) % choices.length];
+  const nextName = { diff: 'Diff', after: 'Code', before: 'Code at the base' }[next];
+  const status = diff.params.status;
+  const notice = diff.shown === 'diff' ? ''
+    : status === 'A' || status === '?' ? 'Added: the whole file is new'
+    : status === 'D' ? 'Deleted: the whole file is gone'
+    : diff.shown === 'after' ? 'As it is at the head' : 'As it was at the base';
   const head = document.createElement('div');
   head.className = 'panelhead';
-  head.innerHTML = `<button data-act="back">← back</button><span class="path">${esc(diff.params.old_path ? diff.params.old_path + ' → ' + diff.params.path : diff.params.path)}</span>
-    <span class="badge">${esc(d.target)}</span><span class="dim">−${d.before.line_ops.filter(o => o !== 'none').length} +${d.after.line_ops.filter(o => o !== 'none').length}</span>
-    <span class="dim">${d.structural ? 'structural diff' : 'line diff'}${d.large_residual ? ' · rewritten?' : ''}</span>
+  head.innerHTML = `<button data-act="back">← back</button>
+    ${notice ? `<b class="notice">${esc(notice)}</b>` : `<span class="badge">${esc(d.target)}</span><span class="dim">−${d.before.line_ops.filter(o => o !== 'none').length} +${d.after.line_ops.filter(o => o !== 'none').length}</span>
+    <span class="dim">${d.structural ? 'structural diff' : 'line diff'}${d.large_residual ? ' · rewritten?' : ''}</span>`}
     <span class="spacer"></span>
-    <span class="hunknav"><button data-act="prevh" title="previous hunk (p)">▲ hunk</button><button data-act="nexth" title="next hunk (n)">▼ hunk</button></span>
-    <button data-act="layout">${diff.unified ? 'Side by side' : 'Unified'}</button>
+    ${choices.length > 1 ? `<button data-act="shown" title="the diff, or the file as it is at one end (s)">${esc(nextName)}</button>` : ''}
+    ${diff.shown === 'diff' ? `<span class="hunknav"><button data-act="prevh" title="previous hunk (p)">▲ hunk</button><button data-act="nexth" title="next hunk (n)">▼ hunk</button></span>
+    <button data-act="layout">${diff.unified ? 'Side by side' : 'Unified'}</button>` : ''}
     ${diff.siblings.length > 1 ? `<button data-act="prev" ${diff.index === 0 ? 'disabled' : ''}>◀ file</button><span class="dim">${diff.index + 1}/${diff.siblings.length}</span><button data-act="next" ${diff.index + 1 >= diff.siblings.length ? 'disabled' : ''}>file ▶</button>` : ''}
     <button data-act="review" title="have the agent review this change into REVIEW.md">Ask agent to review</button>
     <button data-act="open">Open in explorer</button>`;
@@ -3081,6 +3146,7 @@ function renderDiff() {
   on(head, 'back', leaveDiff);
   on(head, 'review', () => askAgent({ preset: 'review_diff', path: diff.params.path, target: d.target }));
   on(head, 'layout', () => { diff.unified = !diff.unified; renderDiff(); });
+  on(head, 'shown', () => { diff.shown = next; renderDiff(); });
   on(head, 'open', () => openFile(diff.params.path));
   const sibling = k => {
     const f = diff.siblings[k];
@@ -3137,6 +3203,27 @@ function renderDiff() {
   diff.hunks = hunk;
   const byLine = {};
   for (const c of d.comments) if (c.line) (byLine[c.end_line] = byLine[c.end_line] || []).push(c);
+  if (diff.shown !== 'diff') {
+    // One side as code: its lines in their own colours, with nothing painted as changed. The
+    // after side keeps its comments and takes new ones.
+    const side = diff.shown;
+    const s = side === 'after' ? d.after : d.before;
+    const t = document.createElement('table');
+    t.className = 'code';
+    const count = s.text.split('\n').length - (s.text.endsWith('\n') ? 1 : 0);
+    for (let i = 0; i < count; i++) {
+      const tr = sideRow(side, i);
+      tr.className = '';
+      tr.querySelector('td.m').textContent = side === 'after' && tr.querySelector('td.m span') ? '●' : '';
+      const segs = side === 'after' ? d.after_lines[i] : d.before_lines[i];
+      tr.querySelector('td.c').innerHTML = renderSegments(segs || [], [], side === 'after' ? searchRangesFor(al[i] || '') : []);
+      t.appendChild(tr);
+      if (side === 'after') for (const c of byLine[i + 1] || []) t.appendChild(commentRow(c, 3, onChange));
+    }
+    content.appendChild(t);
+    hint('s switches between the diff and the code', 'the button in the header switches between the diff and the code');
+    return;
+  }
   if (!diff.unified) {
     const wrap = document.createElement('div');
     wrap.className = 'sbs';
@@ -3498,8 +3585,18 @@ const FOCUS_OF = { e2e: 'tests', spec: 'tests', overview: 'code', changes: 'code
   review: 'code', notes: 'code' };
 const lastInGroup = {};
 
+// The breadcrumb's last part: the file on screen, in a file or a diff, and nothing elsewhere.
+function setCrumbFile(path) {
+  $('#crumbfile').textContent = path || '';
+  $('#crumbfile').title = path || '';
+  $('#crumbfile').hidden = !path;
+  document.querySelector('header .crumbs .fsep').hidden = !path;
+}
+
 function setTabs(view) {
   state.view = view;
+  if (view !== 'explore' && view !== 'diff') setCrumbFile(null);
+  else if (view === 'explore' && !state.file) setCrumbFile(null);
   // The explorer is the code's, unless the documents or the data are what is being read.
   if (view === 'explore' || view === 'range') { if (!['code', 'docs', 'data'].includes(state.focus)) state.focus = 'code'; }
   else if (FOCUS_OF[view]) state.focus = FOCUS_OF[view];
@@ -3616,12 +3713,18 @@ $('#signout').onclick = async () => {
 async function doRefresh({ quiet = false } = {}) {
   const content = $('#content');
   const top = content.scrollTop, left = content.scrollLeft;
-  await api('/refresh', { post: true });
-  state.allComments = await api('/comments');
-  await loadState();
-  await loadRepos();
-  if (state.view === 'explore' && state.file) await openFile(state.file.path);
-  else if (!(quiet && state.view === 'agent')) rerenderCurrentView();
+  // A refresh nobody asked for puts up no loading bar either.
+  state.quietLoads = quiet;
+  try {
+    await api('/refresh', { post: true });
+    state.allComments = await api('/comments');
+    await loadState();
+    await loadRepos();
+    if (state.view === 'explore' && state.file) await openFile(state.file.path);
+    else if (!(quiet && state.view === 'agent')) await rerenderCurrentView();
+  } finally {
+    state.quietLoads = false;
+  }
   if (!quiet) { msg('refreshed'); return; }
   content.scrollTop = top;
   content.scrollLeft = left;
@@ -3647,7 +3750,7 @@ async function watchPoll() {
   watch.busy = true;
   try {
     const path = state.view === 'explore' && state.file ? state.file.path : '';
-    const r = await api('/version' + (path ? '?path=' + encodeURIComponent(path) : ''));
+    const r = await api('/version' + (path ? '?path=' + encodeURIComponent(path) : ''), { quiet: true });
     const first = watch.version === null;
     const moved = !first && r.version !== watch.version;
     watch.version = r.version;
@@ -3742,6 +3845,7 @@ document.addEventListener('keydown', e => {
     if (e.key === 'n') jumpHunk(1);
     if (e.key === 'p') jumpHunk(-1);
     if (e.key === 'u') { state.diff.unified = !state.diff.unified; renderDiff(); }
+    if (e.key === 's') $('#content [data-act=shown]')?.click();
     if (e.key === ']') $('#content [data-act=next]')?.click();
     if (e.key === '[') $('#content [data-act=prev]')?.click();
   }

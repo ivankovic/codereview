@@ -522,6 +522,63 @@ test('a worktree is reviewed as it is on disk, against its own last commit', asy
     /^worktree agent, uncommitted against [0-9a-f]{7}$/.test(document.querySelector('#range').textContent.trim()) ? true : document.querySelector('#range').textContent));
 }, { docs: ['SPECS.md#Pull requests and comparisons'] });
 
+test('an added file reads as code, with a way to its diff', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('#tests [data-test]');
+  t.step('review the agent\'s worktree against its last commit, and open the file it added');
+  await page.click('#range');
+  await page.waitForSelector('#ranges [data-head="worktree agent"]');
+  await page.click('#ranges [data-head="worktree agent"]');
+  await page.waitForFunction(() => /Compare worktree agent with/.test(document.querySelector('#ranges').textContent));
+  await page.click('#ranges .choice');
+  await landsOnTestsThenCode(t);
+  await page.click('.range .files .item');
+  await page.waitForSelector('#content table.code');
+  t.ok('it says the whole file is new', await page.evaluate(() =>
+    document.querySelector('#content .panelhead .notice')?.textContent === 'Added: the whole file is new'));
+  t.ok('and shows it as code, one column, nothing painted as inserted', await page.evaluate(() =>
+    !document.querySelector('#content .sbs') && !document.querySelector('#content tr.op-insert')
+    && /what the agent is doing/.test(document.querySelector('#content table.code').textContent)));
+  t.ok('the breadcrumb ends in it', await page.evaluate(() => document.querySelector('#crumbfile').textContent === 'agent-notes.txt'
+    && !document.querySelector('#crumbfile').hidden));
+  t.step('switch to its diff');
+  await page.click('#content [data-act=shown]');
+  t.ok('the diff paints it inserted', await page.evaluate(() => !!document.querySelector('#content tr.op-insert')));
+}, { docs: ['SPECS.md#Browser UI'] });
+
+test('the breadcrumb names the file on screen, and nothing where there is none', async t => {
+  const page = t.page;
+  await t.open('#/file/long.rs');
+  await page.waitForSelector('table.code td.n');
+  t.ok('the file is the breadcrumb\'s last part', await page.evaluate(() =>
+    document.querySelector('#crumbfile').textContent === 'long.rs' && !document.querySelector('#crumbfile').hidden));
+  t.ok('and not a row of its own', await page.evaluate(() => !document.querySelector('#content .panelhead .path')));
+  t.step('go to the tests');
+  await page.click('header .focus [data-focus=tests]');
+  await page.waitForSelector('#tests [data-test]');
+  t.ok('the file has gone from it', await page.evaluate(() => document.querySelector('#crumbfile').hidden));
+}, { docs: ['SPECS.md#Browser UI'] });
+
+test('a request that takes a while puts up a loading bar, and takes it down', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('#tests [data-test]');
+  t.step('a request still running after a moment');
+  await page.evaluate(() => { window.__done = startLoading('/pull'); });
+  t.ok('not at once', await page.evaluate(() => document.querySelector('#loading').hidden));
+  await page.waitForFunction(() => !document.querySelector('#loading').hidden, { timeout: 2000 });
+  t.ok('then in the middle of the screen, saying what it does', await page.evaluate(() => {
+    const r = document.querySelector('#loading').getBoundingClientRect();
+    const middle = Math.abs((r.left + r.right) / 2 - innerWidth / 2) < 4;
+    return middle && document.querySelector('#loading .label').textContent === 'fetching the pull request…' ? true
+      : document.querySelector('#loading .label').textContent;
+  }));
+  t.step('the answer comes');
+  await page.evaluate(() => window.__done());
+  t.ok('and the bar goes', await page.evaluate(() => document.querySelector('#loading').hidden));
+}, { docs: ['SPECS.md#Browser UI'] });
+
 test('the Docs and Data focuses hold the documents and the datasets', async t => {
   const page = t.page;
   await t.open();

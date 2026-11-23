@@ -2,7 +2,8 @@
 //! pull request or a comparison.
 
 use super::*;
-use crate::tui::app::{RangeChoice, RangeRow, Step};
+use crate::repo::FileStatus;
+use crate::tui::app::{RangeChoice, RangeRow, Shown, Step};
 
 /// A pull request or a comparison: what it is, the files it changes, and its comments.
 pub(super) fn draw_range(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -108,43 +109,77 @@ pub(super) fn draw_omni(frame: &mut Frame, app: &mut App, area: Rect) {
     let Screen::Omni(state) = app.screens.last_mut().expect("screen") else {
         return;
     };
-    let [head, body] = Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(area);
-    let file = state.file().clone();
+    let shown = state.shown;
+    let status = state.file().status;
+    let Shown::Code(side) = shown else {
+        // The file's path is in the breadcrumb and the rest in the status line: the whole area
+        // is omnidiff's.
+        state.view.render(frame, area);
+        app.measured.main_height = area.height as usize;
+        return;
+    };
+    // The code as it is at one end, under what it is: a whole file added or removed, or which end.
+    let short = |rev: &str| rev.chars().take(7).collect::<String>();
+    let (from, to) = match &state.target {
+        crate::session::DiffTarget::Revisions { from, to } => (short(from), short(to)),
+        _ => (String::new(), String::new()),
+    };
+    let notice = match (status, side) {
+        (FileStatus::Added | FileStatus::Untracked, _) => {
+            " Added: the whole file is new · s: as a diff ".to_string()
+        }
+        (FileStatus::Deleted, _) => " Deleted: the whole file is gone · s: as a diff ".to_string(),
+        (_, omnidiff::Side::Before) => {
+            format!(" As it was at the base, {from} · s: as a diff ")
+        }
+        _ => format!(" As it is at the head, {to} · s: as it was at the base "),
+    };
+    let block = title_block(&theme, Line::from(notice.bold()), true);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    app.measured.main_height = inner.height as usize;
+    let highlight = app.highlight;
+    if let Some(v) = state.code_view() {
+        v.ensure_visible(inner.height as usize);
+        let body = v.render(
+            &theme,
+            inner.width as usize,
+            inner.height as usize,
+            highlight,
+            true,
+        );
+        frame.render_widget(Paragraph::new(body), inner);
+    }
+}
+
+/// What the status line says on a file of a range: how big its change is, which file of the
+/// range it is, which change the cursor is on, and whether the diff is only line by line.
+pub(super) fn omni_context(state: &crate::tui::app::OmniState) -> String {
     let size = state
         .sizes
         .get(state.index)
         .copied()
         .flatten()
         .map(|s| crate::diff::size_label(&s))
-        .unwrap_or_default();
-    let change = state
-        .view
-        .change_position()
-        .map(|(at, of)| format!("  change {at}/{of}"))
-        .unwrap_or_default();
-    let structural = if state.view.is_structural() {
-        ""
-    } else {
-        "  line diff"
+        .unwrap_or_else(|| "not text".into());
+    let change = match state.shown {
+        Shown::Diff => state
+            .view
+            .change_position()
+            .map(|(at, of)| format!("  change {at}/{of}"))
+            .unwrap_or_default(),
+        Shown::Code(_) => String::new(),
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(format!(" {} ", file.status.letter()), style::accent(&theme)),
-            Span::styled(file.label()[2..].to_string(), Style::new().bold()),
-            Span::styled(format!("  {size}"), style::dim(&theme)),
-            Span::styled(
-                format!(
-                    "  file {}/{}{change}{structural}",
-                    state.index + 1,
-                    state.files.len()
-                ),
-                style::dim(&theme),
-            ),
-        ])),
-        head,
-    );
-    state.view.render(frame, body);
-    app.measured.main_height = body.height as usize;
+    let structural = if state.shown == Shown::Diff && !state.view.is_structural() {
+        "  line diff"
+    } else {
+        ""
+    };
+    format!(
+        "{size}  file {}/{}{change}{structural}",
+        state.index + 1,
+        state.files.len()
+    )
 }
 
 /// The range picker over the screen. First what to review — the pull requests, the worktrees

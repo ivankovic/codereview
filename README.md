@@ -150,7 +150,9 @@ tests, and from the tests out. `?` shows every key. The essentials:
 | `ge` | open elsewhere: the line in `$EDITOR`, a video in its player, a pull request on the forge |
 
 In a diff: `n`/`p` step through hunks, `]`/`[` through the files of the same commit, `v` cycles
-between automatic, side-by-side and unified layout, `c` comments on the after-side line.
+between automatic, side-by-side and unified layout, `c` comments on the after-side line. A range's
+file opens in omnidiff's own view; `s` switches it between the diff and the code as it is at the
+head or at the base, which is how an added or deleted file opens.
 
 ### Browser UI
 

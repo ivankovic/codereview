@@ -138,9 +138,10 @@ impl Workspace {
         self.quitting || self.apps.iter().any(|a| a.quit)
     }
 
-    /// True while the repository on screen is playing a recording.
+    /// True while the repository on screen is playing a recording, or waiting with its loading
+    /// bar up.
     pub fn animating(&self) -> bool {
-        self.app().animating()
+        self.app().animating() || self.app().is_loading()
     }
 
     /// True while any repository's agent is starting or working.

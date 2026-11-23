@@ -16,6 +16,7 @@ use crate::spec::{Stretch, TestChange, What};
 use crate::theme::Theme;
 mod end_to_end;
 mod focus;
+mod loading;
 mod omni;
 mod one_test;
 mod overlays;
@@ -117,7 +118,8 @@ impl<T> ListState<T> {
 
 pub use end_to_end::{E2eRow, EndToEndState, Player};
 pub use focus::{Explorer, Focus};
-pub use omni::OmniState;
+pub use loading::Loading;
+pub use omni::{OmniState, Shown};
 pub use one_test::{EndToEndTestState, TestRow};
 pub use range::{RangeChoice, RangePicker, RangeRow, RangeState, Step};
 pub use screens::{
@@ -304,6 +306,11 @@ pub struct App {
     pub highlight: bool,
     pub theme: Theme,
     /// The range picker, `gp`, while it is up.
+    /// What is being fetched, read or worked out while the screen waits: drawn as a bar in
+    /// the middle of it.
+    pub loading: Option<Loading>,
+    /// Work to do once the bar for it is on screen: the event loop draws, then runs it.
+    deferred: Option<loading::Work>,
     pub range_picker: Option<RangePicker>,
     /// What is being asked of the forge on other threads.
     asking: range::Asking,
@@ -361,6 +368,8 @@ impl App {
             theme,
             theme_picker: None,
             range_picker: None,
+            loading: None,
+            deferred: None,
             asking: Default::default(),
             layout,
             quit: false,
@@ -408,6 +417,7 @@ impl App {
         if self.session.has_index() || self.warming.is_some() {
             return;
         }
+        self.show_loading_unless_quick("reading the symbols…");
         let (tx, rx) = std::sync::mpsc::channel();
         let root = self.session.root().to_path_buf();
         let files = self.session.files.clone();
@@ -796,6 +806,13 @@ impl App {
         {
             self.session.install_index(index);
             self.warming = None;
+            if self
+                .loading
+                .as_ref()
+                .is_some_and(|l| l.label == "reading the symbols…")
+            {
+                self.done_loading();
+            }
             // What was shown from OVERVIEW.md, or not at all, while the index was built.
             self.refresh_end_to_end(true);
             changed = true;
@@ -840,8 +857,16 @@ impl App {
                 (d.view.file.path.clone(), Some((line + 1, line + 1)))
             }
             Screen::Omni(o) => {
-                let Some((omnidiff::Side::After, row)) = o.view.cursor() else {
-                    self.info("comments go on the after side: Tab to it");
+                let row = match o.shown {
+                    omni::Shown::Diff => match o.view.cursor() {
+                        Some((omnidiff::Side::After, row)) => Some(row),
+                        _ => None,
+                    },
+                    omni::Shown::Code(omnidiff::Side::Before) => None,
+                    omni::Shown::Code(_) => o.code[1].as_ref().and_then(|v| v.current_line()),
+                };
+                let Some(row) = row else {
+                    self.info("comments go on the after side: Tab to it, or s to its code");
                     return;
                 };
                 (o.file().path.clone(), Some((row + 1, row + 1)))

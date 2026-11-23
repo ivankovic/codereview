@@ -191,6 +191,60 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.range_picker.is_some() {
         draw_range_picker(frame, app, area);
     }
+    if let Some(loading) = app.loading.clone().filter(|l| l.shown()) {
+        draw_loading(frame, &app.theme, &loading, area);
+    }
+}
+
+/// The loading bar, in the middle of the screen over everything: what is being waited for, a
+/// block running back and forth along a track, and for how long.
+fn draw_loading(frame: &mut Frame, theme: &Theme, loading: &crate::tui::app::Loading, area: Rect) {
+    let width = (loading.label.chars().count() as u16 + 6)
+        .clamp(36, 72)
+        .min(area.width);
+    let height = 5.min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(style::accent(theme));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    let track = inner.width.saturating_sub(2) as usize;
+    let size = (track / 5).max(3);
+    let elapsed = loading.since.elapsed();
+    // Back and forth, a cell every 30 ms.
+    let span = track.saturating_sub(size).max(1);
+    let step = (elapsed.as_millis() / 30) as usize % (2 * span);
+    let at = if step < span { step } else { 2 * span - step };
+    let bar: String = (0..track)
+        .map(|i| {
+            if i >= at && i < at + size {
+                '█'
+            } else {
+                '░'
+            }
+        })
+        .collect();
+    let secs = elapsed.as_secs();
+    let lines = vec![
+        Line::from(format!(" {}", loading.label).bold()),
+        Line::from(Span::styled(format!(" {bar}"), style::accent(theme))),
+        Line::from(Span::styled(
+            if secs > 0 {
+                format!(" {secs} s")
+            } else {
+                String::new()
+            },
+            style::dim(theme),
+        )),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// The row across the top: on the left the breadcrumb, where in the repository one is — its
@@ -211,10 +265,22 @@ fn draw_top(frame: &mut Frame, app: &App, area: Rect) {
     left.push(sep());
     left.push(crumbs.branch.clone().into());
     left.push(sep());
+    let range_at = left.len();
     left.push(Span::styled(app.stretch.title(), style::accent(theme)));
     if !crumbs.commit.is_empty() {
         left.push(sep());
         left.push(Span::styled(crumbs.commit.clone(), style::dim(theme)));
+    }
+    // The file on screen, last: where in the repository one is reads down to it.
+    let file = match app.screen() {
+        Screen::Omni(o) => Some(o.file().path.clone()),
+        Screen::Diff(d) => Some(d.view.file.path.clone()),
+        Screen::Explorer => app.viewer.as_ref().map(|v| v.path.clone()),
+        _ => None,
+    };
+    if let Some(path) = file {
+        left.push(sep());
+        left.push(path.bold());
     }
     let mut right: Vec<Span> = Vec::new();
     let pending = app.session.review.pending_count();
@@ -235,6 +301,19 @@ fn draw_top(frame: &mut Frame, app: &App, area: Rect) {
         });
     }
     let right_width: usize = right.iter().map(|s| s.width()).sum();
+    // Too long for the row: the range, then the address, give way from their ends, so that the
+    // file, which the breadcrumb leads to, stays whole.
+    let room = (area.width as usize).saturating_sub(right_width + 1);
+    for at in [range_at, 1] {
+        let width: usize = left.iter().map(|s| s.width()).sum();
+        if width <= room {
+            break;
+        }
+        let text = left[at].content.to_string();
+        let keep = text.chars().count().saturating_sub(width - room + 1).max(6);
+        let cut: String = text.chars().take(keep).collect::<String>() + "…";
+        left[at] = Span::styled(cut, left[at].style);
+    }
     let [crumb_area, focus_area] =
         Layout::horizontal([Constraint::Fill(1), Constraint::Length(right_width as u16)])
             .areas(area);
@@ -415,6 +494,7 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
         ));
     } else {
         let context: Option<String> = match app.screen() {
+            Screen::Omni(o) => Some(range::omni_context(o)),
             Screen::Diff(d) => {
                 // The comment under the cursor, if any.
                 d.view
