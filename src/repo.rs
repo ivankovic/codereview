@@ -1076,10 +1076,33 @@ pub fn is_binary(bytes: &[u8]) -> bool {
 
 /// `git -C dir`, with the messages in one language. `show` tells a missing file from a real
 /// failure by what git says, and under another locale it would say it differently.
+///
+/// Only the messages: the rest of the locale is the user's, as it is when they run git
+/// themselves. A wrapper around git that fingerprints the repository with `sort` (a trust
+/// check, say) sorts by the caller's collation, and under `LC_ALL=C` it found the repository
+/// changed that the same wrapper, run from the user's shell, had just trusted.
 fn git_command(dir: &Path) -> Command {
     let mut command = Command::new("git");
-    command.arg("-C").arg(dir).env("LC_ALL", "C");
+    command.arg("-C").arg(dir);
+    for (key, value) in locale_for_git(|key| std::env::var(key).ok()) {
+        match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        };
+    }
     command
+}
+
+/// The locale variables to give git: messages in C, everything else as the user has it. An
+/// `LC_ALL` would override `LC_MESSAGES`, so its value goes to `LANG` instead, which keeps the
+/// collation and the rest where they were.
+fn locale_for_git(get: impl Fn(&str) -> Option<String>) -> Vec<(&'static str, Option<String>)> {
+    let mut vars = vec![("LC_MESSAGES", Some("C".to_string()))];
+    if let Some(all) = get("LC_ALL").filter(|v| !v.is_empty()) {
+        vars.push(("LC_ALL", None));
+        vars.push(("LANG", Some(all)));
+    }
+    vars
 }
 
 pub fn parse_branches(bytes: &[u8]) -> Vec<Branch> {
@@ -1284,6 +1307,24 @@ mod tests {
         }
         assert_eq!(github_name("https://gitlab.com/a/b.git"), None);
         assert_eq!(github_name("https://github.com/a"), None);
+    }
+
+    /// git hears its messages in C and keeps the user's collation, which a wrapper sorting
+    /// what it fingerprints depends on.
+    #[test]
+    fn git_gets_messages_in_c_and_the_user_s_collation() {
+        let none = locale_for_git(|_| None);
+        assert_eq!(none, [("LC_MESSAGES", Some("C".to_string()))]);
+        let all = locale_for_git(|k| (k == "LC_ALL").then(|| "de_DE.UTF-8".to_string()));
+        assert!(all.contains(&("LC_ALL", None)), "{all:?}");
+        assert!(
+            all.contains(&("LANG", Some("de_DE.UTF-8".to_string()))),
+            "{all:?}"
+        );
+        assert!(
+            all.contains(&("LC_MESSAGES", Some("C".to_string()))),
+            "{all:?}"
+        );
     }
 
     #[test]
