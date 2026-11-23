@@ -393,6 +393,15 @@ pub(super) struct SpecQuery {
     /// One commit, against its parent: the drill-down from the log. Wins over `stretch`.
     #[serde(default)]
     commit: Option<String>,
+    /// A pull request or a comparison: what `head` has that `base` does not, from where they
+    /// parted. Wins over `stretch`, as `commit` does.
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    head: Option<String>,
+    /// The pull request's number, when the range is one.
+    #[serde(default)]
+    pull: Option<u64>,
     /// The question to group the tests by; `interaction` by default.
     #[serde(default)]
     by: Option<crate::classify::Question>,
@@ -402,6 +411,16 @@ pub(super) struct SpecQuery {
 /// `uncommitted`.
 fn stretch_of(q: &SpecQuery) -> Result<crate::spec::Stretch, ApiError> {
     use crate::spec::Stretch;
+    if let (Some(base), Some(head)) = (&q.base, &q.head)
+        && !base.is_empty()
+        && !head.is_empty()
+    {
+        return Ok(Stretch::Range {
+            base: base.clone(),
+            head: head.clone(),
+            pull: q.pull,
+        });
+    }
     Ok(match (q.commit.as_deref(), q.stretch.as_deref()) {
         (Some(hash), _) if !hash.is_empty() => Stretch::Commit(hash.to_string()),
         (_, None | Some("" | "week")) => Stretch::Week,

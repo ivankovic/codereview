@@ -141,6 +141,7 @@ fn operations(file: &str) -> Vec<Op> {
             f("/api/diff?kind=working&path={file}&status=M"),
         ),
         get("log", "/api/log".into()),
+        get("range choices", "/api/range/choices".into()),
         get("log of the file", f("/api/log?path={file}")),
         get("files of a commit", "/api/commit_files?hash=HEAD".into()),
         get("notes", "/api/notes".into()),

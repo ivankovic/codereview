@@ -39,6 +39,7 @@ mod api;
 mod auth;
 #[cfg(test)]
 mod perf;
+mod range;
 #[cfg(test)]
 mod tests;
 
@@ -707,6 +708,10 @@ fn router(state: AppState) -> Router {
         .route("/e2e", get(api::get_e2e))
         .route("/e2e/test", get(api::get_e2e_test))
         .route("/stretch", get(api::get_stretch))
+        .route("/range/choices", get(range::get_choices))
+        .route("/range", get(range::get_range))
+        .route("/pulls", get(range::get_pulls))
+        .route("/pull", post(range::post_pull))
         .route("/stretch/test", get(api::get_stretch_test))
         .route(
             "/stretch/record",

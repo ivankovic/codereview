@@ -891,6 +891,20 @@ the panel, with the button that asks the agent and one to the tests it has. On a
 and what is selected in it take turns: the panel first, the overview at `tests`, and a button on
 what is selected goes back to the panel.
 
+The breadcrumb's range is a button that opens the range picker under it, as the terminal UI's
+`gp` does: the three stretches; each other local branch compared with the one checked out, and the
+checked-out one with the default branch when it is another; and the forge's open pull requests,
+each with its number, title and author, which it says it is asking for while it does, or why
+there are none. A stretch picked is what the tests are seen through, as its button on the
+overview is. A comparison or a pull request picked is the range — the overview, the
+specification and a test's own view all ask about it, and the stretch buttons gain it as a fourth
+— and opens in the code at `range`, with its two sides or the pull request's number: for a pull
+request its state, its two branches, its author and a link to it on the forge, its commits
+fetched first when the repository lacks them; then the files it changes, each opening its diff
+across the range, and its comments, read and never written, each on a line opening that diff at
+the line. The forge is asked without holding the repository's lock, so nothing else waits for
+it.
+
 The overview is not on the file tree either. It is what the project says it is —
 the prose its README opens with, as plain text, up to the first heading after it — then where to
 start reading, what the rest of the tree leans on, the
@@ -949,7 +963,8 @@ about one repository; the header's selector switches to another.
 Every view has an address in the URL fragment, which never reaches the server: the end-to-end
 tests at the root, the overview, the specification, the tree, a file
 with an optional line, the working tree or staged changes, the log with an optional path and
-commit, a diff with its parameters, the documents and the data, and the review, notes and agent,
+commit, a diff with its parameters, a pull request or a comparison, the documents and the data,
+and the review, notes and agent,
 prefixed with the
 repository's number when it is not the first. The browser's back returns to the previous view, a
 reload keeps the place, and a diff's back button goes to whatever opened it. Paging through the

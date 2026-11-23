@@ -311,6 +311,73 @@ fn every_browser_test_passes_in_a_real_browser() {
     };
     git(&["add", "-A"]);
     git(&["commit", "-qm", "the fixture"]);
+    // A branch one commit past it, to compare with as a pull request would, and the forge
+    // that has that pull request: `origin` on GitHub, and a stand-in for `gh` that answers
+    // for it, the commits being here already so nothing is fetched.
+    let out = |args: &[&str]| {
+        let o = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "git {args:?}");
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    let main = out(&["symbolic-ref", "--short", "HEAD"]);
+    git(&["switch", "-qc", "feature"]);
+    std::fs::write(repo.join("feature.txt"), "what the feature adds\n").unwrap();
+    git(&["add", "feature.txt"]);
+    git(&["commit", "-qm", "the feature"]);
+    git(&["switch", "-q", &main]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:someone/fixture.git",
+    ]);
+    let pull = serde_json::json!({
+        "number": 7, "title": "Say what the feature adds", "user": {"login": "ana"},
+        "state": "open", "draft": false, "merged_at": null,
+        "base": {"ref": main, "sha": out(&["rev-parse", &main])},
+        "head": {"ref": "feature", "sha": out(&["rev-parse", "feature"])},
+        "html_url": "https://github.com/someone/fixture/pull/7",
+        "updated_at": "2026-11-20T10:00:00Z",
+    });
+    let gh_dir = work.path().join("gh");
+    std::fs::create_dir_all(&gh_dir).unwrap();
+    std::fs::write(
+        gh_dir.join("pulls.json"),
+        serde_json::json!([[pull]]).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        gh_dir.join("pull.json"),
+        serde_json::json!([pull]).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        gh_dir.join("on-lines.json"),
+        r#"[[{"user": {"login": "bo"}, "body": "Why this line?", "path": "feature.txt", "line": 1,
+              "created_at": "2026-11-20T12:00:00Z"}]]"#,
+    )
+    .unwrap();
+    std::fs::write(gh_dir.join("on-whole.json"), "[[]]").unwrap();
+    let gh = gh_dir.join("gh");
+    std::fs::write(
+        &gh,
+        "#!/bin/sh\nhere=$(dirname \"$0\")\ncase \"$4\" in\n\
+         */pulls/7/comments*) cat \"$here/on-lines.json\" ;;\n\
+         */issues/7/comments*) cat \"$here/on-whole.json\" ;;\n\
+         */pulls/7) cat \"$here/pull.json\" ;;\n\
+         */pulls\\?*) cat \"$here/pulls.json\" ;;\n\
+         *) echo \"no answer for $4\" >&2; exit 1 ;;\nesac\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     std::fs::write(
         repo.join("src/core.rs"),
         "pub fn parse_review() {}\npub fn write_review() { parse_review(); }\npub struct ReviewFile;\n\
@@ -348,6 +415,7 @@ fn every_browser_test_passes_in_a_real_browser() {
             bare.to_str().unwrap(),
         ])
         .env("CODEREVIEW_TOKEN", TOKEN)
+        .env("CODEREVIEW_GH", &gh)
         .envs(
             profiles
                 .as_ref()

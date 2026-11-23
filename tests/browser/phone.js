@@ -401,6 +401,69 @@ test('the breadcrumb names the branch and the range the tests are seen through',
   }));
 }, { docs: ['SPECS.md#Browser UI'] });
 
+test('the review range is picked from the breadcrumb', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('#tests [data-test]');
+  t.step('tap the range in the breadcrumb');
+  await page.click('#range');
+  await page.waitForSelector('#ranges .choice');
+  t.ok('the picker offers the stretches', await page.evaluate(() =>
+    [...document.querySelectorAll('#ranges [data-stretch]')].map(c => c.textContent.trim()).join(', ') === 'last 7 days, last commit, uncommitted'));
+  t.ok('each a finger can reach', await page.evaluate(hittable, '#ranges [data-stretch=uncommitted]'));
+  t.step('pick the uncommitted work');
+  await page.click('#ranges [data-stretch=uncommitted]');
+  t.ok('the breadcrumb names it', await page.evaluate(() => document.querySelector('#range').textContent.trim() === 'uncommitted' ? true : document.querySelector('#range').textContent));
+  t.ok('and the picker has gone', await page.evaluate(() => document.querySelector('#ranges').hidden));
+}, { docs: ['SPECS.md#Browser UI'] });
+
+test('a pull request from the forge opens with its files and comments', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('#tests [data-test]');
+  t.step('open the range picker, which asks the forge for its pull requests');
+  await page.click('#range');
+  await page.waitForSelector('#ranges .pulls .choice');
+  t.ok('the pull request is offered', await page.evaluate(() =>
+    /#7\s*Say what the feature adds\s*ana/.test(document.querySelector('#ranges .pulls .choice').textContent)));
+  t.step('pick it');
+  await page.click('#ranges .pulls .choice');
+  await page.waitForSelector('.range .files .item');
+  t.ok('it is the review range, at an address of its own', await page.evaluate(() =>
+    location.hash.includes('/range?pull=7') && document.querySelector('#range').textContent.trim() === '#7'), await page.evaluate(() => location.hash + ' ' + document.querySelector('#range').textContent));
+  t.ok('it says what it is', await page.evaluate(() =>
+    /open\s*· feature into \S+ by ana/.test(document.querySelector('.range').textContent)));
+  t.ok('the files it changes', await page.evaluate(() =>
+    [...document.querySelectorAll('.range .files .item')].map(i => i.textContent.trim()).join(' | ') === 'Afeature.txt' ? true
+      : [...document.querySelectorAll('.range .files .item')].map(i => i.textContent.trim()).join(' | ')));
+  t.ok('and its comments, read from the forge', await page.evaluate(() =>
+    /bo on feature\.txt:1\s*Why this line\?/.test(document.querySelector('.range .comments').textContent)));
+  t.step('tap the comment');
+  await page.click('.range .comments .item');
+  await page.waitForSelector('#content table.code');
+  t.ok('it opens the diff at its line', await page.evaluate(() => {
+    const row = document.querySelector('#content tr.sel[data-after="1"]');
+    return row && /what the feature adds/.test(row.textContent) ? true : 'no line 1 picked out';
+  }));
+}, { docs: ['SPECS.md#Pull requests and comparisons'] });
+
+test('a branch is compared with the one checked out as a pull request would be', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('#tests [data-test]');
+  t.step('open the range picker and pick the feature branch');
+  await page.click('#range');
+  await page.waitForSelector('#ranges .compare .choice');
+  t.ok('the branch is offered against the one checked out', await page.evaluate(() =>
+    /^feature against \S+$/.test(document.querySelector('#ranges .compare .choice').textContent.trim())));
+  await page.click('#ranges .compare .choice');
+  await page.waitForSelector('.range .files .item');
+  t.ok('it opens as a comparison of the two', await page.evaluate(() =>
+    /comparison\s*feature against/.test(document.querySelector('#content .panelhead').textContent)));
+  t.ok('changing only what the branch did', await page.evaluate(() =>
+    document.querySelectorAll('.range .files .item').length === 1));
+}, { docs: ['SPECS.md#Pull requests and comparisons'] });
+
 test('the Docs and Data focuses hold the documents and the datasets', async t => {
   const page = t.page;
   await t.open();

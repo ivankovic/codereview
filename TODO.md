@@ -5,9 +5,8 @@
 - Terminal UI: Docs rendered rather than shown as source; CSV shown as a table; a forge's
   comments on the lines of a pull request's diff, not only in its list.
 - Terminal UI: the review's comments in the Code sidebar rather than a screen over the code.
-- Browser UI: the same, with addresses for ranges, pull requests and documents; tabs, the card
-  grid and zen removed.
-- End-to-end tests of each, in both harnesses; SPECS.md and the README rewritten as each lands.
+- Browser UI: Docs rendered rather than shown as source; CSV shown as a table; the comment list
+  in the Code side panel; a forge's comments on the lines of a range's diff.
 
 - Jump from a blame line to that commit's diff.
 - Language-server backend for symbol navigation, for repositories that have one running.

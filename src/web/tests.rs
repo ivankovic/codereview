@@ -954,6 +954,63 @@ fn a_comment_from_a_commit_names_it() {
     assert!(c.get("commit").is_none(), "a.rs has changes: {body}");
 }
 
+/// A branch compared with the one checked out, as the page picks and reads it; and a forge
+/// that is not there says so rather than failing quietly.
+#[test]
+fn a_branch_compared_through_the_api() {
+    let dir = scratch_repo();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let current = git(&["symbolic-ref", "--short", "HEAD"]);
+    git(&["switch", "-q", "-c", "feature"]);
+    std::fs::write(dir.path().join("feature.txt"), "new\n").unwrap();
+    git(&["add", "feature.txt"]);
+    git(&["commit", "-q", "-m", "the feature"]);
+    git(&["switch", "-q", &current]);
+    let (addr, token, _rt) = serve(&[dir.path()]);
+    let t = Some(token.as_str());
+
+    let (status, body) = request(addr, "GET", "/api/range/choices", t, None);
+    assert_eq!(status, 200, "{body}");
+    let choices: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(choices["compare"][0]["head"], "feature", "{body}");
+    assert_eq!(choices["compare"][0]["base"], current.as_str(), "{body}");
+    assert!(choices["forge"].is_null(), "no remote, no forge: {body}");
+
+    let range = format!("base={current}&head=feature");
+    let (status, body) = request(addr, "GET", &format!("/api/range?{range}"), t, None);
+    assert_eq!(status, 200, "{body}");
+    let files: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        files["label"],
+        format!("feature against {current}").as_str()
+    );
+    let paths: Vec<_> = files["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["feature.txt"], "only what the branch did: {body}");
+
+    let (status, body) = request(addr, "GET", &format!("/api/stretch?{range}"), t, None);
+    assert_eq!(
+        status, 200,
+        "what the comparison did, as any stretch: {body}"
+    );
+
+    let (status, body) = request(addr, "GET", "/api/pulls", t, None);
+    assert_eq!(status, 502, "{body}");
+    assert!(body.contains("not on GitHub"), "{body}");
+}
+
 /// The tests a repository defines, grouped by file, with what the tree leans on that none of
 /// them names.
 #[test]
