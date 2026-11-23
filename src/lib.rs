@@ -30,6 +30,7 @@ pub mod e2e;
 pub mod facts;
 #[cfg(test)]
 mod fakes;
+pub mod forge;
 pub mod highlight;
 pub mod kinds;
 pub mod markdown;

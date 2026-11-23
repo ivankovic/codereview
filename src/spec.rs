@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::classify::{Kind, Question};
@@ -293,7 +293,7 @@ fn between(old: &TestCase, new: TestCase) -> Option<TestChange> {
 /// A stretch of history the tests are compared across. The repository is what is reviewed;
 /// a stretch is what is marked in it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind", content = "hash")]
+#[serde(rename_all = "snake_case", tag = "kind", content = "of")]
 pub enum Stretch {
     /// What is not committed yet.
     Uncommitted,
@@ -303,6 +303,13 @@ pub enum Stretch {
     Week,
     /// One commit against its parent: a drill-down from the log.
     Commit(String),
+    /// What `head` has that `base` does not, from the commit they last had in common: a pull
+    /// request, numbered when it is a forge's, or two local branches or commits compared as one.
+    Range {
+        base: String,
+        head: String,
+        pull: Option<u64>,
+    },
 }
 
 impl Stretch {
@@ -315,6 +322,8 @@ impl Stretch {
             Stretch::LastCommit => "last commit",
             Stretch::Week => "last 7 days",
             Stretch::Commit(_) => "commit",
+            Stretch::Range { pull: Some(_), .. } => "pull request",
+            Stretch::Range { pull: None, .. } => "comparison",
         }
     }
 }
@@ -375,6 +384,17 @@ pub fn span(session: &Session, stretch: &Stretch) -> Result<Span> {
                 repo.parent(&commit.hash)?,
                 Some(commit.hash),
             )
+        }
+        Stretch::Range { base, head, pull } => {
+            let tip = repo.resolve(head)?;
+            let from = repo
+                .merge_base(base, &tip)?
+                .with_context(|| format!("{base} and {head} have no commit in common"))?;
+            let label = match pull {
+                Some(n) => format!("pull request #{n}, {} into {}", short(head), short(base)),
+                None => format!("{head} against {base}"),
+            };
+            (label, Some(from), Some(tip))
         }
     };
     Ok(Span {
@@ -1032,5 +1052,91 @@ mod tests {
         assert!(drill.changes.iter().all(|c| c.what == What::Added));
 
         assert!(span(&session, &Stretch::Commit("--all".into())).is_err());
+    }
+
+    /// Two local branches compared as a pull request between them: what the branch did since
+    /// it left `main`, and nothing `main` did after.
+    #[test]
+    fn a_branch_compared_with_main_is_what_the_branch_did() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}: {out:?}");
+        };
+        let write = |path: &str, text: &str| std::fs::write(dir.path().join(path), text).unwrap();
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.name", "T"]);
+        git(&["config", "user.email", "t@example.com"]);
+        write("lib.rs", "#[test]\nfn stays() {\n    assert!(true);\n}\n");
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "first"]);
+        git(&["switch", "-q", "-c", "feature"]);
+        write(
+            "lib.rs",
+            "#[test]\nfn stays() {\n    assert!(true);\n}\n\n#[test]\nfn added() {}\n",
+        );
+        git(&["commit", "-q", "-am", "add a test"]);
+        git(&["switch", "-q", "main"]);
+        write("other.rs", "#[test]\nfn on_main_only() {}\n");
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "main moves on"]);
+
+        let config = dir.path().join(".git").join("codereview-config.toml");
+        let session = Session::open_with_config(dir.path(), Some(config)).unwrap();
+        let branches = session.repo.branches().unwrap();
+        let names: Vec<_> = branches
+            .iter()
+            .map(|b| (b.name.as_str(), b.current))
+            .collect();
+        assert!(names.contains(&("main", true)) && names.contains(&("feature", false)));
+
+        let range = Stretch::Range {
+            base: "main".into(),
+            head: "feature".into(),
+            pull: None,
+        };
+        let pinned = span(&session, &range).unwrap();
+        assert_eq!(pinned.label, "feature against main");
+        let first = session.repo.log(None, None, 0, 10).unwrap();
+        let first = &first.last().unwrap().hash;
+        assert_eq!(
+            pinned.from.as_deref(),
+            Some(first.as_str()),
+            "from the merge base"
+        );
+        let changed = session
+            .repo
+            .paths_between(pinned.from.as_deref(), pinned.to.as_deref())
+            .unwrap();
+        assert_eq!(changed, ["lib.rs"], "main's own commit is not in it");
+        let seen: Vec<_> = changes(&session, &pinned)
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.what, c.label))
+            .collect();
+        assert_eq!(seen, [(What::Added, "added".to_string())]);
+
+        let pull = Stretch::Range {
+            base: "main".into(),
+            head: "feature".into(),
+            pull: Some(3),
+        };
+        assert!(
+            span(&session, &pull)
+                .unwrap()
+                .label
+                .starts_with("pull request #3")
+        );
+        let nowhere = Stretch::Range {
+            base: "main".into(),
+            head: "--all".into(),
+            pull: None,
+        };
+        assert!(span(&session, &nowhere).is_err());
     }
 }

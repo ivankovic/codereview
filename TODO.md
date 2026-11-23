@@ -2,9 +2,8 @@
 
 ## One frame, four focuses (PLAN.md phase 7)
 
-- Core: branches, a comparison of two refs and their merge base in `repo.rs`; `forge.rs` with
-  GitHub through `gh`; the review range a session is narrowed to.
-- Terminal UI: the frame (breadcrumb, focus picker, sidebar, main view) and the Tests focus;
+- Terminal UI: the frame (breadcrumb, focus picker, sidebar, main view) and the Tests focus,
+  the breadcrumb's pickers choosing a branch, a pull request or a comparison as the range;
   then Code, Docs and Data; the five sections, their stacks and auto-hiding panels removed.
 - Browser UI: the same, with addresses for ranges, pull requests and documents; tabs, the card
   grid and zen removed.

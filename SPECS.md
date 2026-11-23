@@ -597,6 +597,28 @@ steps are on one side only — steps are matched by kind and text, as the longes
 for two terminal recordings, at how many matched steps the screen's text differs. A test's own
 view shows both recordings side by side and the steps in pairs; choosing a pair moves both.
 
+## Pull requests and comparisons
+
+A pull request is a stretch too, and so is a comparison of two local branches or commits, which
+is treated as a pull request from one into the other. Either covers what the head has that the
+base does not: from the commit the two last had in common to the head's tip, so commits the base
+gained after the head left it are not in it. Its label names the pull request's number, or the
+two sides as they were given. A side git cannot read as a commit, or two sides with nothing in
+common, is refused.
+
+Pull requests come from the forge `origin` is on, through the forge's own command-line tool: for
+GitHub, `gh`, whichever account it is signed in to, or the program `CODEREVIEW_GH` names. Without
+it, or signed out, asking for pull requests fails with what the tool said, and comparisons work as
+before. What is asked: the open pull requests, most recently changed first; one pull request,
+open, closed or merged, with its title, author, whether it is a draft, its two branches and their
+commits; and its comments, those on a line of a file with the file and the line, and those on the
+whole pull request, oldest first. They are read and never written; a comment left while reviewing
+a pull request goes in `REVIEW.md`. Nothing is kept: each question is asked again.
+
+When the repository does not have a pull request's commits, they are fetched from `origin` — the
+pull request's head and its base branch — into the object store only: no branch, remote-tracking
+branch or `FETCH_HEAD` moves, and a refspec that would write a ref is refused.
+
 ## Highlighting
 
 syntect on the oniguruma regex engine with two-face's syntax set, chosen by extension, then

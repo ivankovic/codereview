@@ -127,6 +127,18 @@ pub struct Repo {
     root: PathBuf,
 }
 
+/// A local branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Branch {
+    pub name: String,
+    /// The commit it points at.
+    pub hash: String,
+    /// When that commit was made, in seconds since the epoch.
+    pub time: u64,
+    /// Whether it is the one checked out.
+    pub current: bool,
+}
+
 impl Repo {
     /// The repository containing `from`, or an error naming the directory when it is not inside
     /// one.
@@ -565,8 +577,66 @@ impl Repo {
 
     /// The `owner/name` of the GitHub repository `origin` points at, if it points at one.
     pub fn github_name(&self) -> Option<String> {
+        github_name(&self.remote_url()?)
+    }
+
+    /// Where `origin` points, as git has it: the repository's address, for the breadcrumb.
+    pub fn remote_url(&self) -> Option<String> {
         let out = self.git(&["remote", "get-url", "origin"]).ok()?;
-        github_name(String::from_utf8_lossy(&out).trim())
+        let url = String::from_utf8_lossy(&out).trim().to_string();
+        (!url.is_empty()).then_some(url)
+    }
+
+    /// The local branches, the checked-out one marked, most recently committed to first.
+    pub fn branches(&self) -> Result<Vec<Branch>> {
+        let out = self.git(&[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(HEAD)%00%(refname:short)%00%(objectname)%00%(committerdate:unix)",
+            "refs/heads",
+        ])?;
+        Ok(parse_branches(&out))
+    }
+
+    /// The commit `a` and `b` last had in common, where a pull request from `b` into `a` starts.
+    pub fn merge_base(&self, a: &str, b: &str) -> Result<Option<String>> {
+        Self::check_rev(a)?;
+        Self::check_rev(b)?;
+        Ok(self
+            .git(&["merge-base", a, b])
+            .ok()
+            .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+            .filter(|hash| !hash.is_empty()))
+    }
+
+    /// Whether the commit `hash` is in this repository's object store.
+    pub fn has_commit(&self, hash: &str) -> bool {
+        Self::check_rev(hash).is_ok()
+            && self
+                .git(&["cat-file", "-e", &format!("{hash}^{{commit}}")])
+                .is_ok()
+    }
+
+    /// Fetches `refspecs` from `origin` into the object store only: no branch or remote ref
+    /// moves, so a pull request's commits can be read without changing what the user has.
+    pub fn fetch_objects(&self, refspecs: &[&str]) -> Result<()> {
+        for spec in refspecs {
+            Self::check_rev(spec)?;
+            if spec.contains(':') || spec.starts_with('+') {
+                bail!("{spec:?} would write a ref");
+            }
+        }
+        let mut args = vec![
+            "fetch",
+            "--quiet",
+            "--refmap=",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "origin",
+        ];
+        args.extend(refspecs);
+        self.git(&args)?;
+        Ok(())
     }
 
     /// Whether `path` is in the commit HEAD names and the working tree holds it unchanged: the
@@ -759,6 +829,25 @@ fn git_command(dir: &Path) -> Command {
     let mut command = Command::new("git");
     command.arg("-C").arg(dir).env("LC_ALL", "C");
     command
+}
+
+pub fn parse_branches(bytes: &[u8]) -> Vec<Branch> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\0');
+            let current = fields.next()? == "*";
+            let name = fields.next()?.to_string();
+            let hash = fields.next()?.to_string();
+            let time = fields.next()?.parse().unwrap_or(0);
+            Some(Branch {
+                name,
+                hash,
+                time,
+                current,
+            })
+        })
+        .collect()
 }
 
 pub fn parse_log(bytes: &[u8]) -> Vec<Commit> {
