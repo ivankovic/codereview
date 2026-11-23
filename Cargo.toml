@@ -21,7 +21,7 @@ clap = { version = "4.5", features = ["derive"] }
 # Syntax-aware diffing: the library API (`omnidiff::Diff`, its line operations and sizes) and,
 # under this crate's `tui` feature, omnidiff's own per-file diff view, hosted in the terminal UI
 # (`omnidiff::tui::embed`). Without `tui`, `default-features = false` leaves its viewer out.
-omnidiff = { path = "../../../../omnidiff/.claude/worktrees/embed", default-features = false }
+omnidiff = { git = "https://github.com/ivankovic/omnidiff", branch = "library-api-embed", default-features = false }
 regex = "1.10"
 # Same major as omnidiff's, so its grammars (reached through `omnidiff::code::language`) are
 # usable here for symbol extraction without a second copy of tree-sitter.
