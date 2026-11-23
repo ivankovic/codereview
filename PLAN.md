@@ -262,9 +262,13 @@ src/acp.rs         Agent Client Protocol client
 src/claude.rs      Claude Code driven through its own streaming protocol
 src/agent.rs       the agent as the front ends see it, either backend
 src/fakes.rs       in-process stand-ins for both backends, tests only
+src/forge.rs       pull requests from the forge origin is on, through its own command-line
+                   tool: GitHub through gh
 src/tui.rs, src/tui/  Ratatui front end (feature `tui`); workspace.rs holds one app per repository,
-                   app/sections.rs the five sections and their stacks, outline.rs the side
-                   panel listing what the open file defines, kinds.rs the screen a sample of
-                   tests is classified by hand on
-src/web.rs, src/web/  axum server and the embedded page (feature `web`)
+                   app/focus.rs the four focuses, their stacks and explorers, app/range.rs the
+                   review range and a pull request's screen, outline.rs the side panel listing
+                   what the open file defines, kinds.rs the screen a sample of tests is
+                   classified by hand on
+src/web.rs, src/web/  axum server and the embedded page (feature `web`); range.rs the review
+                   range for the page
 ```

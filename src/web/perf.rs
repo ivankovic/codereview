@@ -101,7 +101,7 @@ fn post(name: &str, path: &str, body: Option<&str>, once: bool) -> Op {
 }
 
 /// Every request the page makes, in roughly the order it makes them: opening the repository,
-/// reading a file and what is known about it, the views behind the tabs, the symbol index,
+/// reading a file and what is known about it, the views behind the focuses, the symbol index,
 /// then the writes.
 fn operations(file: &str) -> Vec<Op> {
     let f = |p: &str| p.replace("{file}", file);
