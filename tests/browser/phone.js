@@ -79,46 +79,83 @@ test('a phone gets the phone layout', async t => {
 test('a repository opens on its end-to-end tests, each with its recording', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('.e2e .e2e-test');
+  await page.waitForSelector('#tests [data-test]');
   t.ok('it opens on the end-to-end tests', await page.evaluate(() =>
     document.querySelector('header .focus [data-focus=tests]').classList.contains('active') && location.hash === '#/'), await page.evaluate(() => location.hash));
-  t.ok('which say how many there are, and how many failed', await page.evaluate(() => {
+  t.ok('the list starts with the overview, then each test, marked', await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#tests .row')].map(r => r.textContent.replace(/\s+/g, ' ').trim());
+    return rows[0] === 'Overview' && rows.some(r => r.startsWith('✓')) && rows.some(r => r.startsWith('✗')) ? true : rows.join(' | ');
+  }));
+  t.ok('each a row a finger can reach', await t.inView('#tests .row.passed'));
+  t.step('tap the overview');
+  await page.click('#tests .row.overview');
+  await page.waitForSelector('.e2e .e2e-head');
+  t.ok('which says how many there are, and how many failed', await page.evaluate(() => {
     const head = document.querySelector('.e2e .e2e-head').textContent.replace(/\s+/g, ' ').trim();
     return /^2 end-to-end tests of \d+ tests · 1 failed/.test(head) ? true : head;
   }));
-  t.ok('each a card a finger can reach', await t.inView('.e2e-test.passed .head'));
+  t.step('back to the list, and tap the test that passed');
+  await page.click('#content [data-act=tests]');
+  await page.click('#tests .row.passed');
   // The terminal recording, played as text: its first screen worth seeing.
-  await page.waitForFunction(() => /reviews/.test(document.querySelector('.e2e-test.passed pre.term')?.textContent || ''), { timeout: 10000 });
+  await page.waitForFunction(() => /reviews/.test(document.querySelector('.testview pre.term')?.textContent || ''), { timeout: 10000 });
   t.ok('a terminal recording shows its screen', await page.evaluate(() =>
-    !document.querySelector('.e2e-test.passed pre.term').textContent.includes('why is this pub')));
+    !document.querySelector('.testview pre.term').textContent.includes('why is this pub')));
   t.step('play the terminal recording');
-  await page.click('.e2e-test.passed [data-act=play]');
-  await page.waitForFunction(() => /why is this pub/.test(document.querySelector('.e2e-test.passed pre.term').textContent), { timeout: 10000 });
+  await page.click('.testview [data-act=play]');
+  await page.waitForFunction(() => /why is this pub/.test(document.querySelector('.testview pre.term').textContent), { timeout: 10000 });
   t.ok('and plays on to the next', true);
-  t.ok('fitted to the card', await page.evaluate(() => {
-    const pre = document.querySelector('.e2e-test.passed pre.term'), card = pre.closest('.e2e-test');
-    return pre.getBoundingClientRect().right <= card.getBoundingClientRect().right + 1 ? true : 'wider than its card';
+  t.ok('fitted to the screen', await page.evaluate(() => {
+    const pre = document.querySelector('.testview pre.term');
+    return pre.getBoundingClientRect().right <= innerWidth + 1 ? true : 'wider than the screen';
   }));
-  // The video of the one that failed, and what it failed on.
-  await t.inView('.e2e-test.failed video');
+  t.step('back to the list, and tap the test that failed');
+  await page.click('#content [data-act=tests]');
+  await page.click('#tests .row.failed');
+  await page.waitForSelector('.testview video');
   await page.waitForFunction(() => {
-    const v = document.querySelector('.e2e-test.failed video');
+    const v = document.querySelector('.testview video');
     return v && v.readyState >= 1 && isFinite(v.duration) && v.duration > 1;
   }, { timeout: 15000 });
   t.ok('a browser recording is a video that knows its length', true);
   t.ok('a failure says what it failed on', await page.evaluate(() =>
-    /REVIEW.md has it[\s\S]*REVIEW.md was empty/.test(document.querySelector('.e2e-test.failed .failures').textContent)));
-  t.step('open the steps and tap the failed check');
-  await page.click('.e2e-test.failed details.steps > summary');
-  await page.click('.e2e-test.failed details.steps li.failed');
-  await page.waitForFunction(() => Math.abs(document.querySelector('.e2e-test.failed video').currentTime - 1.5) < 0.3, { timeout: 5000 });
+    /REVIEW.md has it[\s\S]*REVIEW.md was empty/.test(document.querySelector('.testview .failures').textContent)));
+  t.step('tap the failed check');
+  await t.inView('.testview ol.steps li.failed');
+  await page.click('.testview ol.steps li.failed');
+  await page.waitForFunction(() => Math.abs(document.querySelector('.testview video').currentTime - 1.5) < 0.3, { timeout: 5000 });
   t.ok('a step goes to its moment of the video', await page.evaluate(() =>
-    document.querySelector('.e2e-test.failed details.steps li.failed').classList.contains('now')));
-  t.step('tap the test\'s file');
-  await page.click('.e2e-test.failed [data-act=source]');
+    document.querySelector('.testview ol.steps li.failed').classList.contains('now')));
+  t.step('tap the test\'s source');
+  await page.click('#content .panelhead [data-act=source]');
   await page.waitForSelector('table.code td.n');
   t.ok('the test opens at its line', await page.evaluate(() => location.hash.includes('/file/tests/cli.rs')), await page.evaluate(() => location.hash));
 }, { docs: ['SPECS.md#What a repository opens on'] });
+
+test('on a wide screen the tests sit beside what is selected in them', async t => {
+  const page = t.page;
+  // A desk, not a phone: the side panel and what is selected in it are both on screen.
+  await page.setViewport({ width: 1280, height: 800, isMobile: false, hasTouch: false });
+  await t.open();
+  await page.waitForSelector('#tests [data-test]');
+  await page.waitForSelector('.stretch-card h3');
+  t.ok('the list is beside the overview', await page.evaluate(() => {
+    const list = document.querySelector('#tests').getBoundingClientRect(), main = document.querySelector('#content').getBoundingClientRect();
+    return list.width > 0 && main.width > 0 && list.right <= main.left + 1 ? true : `list ${list.left}-${list.right}, main ${main.left}-${main.right}`;
+  }));
+  t.ok('with the overview selected', await page.evaluate(() => document.querySelector('#tests .row.overview').classList.contains('selected')));
+  await page.screenshot({ path: `${t.dir}/overview.png` });
+  t.step('tap the test that failed');
+  await page.click('#tests .row.failed');
+  await page.waitForSelector('.testview .ran');
+  t.ok('the test is beside the list, which stays', await page.evaluate(() =>
+    document.querySelector('#tests .row.failed').classList.contains('selected') && document.querySelector('#tests').getBoundingClientRect().width > 0));
+  await page.screenshot({ path: `${t.dir}/test.png` });
+  t.step('press \\\\');
+  await page.keyboard.press('Backslash');
+  t.ok('the list hides, and the test takes the width', await page.evaluate(() =>
+    document.querySelector('#tests').getBoundingClientRect().width === 0 && document.querySelector('#content').getBoundingClientRect().left < 2));
+}, { docs: ['SPECS.md#Browser UI'] });
 
 test('a repository without end-to-end tests opens on saying so', async t => {
   const page = t.page;
@@ -319,7 +356,7 @@ test('the tests read as sentences, folded by how they interact and by file', asy
 test('the focuses are Tests, Code, Docs and Data, and the page opens on Tests', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('.e2e .e2e-test');
+  await page.waitForSelector('#tests [data-test]');
   t.ok('the focus picker is in that order', await page.evaluate(() => {
     const names = [...document.querySelectorAll('header .focus button')].map(b => b.textContent.trim()).join(', ');
     return names === 'Tests, Code, Docs, Data' ? true : names;
@@ -536,9 +573,9 @@ test('long lines wrap where the screen ends', async t => {
 test('a test opens on its own, with the code it ran and what documents it', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('.e2e-test.failed a.label');
+  await page.waitForSelector('#tests .row.failed');
   t.step('tap the failed test');
-  await page.click('.e2e-test.failed a.label');
+  await page.click('#tests .row.failed');
   await page.waitForSelector('.testview .ran .item');
   t.ok('it has an address of its own', await page.evaluate(() => location.hash.startsWith('#/test?')), await page.evaluate(() => location.hash));
   t.ok('each step says which line of the test took it', await page.evaluate(() => {
@@ -576,8 +613,10 @@ test('a test opens on its own, with the code it ran and what documents it', asyn
 test('a stretch says what no end-to-end test ran, and how each test ran before it', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('.e2e-test.failed');
-  t.step('look at the uncommitted work');
+  await page.waitForSelector('#tests .row.failed');
+  t.step('open the overview, and look at the uncommitted work');
+  await page.click('#tests .row.overview');
+  await page.waitForSelector('.stretch-card h3');
   await page.click('.stretch-card [data-stretch=uncommitted]');
   await page.waitForSelector('.stretch-card .unran .item', { timeout: 30000 });
   t.ok('it says how much changed code no end-to-end test ran', await page.evaluate(() => {
@@ -586,7 +625,7 @@ test('a stretch says what no end-to-end test ran, and how each test ran before i
     return /^1 of 2 changed lines no end-to-end test ran/.test(head) && /src\/core\.rs\s*1 of 2 lines/.test(row) ? true : head + ' | ' + row;
   }));
   t.ok('and which test ran the rest', await page.evaluate(() =>
-    /ran 1 changed line/.test(document.querySelector('.e2e-test.failed .badges').textContent)));
+    /Δ1/.test(document.querySelector('#tests .row.failed .badges').textContent)));
   t.ok('recording the tests before it is a tap', await t.inView('.stretch-card .base [data-act=record]'));
   t.ok('which says what it will run', await page.evaluate(() =>
     /runs make e2e in a worktree of [0-9a-f]{7}/.test(document.querySelector('.stretch-card .base').textContent.replace(/\s+/g, ' '))));
@@ -595,11 +634,12 @@ test('a stretch says what no end-to-end test ran, and how each test ran before i
   await page.waitForFunction(() => /Before: the tests as they ran at/.test(document.querySelector('.stretch-card .base')?.textContent || ''), { timeout: 30000 });
   t.ok('each test says how it ran before and how it runs now', await page.evaluate(() => {
     const badges = sel => document.querySelector(sel + ' .badges').textContent.replace(/\s+/g, ' ');
-    const listed = badges('.e2e-test.passed'), saved = badges('.e2e-test.failed');
-    return /✓ → ✓ · screen changed at 1 step/.test(listed) && /✓ → ✗/.test(saved) ? true : listed + ' | ' + saved;
+    const listed = badges('#tests .row.passed'), saved = badges('#tests .row.failed');
+    return /✓→✓ screen/.test(listed) && /✓→✗/.test(saved) ? true : listed + ' | ' + saved;
   }));
-  t.step('open the test whose screen changed');
-  await page.click('.e2e-test.passed a.label');
+  t.step('back to the list, and open the test whose screen changed');
+  await page.click('#content [data-act=tests]');
+  await page.click('#tests .row.passed');
   await page.waitForSelector('.testview .compare ol.pairs li');
   t.ok('its steps pair up, before and now', await page.evaluate(() => {
     const rows = [...document.querySelectorAll('.testview .compare ol.pairs li')].map(li => li.querySelector('.what').textContent);
@@ -618,8 +658,10 @@ test('a stretch says what no end-to-end test ran, and how each test ran before i
   await page.evaluate(() => { $('#content').scrollTop = 0; });
   await page.waitForFunction(`(${hittable})('#back') === true`, { timeout: 5000 }).catch(() => {});
   t.ok('the back button is there', await page.evaluate(hittable, '#back'));
-  t.step('go back, and open the code nothing ran');
+  t.step('go back to the list, and from its overview open the code nothing ran');
   await page.click('#back');
+  await page.waitForSelector('#tests .row.overview');
+  await page.click('#tests .row.overview');
   await page.waitForSelector('.stretch-card .unran .item', { timeout: 30000 });
   await t.inView('.stretch-card .unran .item');
   await page.click('.stretch-card .unran .item');
@@ -655,6 +697,8 @@ async function run(browser, spec, server) {
   const at = () => Date.now() - started.getTime();
   const t = {
     page,
+    /// Where this test's recording goes, for a picture of the page worth keeping beside it.
+    dir,
     /// Something the test does, said the way a person would.
     step(text) { steps.push({ at_ms: at(), line: callerLine(t.step), kind: 'action', text }); },
     /// Only `true` passes. `hittable` answers with a description of what went wrong instead

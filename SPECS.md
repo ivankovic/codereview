@@ -865,29 +865,31 @@ end-to-end ones, with a test's own view, and All tests, the specification; the c
 each, of the documents and of the datasets as the terminal UI has them, at `docs` and `data`, and
 a file opened from one says so in its address, so a reload keeps the focus; each remembers the
 file last open in it. A focus lands on the view or file it was last on in this page, the first of
-them to begin with, and the focus already lit goes to its first view. Each
-end-to-end test is a card, grouped by file, in a grid as wide as the screen allows: a mark for how
-its last run went, its sentence, a security or skipped badge, its file and line (which opens it),
-why it counts, when it ran and whether the tree has moved since, then its recording, what any failed
-check saw instead, and its steps, folded. A video is fetched with the API token and played from
-memory by the browser's own player, once its card comes near the screen; a terminal recording is
-fetched as the server's frames and drawn as text on a dark terminal, sized to fit its card, opening
-on the first frame with anything on it, with a play button, a scrubber and the time. Tapping a step
-goes to its moment of the recording, and the step at the current moment is lit as it plays. The
-header counts the end-to-end tests against all the tests, the failed and the ones without a
-recording. A repository without any opens on the finding, with the button that asks the agent and
-one to the tests it has. A test's sentence opens its own view, at `test` with its file and name: the
-recording and its failures beside the steps, each step's line of the test under it, which opens the
-test there, and tapping a step goes to its moment; then the code it ran, each file with a bar of
-what ran and what only it ran, the documentation marked as named or as a guess with the words it
-shares, and the smaller tests. A file opened from the code it ran marks those lines in its gutter,
-under a line naming the test that leads back to it; another file opened later is not marked.
-The opening has the stretch buttons of the specification, and a card saying what the chosen
-stretch did, between the counts and the tests; each test's card carries what the stretch has to do
-with it: the changed lines it ran, and how it went before and now. A file opened from the changed
-code no test ran marks those lines in another colour, under a line saying so. Recording the base
-shows the command's progress and the end of its output, and the card is worked out again when it
-is done.
+them to begin with, and the focus already lit goes to its first view. The end-to-end tests are a
+side panel beside what is selected in it, as in the terminal UI: the overview first, selected when
+they open, then each test under its file, with a mark for how its last run went, its sentence, and
+a security or skipped mark, then the recordings of tests no longer here. Beside the overview are
+the counts — the end-to-end tests against all the tests, the failed and the ones without a
+recording — the stretch buttons of the specification, and a card saying what the chosen stretch
+did; each test in the panel carries what the stretch has to do with it: `Δ` and the changed lines
+it ran, and how it went before against now, with the whole of it said when it is pointed at. A
+file opened from the changed code no test ran marks those lines in another colour, under a line
+saying so. Recording the base shows the command's progress and the end of its output, and the card
+is worked out again when it is done. A test selected is its own view, at `test` with its file and
+name: its file and line (which open it), why it counts, when it ran and against which commit; its
+recording and its failures beside the steps, each step's line of the test under it, which opens
+the test there, and tapping a step goes to its moment; then the code it ran, each file with a bar
+of what ran and what only it ran, the documentation marked as named or as a guess with the words
+it shares, and the smaller tests. A video is fetched with the API token and played from memory by
+the browser's own player; a terminal recording is fetched as the server's frames and drawn as text
+on a dark terminal, sized to fit, opening on the first frame with anything on it, with a play
+button, a scrubber and the time; the step at the current moment is lit as it plays. A recording
+whose test is gone, selected, is that recording with its steps. A file opened from the code a test
+ran marks those lines in its gutter, under a line naming the test that leads back to it; another
+file opened later is not marked. A repository without any end-to-end test has the finding beside
+the panel, with the button that asks the agent and one to the tests it has. On a phone the panel
+and what is selected in it take turns: the panel first, the overview at `tests`, and a button on
+what is selected goes back to the panel.
 
 The overview is not on the file tree either. It is what the project says it is —
 the prose its README opens with, as plain text, up to the first heading after it — then where to

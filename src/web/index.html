@@ -195,6 +195,22 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .e2e .bad, .e2e-test.failed .mark { color: var(--del-fg); }
 .e2e .fresh, .e2e-test.passed .mark { color: var(--ins-fg); }
 .e2e .stale { color: var(--moved); }
+/* The tests' side panel: the overview, then each test under its file, and beside it what is
+   selected. Shown with the tests only. */
+aside#tests { width: 300px; min-width: 200px; max-width: 45vw; overflow: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 6px 0; resize: horizontal; }
+body:not([data-view=e2e]) aside#tests, body.nosidebar aside#tests { display: none; }
+aside#tests .row { padding: 3px 10px; cursor: pointer; display: flex; gap: 6px; align-items: baseline; }
+aside#tests .row:hover { background: var(--cursor); }
+aside#tests .row.selected { background: var(--visual); }
+aside#tests .row.overview { font-weight: 600; }
+aside#tests .file { padding: 8px 10px 2px; color: var(--accent); font-size: 12px; font-family: ui-monospace, monospace; }
+aside#tests .heading { padding: 8px 10px 2px; color: var(--moved); font-size: 12px; }
+aside#tests .row .label { flex: 1; min-width: 0; }
+aside#tests .row .mark { font-weight: bold; flex: none; }
+aside#tests .row.passed .mark { color: var(--ins-fg); }
+aside#tests .row.failed .mark { color: var(--del-fg); }
+aside#tests .row.norec .mark, aside#tests .row.ignored .label { color: var(--dim); }
+aside#tests .badges { display: flex; gap: 4px; flex-wrap: wrap; }
 .e2e-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; align-items: start; }
 .e2e-test { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel); min-width: 0; }
 .e2e-test.failed { border-color: var(--del-fg); }
@@ -495,6 +511,11 @@ footer .msg.error { color: var(--del-fg); }
   body[data-view=explore]:not(.showfile) #content { display: none; }
   body[data-view=explore].showfile #tree { display: none; }
   body[data-view=overview] #tree { display: none; }
+  /* The tests are the list, or what is selected in it, never both. */
+  aside#tests { width: auto; min-width: 0; max-width: none; flex: 1; border-right: none; resize: none; }
+  aside#tests .row { min-height: 44px; align-items: center; }
+  body[data-view=e2e]:not(.showmain) #content { display: none; }
+  body[data-view=e2e].showmain #tests { display: none; }
   .overview .item .why { flex-basis: 100%; text-align: left; }
   /* A change is a card: what happened and the test on top, where it is underneath. */
   .spec .item { flex-wrap: wrap; row-gap: 2px; }
@@ -574,6 +595,7 @@ footer .msg.error { color: var(--del-fg); }
 <nav id="subnav" hidden></nav>
 <main>
   <aside id="tree"></aside>
+  <aside id="tests" aria-label="the end-to-end tests"></aside>
   <section id="content"><div class="center">Pick a file from the tree.</div></section>
   <aside id="drawer" hidden></aside>
 </main>
@@ -594,7 +616,7 @@ const watch = { version: null, busy: false, every: 2000 };
 
 const state = {
   repo: 0, repos: [],
-  view: 'explore', files: [], documents: [], datasets: [], wrap: false,
+  view: 'explore', files: [], documents: [], datasets: [], wrap: false, orphan: null,
   // What the reader is looking at, and the file last open in each focus that has files.
   focus: 'tests', fileOf: {},
   // path -> the one-letter change mark, which is not the same shape as a ChangedFile's
@@ -801,6 +823,7 @@ async function switchRepo(index) {
   state.repo = index;
   watch.version = null;
   state.file = null; state.diff = null; state.log = null; state.allComments = undefined;
+  state.e2e = null; state.stretchReport = null; state.testView = null; state.orphan = null; state.fileOf = {};
   state.tree.collapsed = new Set(); state.tree.filter = ''; state.tree.shown = new Set();
   Object.assign(agent, { version: 0, entries: [], permission: null, running: false, name: '', status: 'not started',
     progress: '', usage: '', pollFailures: 0, startedAt: null });
@@ -1876,25 +1899,87 @@ const STRETCHES = [['week', 'last 7 days'], ['last', 'last commit'], ['uncommitt
 
 // What a repository opens on: its end-to-end tests, the ones that drive it the way a person
 // does, each with the recording its last run left. Everything else is reached from here.
-async function showEndToEnd() {
+// The tests' side panel and, beside it, their overview: what a repository opens on. On a phone
+// the panel comes first, and the overview is a tap away on it, at an address of its own.
+async function showEndToEnd({ main = false } = {}) {
   setTabs('e2e');
   state.testView = null;
-  const route = routes.e2e();
+  state.orphan = null;
+  const route = main ? routes.testsOverview() : routes.e2e();
   navigate(route);
   document.body.classList.remove('showfile');
+  document.body.classList.toggle('showmain', main);
   const content = $('#content');
   if (!content.querySelector('.e2e')) content.innerHTML = '<div class="center">reading the tests…</div>';
   try {
-    const o = await api('/e2e');
+    const o = await loadTests();
     if (state.view !== 'e2e' || currentRoute !== route) return;
+    // With no test to list, the list has nothing to offer: the finding is what there is.
+    if (!o.tests.length && !o.orphans.length) document.body.classList.add('showmain');
     renderEndToEnd(content, o);
     // The tests came from OVERVIEW.md while the index is built; ask again until they have not.
-    if (o.as_of) setTimeout(() => { if (state.view === 'e2e' && currentRoute === route) showEndToEnd(); }, 2000);
+    if (o.as_of) setTimeout(() => { if (state.view === 'e2e' && currentRoute === route) showEndToEnd({ main }); }, 2000);
   } catch (e) {
     content.innerHTML = '';
     fail(e);
   }
 }
+
+// The end-to-end tests, read again, and the side panel drawn from them.
+async function loadTests() {
+  state.e2e = await api('/e2e');
+  renderTestList();
+  return state.e2e;
+}
+
+// The side panel: the overview first, then each test under its file, marked passed, failed or
+// without a recording, and the recordings of tests no longer here. What the stretch has to do
+// with each test is added beside it once it is known.
+function renderTestList() {
+  const aside = $('#tests');
+  const o = state.e2e;
+  if (!o) { aside.innerHTML = '<div class="center">reading the tests…</div>'; return; }
+  const sel = state.testView, orphan = state.orphan;
+  const parts = [`<div class="row overview${!sel && orphan === null ? ' selected' : ''}" data-overview>Overview</div>`];
+  for (const [path, tests] of groupBy(o.tests, t => t.path)) {
+    parts.push(`<div class="file">${esc(path)} <span class="dim">${tests.length}</span></div>`);
+    for (const t of tests) {
+      const status = !t.recording ? 'norec' : t.recording.passed ? 'passed' : 'failed';
+      const here = sel && sel.file === t.path && sel.name === t.name;
+      parts.push(`<div class="row ${status}${t.ignored ? ' ignored' : ''}${here ? ' selected' : ''}" data-test="${esc(t.path + ' › ' + t.name)}" data-file="${esc(t.path)}" data-name="${esc(t.name)}">
+        <span class="mark">${{ passed: '✓', failed: '✗', norec: '○' }[status]}</span>
+        <span class="label">${t.security ? '⚿ ' : ''}${esc(t.label)}${t.ignored ? ' <span class="dim">(skipped)</span>' : ''}</span>
+        <span class="badges"></span></div>`);
+    }
+  }
+  if (o.orphans.length) {
+    parts.push(`<div class="heading">Recordings of tests no longer here</div>`);
+    o.orphans.forEach((r, i) => parts.push(`<div class="row norec${orphan === i ? ' selected' : ''}" data-orphan="${i}"><span class="mark">?</span><span class="label">${esc(r.test)}</span></div>`));
+  }
+  aside.innerHTML = parts.join('');
+  aside.querySelector('[data-overview]').onclick = () => showEndToEnd({ main: phone() });
+  aside.querySelectorAll('[data-name]').forEach(el => el.onclick = () => showTestView(el.dataset.file, el.dataset.name));
+  aside.querySelectorAll('[data-orphan]').forEach(el => el.onclick = () => showOrphan(Number(el.dataset.orphan)));
+  if (state.stretchReport) markTests(state.stretchReport);
+}
+
+// A recording whose test is gone: it, beside the list, with nothing more to lead to.
+function showOrphan(i) {
+  const r = state.e2e && state.e2e.orphans[i];
+  if (!r) return;
+  setTabs('e2e');
+  state.testView = null;
+  state.orphan = i;
+  document.body.classList.add('showmain');
+  renderTestList();
+  const content = $('#content');
+  content.innerHTML = `<div class="panelhead">${backToTests()}<span class="path">${esc(r.test)}</span></div><div class="e2e"></div>`;
+  on(content, 'tests', () => showEndToEnd());
+  content.querySelector('.e2e').appendChild(e2eCard(null, r));
+}
+
+// The way back to the list, on a phone, where the list and what is selected in it take turns.
+const backToTests = () => '<button class="phone" data-act="tests" title="the list of tests">‹ tests</button>';
 
 // What an end-to-end test of each kind of software does, for a repository that has none.
 const E2E_LOOKS_LIKE = {
@@ -1911,11 +1996,12 @@ function renderEndToEnd(content, o) {
   if (o.failed) bits.push(`<span class="bad">${o.failed} failed</span>`);
   if (o.unrecorded) bits.push(`${o.unrecorded} without a recording`);
   const stretch = state.specStretch || 'week';
-  content.innerHTML = `<div class="panelhead"><span class="path">${esc(repo ? repo.name : 'repository')}</span>
+  content.innerHTML = `<div class="panelhead">${backToTests()}<span class="path">${esc(repo ? repo.name : 'repository')}</span>
       <span class="spacer"></span>
       <button data-act="summary">Summary</button>
       <button data-act="files">Files</button></div>
     <div class="e2e"></div>`;
+  on(content, 'tests', () => showEndToEnd());
   on(content, 'summary', showOverview);
   on(content, 'files', showTree);
 
@@ -1938,26 +2024,7 @@ function renderEndToEnd(content, o) {
     if (o.as_of) root.appendChild(asOfNote(o.as_of));
     root.insertAdjacentHTML('beforeend', `<section class="card stretch-card">${stretchChips(stretch)}<div class="dim">working out what ${esc((STRETCHES.find(([k]) => k === stretch) || [, stretch])[1])} did…</div></section>`);
     bindStretchChips(root);
-    for (const [path, tests] of groupBy(o.tests, t => t.path)) {
-      const h = document.createElement('h3');
-      h.className = 'mono';
-      h.textContent = path;
-      root.appendChild(h);
-      const grid = document.createElement('div');
-      grid.className = 'e2e-grid';
-      for (const t of tests) grid.appendChild(e2eCard(t, t.recording));
-      root.appendChild(grid);
-    }
-  }
-  if (o.tests.length) loadStretch(root, stretch);
-  if (o.orphans.length) {
-    const h = document.createElement('h3');
-    h.textContent = 'Recordings of tests no longer here';
-    root.appendChild(h);
-    const grid = document.createElement('div');
-    grid.className = 'e2e-grid';
-    for (const r of o.orphans) grid.appendChild(e2eCard(null, r));
-    root.appendChild(grid);
+    loadStretch(root, stretch);
   }
   root.scrollTop = keep;
 }
@@ -1969,9 +2036,13 @@ function renderEndToEnd(content, o) {
 async function showTestView(file, name) {
   setTabs('e2e');
   state.testView = { file, name };
+  state.orphan = null;
   const route = routes.test(file, name);
   navigate(route);
   document.body.classList.remove('showfile');
+  document.body.classList.add('showmain');
+  if (state.e2e) renderTestList();
+  else loadTests().catch(fail);
   const content = $('#content');
   content.innerHTML = '<div class="center">reading the test…</div>';
   let d;
@@ -1988,7 +2059,7 @@ async function showTestView(file, name) {
   if (currentRoute !== route) return;
   const r = d.recording;
   const status = !r ? 'norec' : r.passed ? 'passed' : 'failed';
-  content.innerHTML = `<div class="panelhead"><span class="path">${esc(d.label)}</span><span class="spacer"></span>
+  content.innerHTML = `<div class="panelhead">${backToTests()}<span class="path">${esc(d.label)}</span><span class="spacer"></span>
       <button data-act="source">Test source</button></div>
     <div class="e2e testview ${status}">
       <div class="meta dim"><span class="mark">${{ passed: '✓', failed: '✗', norec: '○' }[status]}</span>
@@ -2000,6 +2071,7 @@ async function showTestView(file, name) {
       <section><h3>Smaller tests that reach the same code</h3><div class="smaller"></div></section>
     </div>`;
   content.querySelectorAll('[data-act=source]').forEach(b => b.onclick = () => openFile(d.path, d.line || undefined));
+  on(content, 'tests', () => showEndToEnd());
   const view = content.querySelector('.testview');
   const media = view.querySelector('.media');
   const steps = view.querySelector('ol.steps');
@@ -2082,13 +2154,15 @@ const stretchChips = stretch => `<div class="chips stretches">${STRETCHES.map(([
 function bindStretchChips(root) {
   root.querySelectorAll('.stretch-card [data-stretch]').forEach(b => b.onclick = () => {
     state.specStretch = b.dataset.stretch;
-    showEndToEnd();
+    state.stretchReport = null;
+    showEndToEnd({ main: document.body.classList.contains('showmain') });
   });
 }
 
 // What a stretch of history did, through the end-to-end tests: what happened to the tests,
 // the changed code none of them ran, and how each test went before and after. Drawn into the
-// opening's card for it, and onto each test's card, once the server has worked it out.
+// overview's card for it, and beside each test in the side panel, once the server has worked
+// it out.
 async function loadStretch(root, stretch) {
   const card = root.querySelector('.stretch-card');
   if (!card) return;
@@ -2138,21 +2212,29 @@ async function loadStretch(root, stretch) {
   bindStretchChips(root);
   renderBase(card.querySelector('.base'), r, root, stretch);
 
-  // Each test's card says what the stretch has to do with it, afresh each time it is said.
-  root.querySelectorAll('.e2e-test .badges').forEach(b => { b.innerHTML = ''; });
+  state.stretchReport = r;
+  markTests(r);
+}
+
+// Each test in the side panel says what the stretch has to do with it, afresh each time it is
+// said: the changed lines it ran, and how it went before against now.
+function markTests(r) {
+  const root = $('#tests');
+  root.querySelectorAll('[data-test] .badges').forEach(b => { b.innerHTML = ''; });
   for (const t of r.touched) {
-    const el = root.querySelector(`.e2e-test[data-test="${CSS.escape(t.path + ' › ' + t.name)}"] .badges`);
-    if (el) el.insertAdjacentHTML('beforeend', `<span class="badge delta" title="it ran ${t.lines} of the lines this stretch changed, in ${esc(t.files.join(', '))}">ran ${t.lines} changed line${t.lines === 1 ? '' : 's'}</span>`);
+    const el = root.querySelector(`[data-test="${CSS.escape(t.path + ' › ' + t.name)}"] .badges`);
+    if (el) el.insertAdjacentHTML('beforeend', `<span class="badge delta" title="it ran ${t.lines} of the lines this stretch changed, in ${esc(t.files.join(', '))}">Δ${t.lines}</span>`);
   }
   for (const o of r.outcomes) {
-    const el = root.querySelector(`.e2e-test[data-test="${CSS.escape(o.path + ' › ' + o.name)}"] .badges`);
+    const el = root.querySelector(`[data-test="${CSS.escape(o.path + ' › ' + o.name)}"] .badges`);
     if (!el) continue;
     const mark = v => v === null || v === undefined ? '–' : v ? '✓' : '✗';
     const turned = o.before !== o.after;
-    const bits = [`${mark(o.before)} → ${mark(o.after)}`];
-    if (o.screens_changed) bits.push(`screen changed at ${o.screens_changed} step${o.screens_changed === 1 ? '' : 's'}`);
-    if (o.steps_changed) bits.push(`${o.steps_changed} step${o.steps_changed === 1 ? '' : 's'} differ`);
-    el.insertAdjacentHTML('beforeend', `<span class="badge ${turned || o.screens_changed || o.steps_changed ? 'turned' : ''}" title="before the stretch, and now">${esc(bits.join(' · '))}</span>`);
+    const said = [`before the stretch ${mark(o.before)}, now ${mark(o.after)}`];
+    if (o.screens_changed) said.push(`the screen changed at ${o.screens_changed} step${o.screens_changed === 1 ? '' : 's'}`);
+    if (o.steps_changed) said.push(`${o.steps_changed} step${o.steps_changed === 1 ? '' : 's'} differ`);
+    const short = `${mark(o.before)}→${mark(o.after)}${o.screens_changed ? ' screen' : o.steps_changed ? ' steps' : ''}`;
+    el.insertAdjacentHTML('beforeend', `<span class="badge ${turned || o.screens_changed || o.steps_changed ? 'turned' : ''}" title="${esc(said.join('; '))}">${esc(short)}</span>`);
   }
 }
 
@@ -3198,7 +3280,10 @@ function setTabs(view) {
 // have their own list, which drifted.
 function rerenderCurrentView() {
   switch (state.view) {
-    case 'e2e': return state.testView ? showTestView(state.testView.file, state.testView.name) : showEndToEnd();
+    case 'e2e':
+      if (state.testView) return showTestView(state.testView.file, state.testView.name);
+      if (state.orphan !== null && state.orphan !== undefined) return loadTests().then(() => showOrphan(state.orphan));
+      return showEndToEnd({ main: document.body.classList.contains('showmain') });
     case 'overview': return showOverview();
     case 'spec': return showSpec(state.specParams || {});
     case 'changes': return showChanges(!!state.changesStaged);
@@ -3428,6 +3513,8 @@ $('#theme').onchange = async e => {
 const routes = {
   prefix: () => state.repo ? `#/r${state.repo}` : '#',
   e2e: () => routes.prefix() + '/',
+  // The overview on its own, which is how a phone, showing one pane, gets to it from the list.
+  testsOverview: () => routes.prefix() + '/tests',
   test: (file, name) => routes.prefix() + '/test?' + qs({ file, name }),
   overview: () => routes.prefix() + '/summary',
   // The documents and the data are trees of their own; a file opened in one says so.
@@ -3491,6 +3578,7 @@ async function route() {
   if (path === '/agent') return showAgent();
   if (path === '/spec') return showSpec(params);
   if (path === '/summary') return showOverview();
+  if (path === '/tests') return showEndToEnd({ main: true });
   if (path === '/test' && params.file && params.name) return showTestView(params.file, params.name);
   // What is left is the repository itself, which opens on what it demonstrably does: its
   // end-to-end tests, each with the recording of its last run.
