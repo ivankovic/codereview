@@ -135,6 +135,10 @@ impl App {
                         d.view.after_lines.get(line - 1).cloned(),
                         d.view.target.after_revision().map(str::to_string),
                     ),
+                    (Screen::Omni(o), Some((line, _))) => (
+                        o.after_lines.get(line - 1).cloned(),
+                        o.target.after_revision().map(str::to_string),
+                    ),
                     _ => (None, None),
                 };
                 let outcome =
@@ -197,6 +201,7 @@ impl App {
                         d.view.next_match(true);
                         n
                     }
+                    Screen::Omni(o) => o.view.search(&query),
                     _ => match &mut self.viewer {
                         Some(v) => {
                             let n = v.set_search(&query);

@@ -1141,8 +1141,42 @@ impl Session {
         }
     }
 
-    /// The two versions of `file` that `target` compares, and their diff.
-    pub fn diff(&self, target: &DiffTarget, file: &ChangedFile) -> Result<FileDiff> {
+    /// The two versions of `file` that `target` compares, as text; `None` when either is not
+    /// text. A side the target does not have, an added or a deleted file's, is empty.
+    pub fn diff_texts(
+        &self,
+        target: &DiffTarget,
+        file: &ChangedFile,
+    ) -> Result<Option<(String, String)>> {
+        let (before, after) = self.diff_sides(target, file)?;
+        if is_binary(&before) || is_binary(&after) {
+            return Ok(None);
+        }
+        Ok(Some((
+            String::from_utf8_lossy(&before).into_owned(),
+            String::from_utf8_lossy(&after).into_owned(),
+        )))
+    }
+
+    /// How big `file`'s change under `target` is, in lines, as omnidiff counts them: inserted,
+    /// deleted, updated and moved, a line on both sides counted once. `None` for a file that is
+    /// not text.
+    pub fn diff_stats(
+        &self,
+        target: &DiffTarget,
+        file: &ChangedFile,
+    ) -> Result<Option<omnidiff::Stats>> {
+        let Some((before, after)) = self.diff_texts(target, file)? else {
+            return Ok(None);
+        };
+        let old_path = file.old_path.as_deref().unwrap_or(&file.path);
+        let diff =
+            omnidiff::Diff::from_texts(&before, &after, Path::new(old_path), Path::new(&file.path));
+        Ok(Some(diff.stats(omnidiff::Preset::Minimal)))
+    }
+
+    /// The two versions of `file` that `target` compares, as bytes.
+    fn diff_sides(&self, target: &DiffTarget, file: &ChangedFile) -> Result<(Vec<u8>, Vec<u8>)> {
         let old_path = file.old_path.as_deref().unwrap_or(&file.path);
         let (before, after) = match target {
             DiffTarget::Working => (
@@ -1169,8 +1203,12 @@ impl Session {
                 },
             ),
         };
-        let before = before.unwrap_or_default();
-        let after = after.unwrap_or_default();
+        Ok((before.unwrap_or_default(), after.unwrap_or_default()))
+    }
+
+    /// The two versions of `file` that `target` compares, and their diff.
+    pub fn diff(&self, target: &DiffTarget, file: &ChangedFile) -> Result<FileDiff> {
+        let (before, after) = self.diff_sides(target, file)?;
         if is_binary(&before) || is_binary(&after) {
             return Ok(FileDiff::compute(Path::new(&file.path), "", ""));
         }

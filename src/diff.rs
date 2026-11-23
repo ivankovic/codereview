@@ -303,6 +303,27 @@ fn plain(before: &str, after: &str, language: Language, large_residual: bool) ->
     }
 }
 
+/// A diff's size as both front ends write it: `+12 −4 ~2 ↷1` for the inserted, deleted,
+/// updated and moved lines, the counts that are not zero; `no change in its code` when only what
+/// omnidiff ignores changed, whitespace say.
+pub fn size_label(stats: &omnidiff::Stats) -> String {
+    let parts: Vec<String> = [
+        ('+', stats.inserted()),
+        ('−', stats.deleted()),
+        ('~', stats.updated()),
+        ('↷', stats.moved()),
+    ]
+    .into_iter()
+    .filter(|(_, n)| *n > 0)
+    .map(|(mark, n)| format!("{mark}{n}"))
+    .collect();
+    if parts.is_empty() {
+        "no change in its code".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
 /// For each line of `before`, 0-based, the line of `after` it became, or `None` when it was
 /// deleted: what follows a comment from the version of a file it was left on to the version
 /// on screen.

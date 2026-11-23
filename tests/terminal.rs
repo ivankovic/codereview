@@ -383,11 +383,29 @@ fn a_worktree_s_uncommitted_work_is_reviewed_against_its_last_commit() {
     t.step("go to its code");
     t.keys("2");
     t.wait_for("-agent, uncommitted against");
-    t.wait_for("Files it changes 2");
+    t.wait_for("Files it changes 2 · +1 −9");
     t.wait_for("NEW.txt");
-    t.step("open the new file's diff");
+    t.step("open the new file's diff, in omnidiff's view, on the after side");
     t.keys(ENTER);
+    t.wait_for("A NEW.txt  +1  file 1/2");
+    t.wait_for("After  - NEW.txt");
     t.wait_for("the agent wrote this");
+    t.step("comment on its first line");
+    t.keys("c");
+    t.wait_for("comment on NEW.txt:1");
+    t.keys("who reads this?");
+    t.keys(ENTER);
+    t.wait_for("comment added to REVIEW.md");
+    let review = std::fs::read_to_string(t.repo().join("REVIEW.md")).unwrap_or_default();
+    t.check(
+        "REVIEW.md has the comment on the new file's first line",
+        review.contains("In NEW.txt on line 1: who reads this?"),
+        || review.clone(),
+    );
+    t.step("the next file of the range");
+    t.keys("]");
+    t.wait_for("M src/review.rs");
+    t.wait_for("file 2/2");
 }
 
 #[test]
@@ -508,7 +526,7 @@ fn a_pull_request_from_the_forge_opens_with_its_files_and_comments() {
     t.keys("G");
     t.keys(ENTER);
     t.wait_for("A line the feature adds.");
-    t.wait_for("-0 +2 hunk 1/1");
+    t.wait_for("M README.md  +1  file 1/1  change 1/1");
 }
 
 #[test]

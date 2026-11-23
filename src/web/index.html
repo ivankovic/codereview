@@ -837,7 +837,7 @@ async function switchRepo(index) {
   state.repo = index;
   watch.version = null;
   state.file = null; state.diff = null; state.log = null; state.allComments = undefined;
-  state.e2e = null; state.stretchReport = null; state.testView = null; state.orphan = null; state.fileOf = {};
+  state.e2e = null; state.stretchReport = null; state.testView = null; state.orphan = null; state.fileOf = {}; state.rangeData = null; state.range = null; state.specStretch = undefined;
   state.tree.collapsed = new Set(); state.tree.filter = ''; state.tree.shown = new Set();
   Object.assign(agent, { version: 0, entries: [], permission: null, running: false, name: '', status: 'not started',
     progress: '', usage: '', pollFailures: 0, startedAt: null });
@@ -3362,7 +3362,7 @@ async function openRanges() {
         box.hidden = true;
         let picked;
         try { picked = await api('/range/pick', { body: { head, base: b.rev } }); } catch (e) { return fail(e); }
-        showRange({ base: picked.base, head: picked.head, label: picked.label || undefined });
+        pickRange({ base: picked.base, head: picked.head, label: picked.label || undefined });
       })));
     list.querySelector('.choice')?.classList.add('on');
     if (!TOUCH) find.focus();
@@ -3375,38 +3375,66 @@ async function openRanges() {
   if (!found.length) pulls.appendChild(note('None is open.'));
   for (const pr of found) {
     pulls.appendChild(choice(`<span class="mono">#${pr.number}</span><span class="label">${esc(pr.title)}</span><span class="dim">${esc(pr.author)}${pr.draft ? ', a draft' : ''}</span>`,
-      () => { box.hidden = true; showRange({ pull: pr.number }); }));
+      () => { box.hidden = true; pickRange({ pull: pr.number }); }));
   }
   narrow();
 }
 $('#range').onclick = e => { e.stopPropagation(); openRanges().catch(fail); };
 document.addEventListener('click', e => { if (!e.target.closest('#ranges')) $('#ranges').hidden = true; });
 
-// A pull request or a comparison, as the review range, on a view of its own in the code: what
-// it is, the files it changes, each opening its diff across it, and a pull request's
-// comments, read and never written. `params` is `{ base, head }` or `{ pull }`.
-async function showRange(params) {
+// A pull request or a comparison, read once: the pull request and its comments when it is
+// one, its files with their sizes, and it made the range the tests are seen through. `params`
+// is `{ base, head, label }` or `{ pull }`.
+async function loadRange(params) {
+  const key = JSON.stringify(params.pull ? { pull: Number(params.pull) } : { base: params.base, head: params.head, label: params.label });
+  if (state.rangeData && state.rangeData.key === key) return state.rangeData;
+  let pull = null, comments = [], commentsError = null, base = params.base, head = params.head;
+  if (params.pull) {
+    msg(`fetching pull request #${params.pull}…`);
+    const r = await api('/pull', { body: { number: Number(params.pull) } });
+    ({ pull, comments } = r);
+    commentsError = r.comments_error;
+    base = r.base; head = r.head;
+  }
+  const label = params.pull ? undefined : params.label;
+  const files = await api('/range?' + qs({ base, head, pull: params.pull, label }));
+  state.range = { base, head, label, pull: params.pull ? Number(params.pull) : null, title: pull ? '#' + pull.number : files.label };
+  state.specStretch = 'range';
+  state.stretchReport = null;
+  showRangeName();
+  state.rangeData = { key, params: params.pull ? { pull: Number(params.pull) } : { base, head, label }, pull, comments, commentsError, files };
+  return state.rangeData;
+}
+
+// A range picked: it opens where it is first read, the tests, on what it did to them; its
+// code, documents and data are each a tap away under their focus.
+async function pickRange(params) {
+  try {
+    await loadRange(params);
+    await showEndToEnd({ main: true });
+    msg(`${state.range.title}: its code, documents and data are under Code, Docs and Data`);
+  } catch (e) { fail(e); }
+}
+
+// A pull request or a comparison, as the review range, on a view of its own in the focus on
+// screen — the code, the documents or the data — with the files of it that focus holds: what it
+// is, how big, each file opening its diff across it, and a pull request's comments on them,
+// read and never written.
+async function showRange(params, { focus = 'code' } = {}) {
+  state.focus = ['docs', 'data'].includes(focus) ? focus : 'code';
   setTabs('range');
   const content = $('#content');
   content.innerHTML = '<div class="center">reading the range…</div>';
   try {
-    let pull = null, comments = [], commentsError = null, base = params.base, head = params.head;
-    if (params.pull) {
-      msg(`fetching pull request #${params.pull}…`);
-      const r = await api('/pull', { body: { number: Number(params.pull) } });
-      ({ pull, comments } = r);
-      commentsError = r.comments_error;
-      base = r.base; head = r.head;
-    }
-    const label = params.pull ? undefined : params.label;
-    const route = routes.range(params.pull ? { pull: params.pull } : { base, head, label });
+    const d = await loadRange(params);
+    const { pull, comments, commentsError } = d;
+    const r = d.files;
+    const route = routes.range({ ...d.params, in: state.focus === 'code' ? undefined : state.focus });
     navigate(route);
-    const r = await api('/range?' + qs({ base, head, pull: params.pull, label }));
-    state.range = { base, head, label, pull: params.pull ? Number(params.pull) : null, title: pull ? '#' + pull.number : r.label };
-    state.specStretch = 'range';
-    state.stretchReport = null;
-    showRangeName();
     if (currentRoute !== route) return;
+    const here = state.focus;
+    const holds = f => here === 'code' || f.focus === here;
+    const files = r.files.filter(holds);
     const what = pull ? `pull request #${pull.number}` : 'comparison';
     content.innerHTML = `<div class="panelhead"><span class="path">${esc(what)} <b>${esc(pull ? pull.title : state.range.title)}</b></span><span class="spacer"></span>
         ${pull ? '<a class="small" data-act="forge" target="_blank" rel="noreferrer">on the forge</a>' : ''}</div>
@@ -3416,32 +3444,35 @@ async function showRange(params) {
       root.insertAdjacentHTML('beforeend', `<p><b>${esc(pull.state)}${pull.draft ? ', a draft' : ''}</b> <span class="dim">· ${esc(pull.head_ref)} into ${esc(pull.base_ref)} by ${esc(pull.author)}</span></p>`);
       content.querySelector('[data-act=forge]').href = pull.url;
     } else {
-      root.insertAdjacentHTML('beforeend', '<p class="dim">Two branches compared as a pull request from one into the other, from where they parted.</p>');
+      root.insertAdjacentHTML('beforeend', '<p class="dim">What the head has that the base does not, as a pull request from one into the other would.</p>');
     }
-    root.insertAdjacentHTML('beforeend', `<h3>Files it changes <span class="dim">${r.files.length}</span></h3><div class="list files"></div>`);
-    const files = root.querySelector('.files');
-    if (!r.files.length) files.innerHTML = '<div class="dim">It changes no file.</div>';
-    const diffOf = (i, line) => showDiff({ kind: 'revisions', from: r.from, to: r.to, path: r.files[i].path, old_path: r.files[i].old_path || undefined, status: statusLetter(r.files[i]), line }, r.files, i);
-    r.files.forEach((f, i) => {
+    const heading = { code: 'Files it changes', docs: 'Documents it changes', data: 'Datasets it changes' }[here];
+    const size = files.length ? ` · <span class="size">${esc(r.sizes[here])}</span>` : '';
+    root.insertAdjacentHTML('beforeend', `<h3>${heading} <span class="dim">${files.length}${size}</span></h3><div class="list files"></div>`);
+    const list = root.querySelector('.files');
+    if (!files.length) list.innerHTML = `<div class="dim">${{ code: 'It changes no file.', docs: 'It changes no document.', data: 'It changes no dataset.' }[here]}</div>`;
+    const diffOf = (i, line) => showDiff({ kind: 'revisions', from: r.from, to: r.to, path: files[i].path, old_path: files[i].old_path || undefined, status: statusLetter(files[i]), line }, files, i);
+    files.forEach((f, i) => {
       const el = document.createElement('div');
       el.className = 'item';
-      el.innerHTML = `<span class="st ${statusClass(statusLetter(f))}">${esc(statusLetter(f))}</span><span class="mono grow">${esc(f.path)}</span>`;
+      el.innerHTML = `<span class="st ${statusClass(statusLetter(f))}">${esc(statusLetter(f))}</span><span class="mono grow">${esc(f.path)}</span><span class="dim size">${esc(f.size || 'not text')}</span>`;
       el.onclick = () => diffOf(i);
-      files.appendChild(el);
+      list.appendChild(el);
     });
-    if (pull) {
-      root.insertAdjacentHTML('beforeend', `<h3>Comments <span class="dim">${comments.length}</span></h3><div class="list comments"></div>`);
-      const list = root.querySelector('.comments');
-      if (commentsError) list.innerHTML = `<div class="dim">They could not be read: ${esc(commentsError)}</div>`;
-      else if (!comments.length) list.innerHTML = '<div class="dim">Nobody has commented on it.</div>';
-      for (const c of comments) {
+    const shown = comments.filter(c => c.path ? files.some(f => f.path === c.path) : here === 'code');
+    if (pull && (here === 'code' || shown.length)) {
+      root.insertAdjacentHTML('beforeend', `<h3>Comments <span class="dim">${shown.length}</span></h3><div class="list comments"></div>`);
+      const cl = root.querySelector('.comments');
+      if (commentsError) cl.innerHTML = `<div class="dim">They could not be read: ${esc(commentsError)}</div>`;
+      else if (!shown.length) cl.innerHTML = '<div class="dim">Nobody has commented on it.</div>';
+      for (const c of shown) {
         const el = document.createElement('div');
         el.className = 'item cmt';
         const where = c.path ? `${c.path}${c.line ? ':' + c.line : ''}` : 'the pull request';
         el.innerHTML = `<span class="dim">${esc(c.author)} on <span class="mono">${esc(where)}</span></span><span class="text grow">${esc(c.body)}</span>`;
-        const at = c.path ? r.files.findIndex(f => f.path === c.path) : -1;
+        const at = c.path ? files.findIndex(f => f.path === c.path) : -1;
         if (at >= 0) el.onclick = () => diffOf(at, c.line || undefined);
-        list.appendChild(el);
+        cl.appendChild(el);
       }
     }
     msg('');
@@ -3464,13 +3495,13 @@ const GROUPS = {
     ['review', 'Comments'], ['notes', 'Notes']],
 };
 const FOCUS_OF = { e2e: 'tests', spec: 'tests', overview: 'code', changes: 'code', log: 'code', diff: 'code',
-  review: 'code', notes: 'code', range: 'code' };
+  review: 'code', notes: 'code' };
 const lastInGroup = {};
 
 function setTabs(view) {
   state.view = view;
   // The explorer is the code's, unless the documents or the data are what is being read.
-  if (view === 'explore') { if (!['code', 'docs', 'data'].includes(state.focus)) state.focus = 'code'; }
+  if (view === 'explore' || view === 'range') { if (!['code', 'docs', 'data'].includes(state.focus)) state.focus = 'code'; }
   else if (FOCUS_OF[view]) state.focus = FOCUS_OF[view];
   const group = state.focus;
   if (GROUPS[group] && GROUPS[group].some(([v]) => v === view)) lastInGroup[group] = view;
@@ -3501,21 +3532,31 @@ function rerenderCurrentView() {
     case 'notes': return showNotes();
     case 'agent': return showAgent();
     case 'diff': return state.diff && renderDiff();
-    case 'range': return state.range && showRange(state.range.pull ? { pull: state.range.pull } : { base: state.range.base, head: state.range.head, label: state.range.label });
+    case 'range': return state.rangeData && showRange(state.rangeData.params, { focus: state.focus });
     default:
       setTabs('explore');
       return renderFile();
   }
 }
 
+// The views a focus holds, and the range among them while there is one: the code, the
+// documents and the data each have its files, a tap from their own.
+function groupItems(group) {
+  const range = state.rangeData && state.range ? [['range', state.range.title]] : [];
+  if (group === 'code') return [...GROUPS.code, ...range];
+  if ((group === 'docs' || group === 'data') && range.length) return [['explore', 'Files'], ...range];
+  return GROUPS[group] || null;
+}
+
 function renderSubnav(group, view) {
   const nav = $('#subnav');
-  const items = view === 'agent' ? null : GROUPS[group];
+  const items = view === 'agent' ? null : groupItems(group);
   nav.hidden = !items;
   if (!items) return;
-  if (nav.dataset.group !== group) {
-    nav.dataset.group = group;
-    nav.innerHTML = items.map(([v, name]) => `<button data-sub="${v}">${name}</button>`).join('');
+  const key = group + '|' + items.map(([v, name]) => v + name).join();
+  if (nav.dataset.group !== key) {
+    nav.dataset.group = key;
+    nav.innerHTML = items.map(([v, name]) => `<button data-sub="${v}">${esc(name)}</button>`).join('');
     nav.querySelectorAll('button').forEach(b => b.onclick = () => openView(b.dataset.sub, true));
   }
   nav.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.sub === view));
@@ -3562,6 +3603,7 @@ function openView(v, again = false) {
   if (v === 'review') showReview();
   if (v === 'notes') showNotes();
   if (v === 'agent') showAgent();
+  if (v === 'range' && state.rangeData) showRange(state.rangeData.params, { focus: state.focus });
 }
 $('#signout').onclick = async () => {
   try { await api('/logout', { post: true }); } catch (e) { /* the session may already be gone */ }
@@ -3793,7 +3835,7 @@ async function route() {
   if (path === '/spec') return showSpec(params);
   if (path === '/summary') return showOverview();
   if (path === '/tests') return showEndToEnd({ main: true });
-  if (path === '/range' && (params.pull || (params.base && params.head))) return showRange(params);
+  if (path === '/range' && (params.pull || (params.base && params.head))) return showRange(params, { focus: params.in || 'code' });
   if (path === '/test' && params.file && params.name) return showTestView(params.file, params.name);
   // What is left is the repository itself, which opens on what it demonstrably does: its
   // end-to-end tests, each with the recording of its last run.

@@ -37,7 +37,7 @@ pub(super) fn draw_range(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         head.push(Line::from(Span::styled(
             clip(
-                "Two branches compared as a pull request from one into the other, from where they parted.",
+                "What the head has that the base does not, as a pull request from one into the other would.",
                 width,
             ),
             dim,
@@ -69,9 +69,15 @@ pub(super) fn draw_range(frame: &mut Frame, app: &mut App, area: Rect) {
             RangeRow::Note(text) => Line::from(Span::styled(clip(&format!(" {text}"), width), dim)),
             RangeRow::File(i) => {
                 let f = &state.files[*i];
+                let size = match state.sizes.get(*i).copied().flatten() {
+                    Some(stats) => format!("  {}", crate::diff::size_label(&stats)),
+                    None => "  not text".to_string(),
+                };
+                let room = width.saturating_sub(3 + size.chars().count());
                 vec![
                     Span::styled(format!(" {} ", f.status.letter()), style::accent(&theme)),
-                    Span::raw(clip(&f.label()[2..], width.saturating_sub(3))),
+                    Span::raw(format!("{:<room$}", clip(&f.label()[2..], room))),
+                    Span::styled(size, dim),
                 ]
                 .into()
             }
@@ -93,6 +99,52 @@ pub(super) fn draw_range(frame: &mut Frame, app: &mut App, area: Rect) {
         },
     );
     frame.render_widget(Paragraph::new(lines), list);
+}
+
+/// One file of a range in omnidiff's view, under a row saying which file of the range it is,
+/// how big its change is, and where among the changes the cursor is.
+pub(super) fn draw_omni(frame: &mut Frame, app: &mut App, area: Rect) {
+    let theme = app.theme.clone();
+    let Screen::Omni(state) = app.screens.last_mut().expect("screen") else {
+        return;
+    };
+    let [head, body] = Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(area);
+    let file = state.file().clone();
+    let size = state
+        .sizes
+        .get(state.index)
+        .copied()
+        .flatten()
+        .map(|s| crate::diff::size_label(&s))
+        .unwrap_or_default();
+    let change = state
+        .view
+        .change_position()
+        .map(|(at, of)| format!("  change {at}/{of}"))
+        .unwrap_or_default();
+    let structural = if state.view.is_structural() {
+        ""
+    } else {
+        "  line diff"
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(format!(" {} ", file.status.letter()), style::accent(&theme)),
+            Span::styled(file.label()[2..].to_string(), Style::new().bold()),
+            Span::styled(format!("  {size}"), style::dim(&theme)),
+            Span::styled(
+                format!(
+                    "  file {}/{}{change}{structural}",
+                    state.index + 1,
+                    state.files.len()
+                ),
+                style::dim(&theme),
+            ),
+        ])),
+        head,
+    );
+    state.view.render(frame, body);
+    app.measured.main_height = body.height as usize;
 }
 
 /// The range picker over the screen. First what to review — the pull requests, the worktrees

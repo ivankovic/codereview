@@ -427,6 +427,22 @@ test('o opens what to review, as the range in the breadcrumb does', async t => {
   t.ok('the range picker is open', await page.evaluate(() => !document.querySelector('#ranges').hidden));
 }, { docs: ['SPECS.md#Browser UI'] });
 
+/// A range just picked: it lands on the tests, on what it did to them, and its files are the
+/// code's, a tap away.
+async function landsOnTestsThenCode(t) {
+  const page = t.page;
+  await page.waitForFunction(() => location.hash.endsWith('/tests'));
+  t.ok('it opens on what it did to the tests', await page.evaluate(() =>
+    document.querySelector('header .focus [data-focus=tests]').classList.contains('active')));
+  t.step('go to its code');
+  await page.click('header .focus [data-focus=code]');
+  await page.waitForSelector('#subnav [data-sub=range]');
+  await page.click('#subnav [data-sub=range]');
+  await page.waitForSelector('.range .files .item');
+}
+
+const filesOfRange = () => [...document.querySelectorAll('.range .files .item')].map(i => i.textContent.replace(/\s+/g, ' ').trim()).join(' | ');
+
 test('a pull request from the forge opens with its files and comments', async t => {
   const page = t.page;
   await t.open();
@@ -438,14 +454,15 @@ test('a pull request from the forge opens with its files and comments', async t 
     /#7\s*Say what the feature adds\s*ana/.test(document.querySelector('#ranges .pulls .choice').textContent)));
   t.step('pick it');
   await page.click('#ranges .pulls .choice');
-  await page.waitForSelector('.range .files .item');
+  await landsOnTestsThenCode(t);
   t.ok('it is the review range, at an address of its own', await page.evaluate(() =>
     location.hash.includes('/range?pull=7') && document.querySelector('#range').textContent.trim() === '#7'), await page.evaluate(() => location.hash + ' ' + document.querySelector('#range').textContent));
   t.ok('it says what it is', await page.evaluate(() =>
     /open\s*· feature into \S+ by ana/.test(document.querySelector('.range').textContent)));
-  t.ok('the files it changes', await page.evaluate(() =>
-    [...document.querySelectorAll('.range .files .item')].map(i => i.textContent.trim()).join(' | ') === 'Afeature.txt' ? true
-      : [...document.querySelectorAll('.range .files .item')].map(i => i.textContent.trim()).join(' | ')));
+  t.ok('the files it changes, each with its size', await page.evaluate(filesOfRange) === 'Afeature.txt+1'
+    || await page.evaluate(filesOfRange));
+  t.ok('and the whole size, as omnidiff counts it', await page.evaluate(() =>
+    /Files it changes\s*1 · \+1/.test(document.querySelector('.range h3').textContent)));
   t.ok('and its comments, read from the forge', await page.evaluate(() =>
     /bo on feature\.txt:1\s*Why this line\?/.test(document.querySelector('.range .comments').textContent)));
   t.step('tap the comment');
@@ -473,7 +490,7 @@ test('a branch is compared with the one checked out as a pull request would be',
   t.ok('the default branch is offered first, and says why', await page.evaluate(() =>
     /the default branch/.test(document.querySelector('#ranges .choice').textContent)));
   await page.click('#ranges .choice');
-  await page.waitForSelector('.range .files .item');
+  await landsOnTestsThenCode(t);
   t.ok('it opens as a comparison of the two', await page.evaluate(() =>
     /comparison\s*feature against/.test(document.querySelector('#content .panelhead').textContent)));
   t.ok('changing only what the branch did', await page.evaluate(() =>
@@ -493,10 +510,14 @@ test('a worktree is reviewed as it is on disk, against its own last commit', asy
     /its last commit, agent-work\s*its uncommitted work alone/.test(document.querySelector('#ranges .choice').textContent)));
   t.step('pick it');
   await page.click('#ranges .choice');
-  await page.waitForSelector('.range .files .item');
-  t.ok('the range is its uncommitted work, an untracked file included', await page.evaluate(() =>
-    [...document.querySelectorAll('.range .files .item')].map(i => i.textContent.trim()).join(' | ') === 'Aagent-notes.txt' ? true
-      : [...document.querySelectorAll('.range .files .item')].map(i => i.textContent.trim()).join(' | ')));
+  await landsOnTestsThenCode(t);
+  t.ok('the range is its uncommitted work, an untracked file included', await page.evaluate(filesOfRange) === 'Aagent-notes.txt+1'
+    || await page.evaluate(filesOfRange));
+  t.step('its documents and its data: it changes neither');
+  await page.click('header .focus [data-focus=docs]');
+  await page.click('#subnav [data-sub=range]');
+  await page.waitForFunction(() => /It changes no document/.test(document.querySelector('.range')?.textContent || ''));
+  t.ok('the documents say so', true);
   t.ok('and the breadcrumb names it', await page.evaluate(() =>
     /^worktree agent, uncommitted against [0-9a-f]{7}$/.test(document.querySelector('#range').textContent.trim()) ? true : document.querySelector('#range').textContent));
 }, { docs: ['SPECS.md#Pull requests and comparisons'] });

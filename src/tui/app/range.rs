@@ -111,7 +111,7 @@ fn range_state(
     pull: Option<PullRequest>,
     label: String,
     target: DiffTarget,
-    files: Vec<ChangedFile>,
+    sized: Vec<(ChangedFile, Option<omnidiff::Stats>)>,
     comments: std::result::Result<Vec<ForgeComment>, &String>,
 ) -> RangeState {
     let (comments, unread) = match comments {
@@ -123,7 +123,15 @@ fn range_state(
         Focus::Data => "Datasets it changes",
         _ => "Files it changes",
     };
-    let mut rows = vec![RangeRow::Heading(format!("{what} {}", files.len()))];
+    let (files, sizes): (Vec<ChangedFile>, Vec<Option<omnidiff::Stats>>) =
+        sized.into_iter().unzip();
+    let total: omnidiff::Stats = sizes.iter().flatten().copied().sum();
+    let size = if files.is_empty() {
+        String::new()
+    } else {
+        format!(" · {}", crate::diff::size_label(&total))
+    };
+    let mut rows = vec![RangeRow::Heading(format!("{what} {}{size}", files.len()))];
     if files.is_empty() {
         rows.push(RangeRow::Note(match focus {
             Focus::Docs => "It changes no document.".into(),
@@ -150,6 +158,7 @@ fn range_state(
         label,
         target,
         files,
+        sizes,
         comments,
         rows,
     }
@@ -165,6 +174,8 @@ pub struct RangeState {
     /// What its diffs are of: from where the two sides parted to the head.
     pub target: DiffTarget,
     pub files: Vec<ChangedFile>,
+    /// Each file's size, as omnidiff counts its lines; `None` for one that is not text.
+    pub sizes: Vec<Option<omnidiff::Stats>>,
     pub comments: Vec<ForgeComment>,
     pub rows: ListState<RangeRow>,
 }
@@ -410,6 +421,14 @@ impl App {
             Some(pr) => format!("{} into {}", pr.head_ref, pr.base_ref),
             None => stretch.title(),
         };
+        // Each file's size, from omnidiff's diff of it, once for all three focuses.
+        let sized: Vec<(ChangedFile, Option<omnidiff::Stats>)> = files
+            .into_iter()
+            .map(|f| {
+                let stats = self.session.diff_stats(&target, &f).ok().flatten();
+                (f, stats)
+            })
+            .collect();
         for focus in [Focus::Code, Focus::Docs, Focus::Data] {
             let held = |path: &str| focus == Focus::Code || focus.holds(path);
             let state = range_state(
@@ -418,7 +437,11 @@ impl App {
                 pull.clone(),
                 label.clone(),
                 target.clone(),
-                files.iter().filter(|f| held(&f.path)).cloned().collect(),
+                sized
+                    .iter()
+                    .filter(|(f, _)| held(&f.path))
+                    .cloned()
+                    .collect(),
                 comments.as_ref().map(|c| {
                     c.iter()
                         .filter(|c| c.path.as_deref().map_or(focus == Focus::Code, held))
@@ -492,7 +515,8 @@ impl App {
                     Some(RangeRow::File(i)) => {
                         let target = state.target.clone();
                         let files = state.files.clone();
-                        self.push_diff(target, files, i);
+                        let sizes = state.sizes.clone();
+                        self.push_omni(target, files, sizes, i);
                     }
                     Some(RangeRow::Comment(i)) => {
                         let Some(c) = state.comments.get(i).cloned() else {
@@ -507,11 +531,12 @@ impl App {
                         let files = state.files.clone();
                         match files.iter().position(|f| f.path == path) {
                             Some(at) => {
-                                self.push_diff(target, files, at);
-                                if let (Some(Screen::Diff(d)), Some(line)) =
+                                let sizes = state.sizes.clone();
+                                self.push_omni(target, files, sizes, at);
+                                if let (Some(Screen::Omni(o)), Some(line)) =
                                     (self.screens.last_mut(), c.line)
                                 {
-                                    d.view.go_to_after_line(line.saturating_sub(1) as usize);
+                                    o.view.go_to_after_row(line.saturating_sub(1) as usize);
                                 }
                             }
                             None => self.jump_to(&path, c.line.unwrap_or(1) as usize),

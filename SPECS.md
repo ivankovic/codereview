@@ -693,14 +693,27 @@ the second step, titled with it: what to compare it with, the likeliest first, e
 it is offered where it has a reason; `Esc` there goes back to the first. The forge is asked on a
 thread of its own, and so is the fetch a pull request may need, so nothing on screen waits for
 the network. A comparison or a pull request is the range the tests are seen through, and opens
-over the code on a screen of its own, titled with the pull request's number and title or with
-the head against the base: for a pull request, its state, its two branches and its
-author, and its address, which `ge` opens; then the files it changes, each opening its diff
-across the range, and, for a pull request, its comments, oldest first, each with its author and
-where it is. `Enter` on a comment on a line opens the file's diff across the range at that line,
-which counts in the pull request's head; a comment on the whole pull request has nowhere to go.
-The breadcrumb names the range: a stretch by its name, a pull request as `#` and its number, a
-comparison as its head against its base.
+on the tests, their overview selected: what it did to them is what is read first. The code, the
+documents and the data each get its screen over their first screen, a digit away and said so:
+titled with the pull request's number and title or with the head against the base; for a pull
+request, its state, its two branches and its author, and its address, which `ge` opens; then the
+files of it the focus holds — every one for the code, the documents for Docs, the datasets for
+Data, saying so when there are none — headed by how many and how big their change is together,
+each with its own size: `+` inserted, `−` deleted, `~` updated and `↷` moved lines as omnidiff
+counts them, a line that is on both sides once, `no change in its code` when only what omnidiff
+ignores changed, and `not text` for a file that is not; and, for a pull request, its comments on
+those files, oldest first, each with its author and where it is, the ones on the whole pull
+request with the code. `Enter` on a file opens it in omnidiff's own diff view, hosted in the
+screen under a row naming the file, its size, which file of the range it is and which change the
+cursor is on: the two sides matched node by node, one panel at a time where both do not fit, the
+after side first; `n` and `p` go from change to change, `v` changes the layout, Tab the panel,
+and omnidiff's other keys work as they do in it. Around it, `]` and `[` go to the range's next and
+previous file, `c` comments on the after side's line under the cursor, recording its text and the
+head's commit as a comment from a diff does, `/` searches, `ge` opens the line in `$EDITOR` and
+`q` goes back. A file that is not text opens in the plain diff. `Enter` on a comment on a line
+opens its file there at that line, which counts in the pull request's head; a comment on the
+whole pull request has nowhere to go. The breadcrumb names the range: a stretch by its name, a
+pull request as `#` and its number, a comparison as its head against its base.
 
 A repository opens on its end-to-end tests, the first screen of the first focus, with nothing
 under them, unless a file was named on the command line, which opens in the code; this goes for
@@ -917,12 +930,15 @@ branches and the tags; the stretches — and then what to compare it with, the l
 each with why. A field at its top narrows either list as it is typed into. A stretch picked is
 what the tests are seen through, as its button on the overview is. A comparison or a pull
 request picked is the range — the overview, the specification and a test's own view all ask
-about it, and the stretch buttons gain it as a fourth
-— and opens in the code at `range`, with its two sides or the pull request's number: for a pull
-request its state, its two branches, its author and a link to it on the forge, its commits
-fetched first when the repository lacks them; then the files it changes, each opening its diff
-across the range, and its comments, read and never written, each on a line opening that diff at
-the line. The forge is asked without holding the repository's lock, so nothing else waits for
+about it, and the stretch buttons gain it as a fourth — and opens on the tests' overview, what
+it did to them. Under Code, Docs and Data it is a view of its own, at `range` with its two sides
+or the pull request's number and, for the documents and the data, the focus: the row under the
+header carries it, named, while it is the range, and Docs and Data get that row for it. For a
+pull request its state, its two branches, its author and a link to it on the forge, its commits
+fetched first when the repository lacks them; then the files of it the focus holds, with their
+sizes and the size of them together, as the terminal UI has them, each opening its diff across
+the range, and its comments on them, read and never written, each on a line opening that diff
+at the line. The forge is asked without holding the repository's lock, so nothing else waits for
 it.
 
 The overview is not on the file tree either. It is what the project says it is —

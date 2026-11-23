@@ -22,7 +22,7 @@ mod screens;
 
 use end_to_end::draw_end_to_end;
 use explorer::draw_explorer;
-use range::{draw_range, draw_range_picker};
+use range::{draw_omni, draw_range, draw_range_picker};
 use screens::{
     draw_changes, draw_diff, draw_locations, draw_log, draw_notes, draw_review, draw_spec,
 };
@@ -168,6 +168,7 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
         Screen::Spec(_) => draw_spec(frame, app, main),
         Screen::EndToEnd(_) => draw_end_to_end(frame, app, main),
         Screen::Range(_) => draw_range(frame, app, main),
+        Screen::Omni(_) => draw_omni(frame, app, main),
         Screen::Agent => {
             let theme = app.theme.clone();
             let label = app.agent_label();
@@ -469,6 +470,9 @@ fn hint_for(screen: &Screen) -> &'static str {
             "Enter open/close, diff, test or area  h close fold  / search  c group by  K kind  f files a test names  s stretch  q back"
         }
         Screen::Range(_) => "Enter diff or comment  ge on the forge  o open another  q back",
+        Screen::Omni(_) => {
+            "n/p changes  v layout  Tab panel  ] [ files  c comment  / search  ge $EDITOR  q back"
+        }
         Screen::EndToEnd(state) if state.main && state.test.is_some() => {
             "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q/Tab the list"
         }

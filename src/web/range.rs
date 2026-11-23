@@ -168,10 +168,30 @@ pub(super) struct RangeFiles {
     from: String,
     /// The head's commit.
     to: String,
-    files: Vec<ChangedFile>,
+    files: Vec<RangeFile>,
+    /// How big the change is, as omnidiff counts lines, over the files each focus holds.
+    sizes: FocusSizes,
 }
 
-/// The files a pull request or a comparison changes, from where its two sides parted.
+#[derive(Serialize)]
+struct RangeFile {
+    #[serde(flatten)]
+    file: ChangedFile,
+    /// Its size, `+12 −4`; `None` for a file that is not text.
+    size: Option<String>,
+    /// Which focus besides the code holds it: `docs`, `data`, or none.
+    focus: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+struct FocusSizes {
+    code: String,
+    docs: String,
+    data: String,
+}
+
+/// The files a pull request or a comparison changes, from where its two sides parted, each
+/// with its size.
 pub(super) async fn get_range(state: Ctx, Query(q): Query<RangeQuery>) -> ApiResult<RangeFiles> {
     let r = with_session(&state, move |s| {
         let stretch = Stretch::Range {
@@ -182,12 +202,50 @@ pub(super) async fn get_range(state: Ctx, Query(q): Query<RangeQuery>) -> ApiRes
         };
         let span = crate::spec::span(s, &stretch)?;
         let to = span.to.clone().unwrap_or_default();
-        let files = s.repo.diff_files(&span.base, &to)?;
+        let target = DiffTarget::Revisions {
+            from: span.base.clone(),
+            to: to.clone(),
+        };
+        let mut totals = [omnidiff::Stats::default(); 3];
+        let files = s
+            .repo
+            .diff_files(&span.base, &to)?
+            .into_iter()
+            .map(|file| {
+                let stats = s.diff_stats(&target, &file).ok().flatten();
+                let focus = if crate::docs::is_document(&file.path) {
+                    Some("docs")
+                } else if crate::media::is_dataset(&file.path) {
+                    Some("data")
+                } else {
+                    None
+                };
+                if let Some(stats) = stats {
+                    totals[0] = totals[0] + stats;
+                    match focus {
+                        Some("docs") => totals[1] = totals[1] + stats,
+                        Some("data") => totals[2] = totals[2] + stats,
+                        _ => {}
+                    }
+                }
+                RangeFile {
+                    file,
+                    size: stats.map(|s| crate::diff::size_label(&s)),
+                    focus,
+                }
+            })
+            .collect();
+        let label = crate::diff::size_label;
         Ok(RangeFiles {
             label: span.label,
             from: span.base,
             to,
             files,
+            sizes: FocusSizes {
+                code: label(&totals[0]),
+                docs: label(&totals[1]),
+                data: label(&totals[2]),
+            },
         })
     })
     .await?;

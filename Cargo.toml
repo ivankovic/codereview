@@ -18,9 +18,10 @@ codegen-units = 1
 anyhow = "1.0"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.5", features = ["derive"] }
-# Syntax-aware diffing. `default-features = false` drops its own TUI and its clap/ratatui
-# dependencies; this crate only needs the diff engine and the language table.
-omnidiff = { version = "0.2", default-features = false }
+# Syntax-aware diffing: the library API (`omnidiff::Diff`, its line operations and sizes) and,
+# under this crate's `tui` feature, omnidiff's own per-file diff view, hosted in the terminal UI
+# (`omnidiff::tui::embed`). Without `tui`, `default-features = false` leaves its viewer out.
+omnidiff = { path = "../../../../omnidiff/.claude/worktrees/embed", default-features = false }
 regex = "1.10"
 # Same major as omnidiff's, so its grammars (reached through `omnidiff::code::language`) are
 # usable here for symbol extraction without a second copy of tree-sitter.
@@ -77,7 +78,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
 
 [features]
 default = ["tui"]
-tui = ["dep:ratatui", "dep:crossterm", "dep:ratatui-image", "dep:image"]
+tui = ["dep:ratatui", "dep:crossterm", "dep:ratatui-image", "dep:image", "omnidiff/tui"]
 web = ["dep:axum", "dep:tokio", "dep:rand", "dep:open", "dep:argon2", "dep:rpassword"]
 
 [[bin]]

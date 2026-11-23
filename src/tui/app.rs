@@ -16,6 +16,7 @@ use crate::spec::{Stretch, TestChange, What};
 use crate::theme::Theme;
 mod end_to_end;
 mod focus;
+mod omni;
 mod one_test;
 mod overlays;
 mod range;
@@ -116,6 +117,7 @@ impl<T> ListState<T> {
 
 pub use end_to_end::{E2eRow, EndToEndState, Player};
 pub use focus::{Explorer, Focus};
+pub use omni::OmniState;
 pub use one_test::{EndToEndTestState, TestRow};
 pub use range::{RangeChoice, RangePicker, RangeRow, RangeState, Step};
 pub use screens::{
@@ -136,6 +138,8 @@ pub enum Screen {
     EndToEnd(Box<EndToEndState>),
     /// A pull request or a comparison: what it is, its files, its comments.
     Range(Box<RangeState>),
+    /// One file of a range, in omnidiff's own diff view.
+    Omni(Box<OmniState>),
     Agent,
 }
 
@@ -154,6 +158,7 @@ impl Screen {
             Screen::EndToEnd(_) => "end to end",
             Screen::Range(r) if r.pull.is_some() => "pull request",
             Screen::Range(_) => "comparison",
+            Screen::Omni(_) => "diff",
             Screen::Agent => "agent",
         }
     }
@@ -834,6 +839,13 @@ impl App {
                 };
                 (d.view.file.path.clone(), Some((line + 1, line + 1)))
             }
+            Screen::Omni(o) => {
+                let Some((omnidiff::Side::After, row)) = o.view.cursor() else {
+                    self.info("comments go on the after side: Tab to it");
+                    return;
+                };
+                (o.file().path.clone(), Some((row + 1, row + 1)))
+            }
             _ => {
                 let Some(v) = &self.viewer else {
                     self.info("open a file first");
@@ -1255,6 +1267,7 @@ impl App {
             Screen::Spec(_) => self.handle_spec_key(key),
             Screen::EndToEnd(_) => self.handle_end_to_end_key(key),
             Screen::Range(_) => self.handle_range_key(key),
+            Screen::Omni(_) => self.handle_omni_key(key),
             Screen::Agent => {
                 let height = self.measured.main_height;
                 let config = self.session.config.agent.clone();
@@ -1680,6 +1693,7 @@ impl App {
             Screen::Spec(state) => state.rows.move_by(delta),
             Screen::EndToEnd(_) => self.move_end_to_end(delta),
             Screen::Range(r) => r.rows.move_by(delta),
+            Screen::Omni(_) => {}
         }
     }
 }
