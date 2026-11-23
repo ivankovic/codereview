@@ -379,6 +379,9 @@ fn a_worktree_s_uncommitted_work_is_reviewed_against_its_last_commit() {
     t.keys(ENTER);
     t.wait_for("its last commit, agent-work — its uncommitted work alone");
     t.keys(ENTER);
+    t.wait_for("In worktree");
+    t.step("go to its code");
+    t.keys("2");
     t.wait_for("-agent, uncommitted against");
     t.wait_for("Files it changes 2");
     t.wait_for("NEW.txt");
@@ -406,6 +409,14 @@ fn a_branch_is_compared_as_a_pull_request_into_the_current_one() {
     t.wait_for("compare feature with what?");
     t.wait_for("main — the default branch, where pull requests go");
     t.keys(ENTER);
+    t.step("it opens on what it did to the tests");
+    t.wait_for("In feature against main");
+    t.wait_for("2 its code, 3 its documents, 4 its data");
+    t.step("its documents: the README it changed");
+    t.keys("3");
+    t.wait_for("Documents it changes 1");
+    t.step("its code");
+    t.keys("2");
     t.wait_for(" comparison feature against main ");
     t.wait_for("Files it changes 1");
     let top = t.screen().lines().next().unwrap_or_default().to_string();
@@ -479,6 +490,9 @@ fn a_pull_request_from_the_forge_opens_with_its_files_and_comments() {
     t.keys("#7");
     t.keys(ENTER);
     t.keys(ENTER);
+    t.wait_for("In pull request #7");
+    t.step("go to its code");
+    t.keys("2");
     t.wait_for(" pull request #7 Say what the feature does ");
     t.wait_for("open · feature into main by ana");
     t.wait_for("Files it changes 1");

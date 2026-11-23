@@ -102,6 +102,59 @@ impl RangeRow {
     }
 }
 
+/// A range's screen in one focus: what it is, the files of it that focus holds, and the
+/// comments on them, the ones on the whole pull request with the code.
+#[allow(clippy::too_many_arguments)]
+fn range_state(
+    focus: Focus,
+    stretch: Stretch,
+    pull: Option<PullRequest>,
+    label: String,
+    target: DiffTarget,
+    files: Vec<ChangedFile>,
+    comments: std::result::Result<Vec<ForgeComment>, &String>,
+) -> RangeState {
+    let (comments, unread) = match comments {
+        Ok(c) => (c, None),
+        Err(e) => (Vec::new(), Some(e.clone())),
+    };
+    let what = match focus {
+        Focus::Docs => "Documents it changes",
+        Focus::Data => "Datasets it changes",
+        _ => "Files it changes",
+    };
+    let mut rows = vec![RangeRow::Heading(format!("{what} {}", files.len()))];
+    if files.is_empty() {
+        rows.push(RangeRow::Note(match focus {
+            Focus::Docs => "It changes no document.".into(),
+            Focus::Data => "It changes no dataset.".into(),
+            _ => "It changes no file.".into(),
+        }));
+    }
+    rows.extend((0..files.len()).map(RangeRow::File));
+    if pull.is_some() && (focus == Focus::Code || !comments.is_empty()) {
+        rows.push(RangeRow::Heading(format!("Comments {}", comments.len())));
+        match unread {
+            Some(e) => rows.push(RangeRow::Note(format!("They could not be read: {e}"))),
+            None if comments.is_empty() => {
+                rows.push(RangeRow::Note("Nobody has commented on it.".into()))
+            }
+            None => rows.extend((0..comments.len()).map(RangeRow::Comment)),
+        }
+    }
+    let mut rows = ListState::new(rows);
+    super::end_to_end::settle(&mut rows, 1, RangeRow::selectable);
+    RangeState {
+        stretch,
+        pull,
+        label,
+        target,
+        files,
+        comments,
+        rows,
+    }
+}
+
 /// A pull request or a comparison, on a screen of its own over the code.
 pub struct RangeState {
     pub stretch: Stretch,
@@ -325,7 +378,9 @@ impl App {
         changed
     }
 
-    /// Makes `stretch` the range, and opens its own screen over the code.
+    /// Makes `stretch` the range, and opens it where it is first read: the tests, on what it
+    /// did to them. The code, the documents and the data each get its screen of the files they
+    /// hold, a digit away.
     fn open_range(
         &mut self,
         stretch: Stretch,
@@ -347,53 +402,62 @@ impl App {
                 return;
             }
         };
-        let (comments, unread) = match comments {
-            Ok(c) => (c, None),
-            Err(e) => (Vec::new(), Some(e)),
+        let target = DiffTarget::Revisions {
+            from: span.base.clone(),
+            to,
         };
-        let mut rows = vec![RangeRow::Heading(format!(
-            "Files it changes {}",
-            files.len()
-        ))];
-        if files.is_empty() {
-            rows.push(RangeRow::Note("It changes no file.".into()));
-        }
-        rows.extend((0..files.len()).map(RangeRow::File));
-        if pull.is_some() {
-            rows.push(RangeRow::Heading(format!("Comments {}", comments.len())));
-            match unread {
-                Some(e) => rows.push(RangeRow::Note(format!("They could not be read: {e}"))),
-                None if comments.is_empty() => {
-                    rows.push(RangeRow::Note("Nobody has commented on it.".into()))
-                }
-                None => rows.extend((0..comments.len()).map(RangeRow::Comment)),
-            }
-        }
         let label = match &pull {
             Some(pr) => format!("{} into {}", pr.head_ref, pr.base_ref),
             None => stretch.title(),
         };
-        let mut rows = ListState::new(rows);
-        super::end_to_end::settle(&mut rows, 1, RangeRow::selectable);
-        let state = RangeState {
-            stretch: stretch.clone(),
-            pull,
-            label,
-            target: DiffTarget::Revisions {
-                from: span.base.clone(),
-                to,
-            },
-            files,
-            comments,
-            rows,
-        };
+        for focus in [Focus::Code, Focus::Docs, Focus::Data] {
+            let held = |path: &str| focus == Focus::Code || focus.holds(path);
+            let state = range_state(
+                focus,
+                stretch.clone(),
+                pull.clone(),
+                label.clone(),
+                target.clone(),
+                files.iter().filter(|f| held(&f.path)).cloned().collect(),
+                comments.as_ref().map(|c| {
+                    c.iter()
+                        .filter(|c| c.path.as_deref().map_or(focus == Focus::Code, held))
+                        .cloned()
+                        .collect()
+                }),
+            );
+            self.put_range_on(focus, state);
+        }
         self.stretch = stretch;
         self.refresh_end_to_end(false);
-        self.switch_focus(Focus::Code);
-        if matches!(self.screen(), Screen::Range(_)) {
-            self.screens.pop();
+        self.switch_focus(Focus::Tests);
+        // On the overview, which is what the range did to the tests.
+        if let Some(Screen::EndToEnd(state)) = self.screens.last_mut() {
+            state.rows.cursor = 0;
+            state.main = false;
+            state.test = None;
         }
-        self.screens.push(Screen::Range(Box::new(state)));
+        self.info(format!(
+            "{}: 2 its code, 3 its documents, 4 its data",
+            self.stretch.title()
+        ));
+    }
+
+    /// Puts a range's screen on `focus`'s stack, over its first screen, in place of the one
+    /// an earlier range left there and whatever was opened over that.
+    fn put_range_on(&mut self, focus: Focus, state: RangeState) {
+        let stack = if focus == self.focus {
+            &mut self.screens
+        } else {
+            &mut self.parked[focus.index()]
+        };
+        if let Some(at) = stack.iter().position(|s| matches!(s, Screen::Range(_))) {
+            stack.truncate(at);
+        }
+        if stack.is_empty() {
+            stack.push(Screen::Explorer);
+        }
+        stack.push(Screen::Range(Box::new(state)));
     }
 
     pub(super) fn handle_range_key(&mut self, key: KeyEvent) {
