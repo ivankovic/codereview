@@ -127,6 +127,18 @@ pub struct Repo {
     root: PathBuf,
 }
 
+/// The directory is inside no git repository, as git says.
+#[derive(Debug)]
+pub struct NotARepository(pub PathBuf);
+
+impl std::fmt::Display for NotARepository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} is not inside a git repository", self.0.display())
+    }
+}
+
+impl std::error::Error for NotARepository {}
+
 /// A local branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Branch {
@@ -142,11 +154,20 @@ pub struct Branch {
 impl Repo {
     /// The repository containing `from`, or an error naming the directory when it is not inside
     /// one.
+    ///
+    /// Git saying the directory is in no repository is [`NotARepository`], which a caller may
+    /// take as a cue to look further; anything else — git missing, or refusing to run there —
+    /// is said as git said it, since looking elsewhere would only hide it.
     pub fn open(from: &Path) -> Result<Self> {
-        let out = run_git(from, &["rev-parse", "--show-toplevel"])
-            .with_context(|| format!("{} is not inside a git repository", from.display()))?;
-        let root = PathBuf::from(String::from_utf8_lossy(&out).trim_end());
-        Ok(Self { root })
+        match run_git(from, &["rev-parse", "--show-toplevel"]) {
+            Ok(out) => Ok(Self {
+                root: PathBuf::from(String::from_utf8_lossy(&out).trim_end()),
+            }),
+            Err(e) if format!("{e:#}").contains("not a git repository") => {
+                Err(NotARepository(from.to_path_buf()).into())
+            }
+            Err(e) => Err(e.context(format!("git refused to run in {}", from.display()))),
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -801,14 +822,25 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .output()
         .with_context(|| format!("cannot run git {}", args.join(" ")))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "git {} failed: {}",
-            args.join(" "),
-            stderr.trim().lines().next().unwrap_or("no message")
-        );
+        bail!("git {} failed: {}", args.join(" "), said(&output.stderr));
     }
     Ok(output.stdout)
+}
+
+/// What git said on its error output, short: the first line, which says what went wrong, and
+/// the last, which is where a git, or a wrapper around it, says what to do about it.
+fn said(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    match lines.as_slice() {
+        [] => "no message".to_string(),
+        [one] => one.to_string(),
+        [first, .., last] => format!("{first}\n{last}"),
+    }
 }
 
 /// What git said when a command failed: its complaints first, then what it printed, since a
@@ -1089,6 +1121,42 @@ mod tests {
         }
         assert_eq!(github_name("https://gitlab.com/a/b.git"), None);
         assert_eq!(github_name("https://github.com/a"), None);
+    }
+
+    #[test]
+    fn git_s_complaint_keeps_what_went_wrong_and_what_to_do() {
+        assert_eq!(said(b""), "no message");
+        assert_eq!(said(b"fatal: one thing\n"), "fatal: one thing");
+        assert_eq!(
+            said(b"git: it changed:\n--- trusted\n+++ now\n\nthen: git trust\n"),
+            "git: it changed:\nthen: git trust"
+        );
+    }
+
+    /// Only a directory git calls no repository is one; git refusing to run in a repository
+    /// is said as git said it, not mistaken for there being none.
+    #[test]
+    fn a_repository_git_refuses_is_not_called_no_repository() {
+        let outside = tempfile::tempdir().unwrap();
+        let Err(err) = Repo::open(outside.path()) else {
+            panic!("no repository there");
+        };
+        assert!(err.is::<NotARepository>(), "{err:#}");
+
+        let dir = tempfile::tempdir().unwrap();
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(dir.path().join(".git/config"), "this is not a config\n").unwrap();
+        let Err(err) = Repo::open(dir.path()) else {
+            panic!("git refuses");
+        };
+        let said = format!("{err:#}");
+        assert!(!err.chain().any(|c| c.is::<NotARepository>()), "{said}");
+        assert!(said.contains("git refused to run in"), "{said}");
+        assert!(said.contains("bad config"), "git's own words: {said}");
     }
 
     #[test]

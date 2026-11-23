@@ -1356,6 +1356,11 @@ pub fn open_targets(
         if path.is_dir() {
             match open(path) {
                 Ok(session) => add(session, None),
+                // Only a directory git calls no repository may hold repositories below it;
+                // git failing there for any other reason is the thing to say.
+                Err(e) if !e.chain().any(|c| c.is::<crate::repo::NotARepository>()) => {
+                    return Err(e);
+                }
                 Err(e) => {
                     let below = repos_below(path);
                     if below.is_empty() {
@@ -1589,6 +1594,22 @@ pub(crate) mod tests {
             format!("{err:#}").contains("no repositories directly below"),
             "{err:#}"
         );
+    }
+
+    /// A repository git will not run in is said to be that, with git's own words, rather than
+    /// taken for a directory of checkouts with none in it.
+    #[test]
+    fn a_repository_git_refuses_says_why() {
+        let dir = scratch_repo();
+        std::fs::write(dir.path().join(".git/config"), "this is not a config\n").unwrap();
+        let config = dir.path().join("codereview-config.toml");
+        let err = open_targets(dir.path(), &[], Some(config), |_| {})
+            .err()
+            .unwrap();
+        let said = format!("{err:#}");
+        assert!(said.contains("git refused to run in"), "{said}");
+        assert!(said.contains("bad config"), "{said}");
+        assert!(!said.contains("directly below"), "{said}");
     }
 
     #[test]
