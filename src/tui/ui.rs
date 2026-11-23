@@ -11,7 +11,7 @@ use crate::anchor::AnchorState;
 use crate::session::DiffTarget;
 use crate::theme::Theme;
 use crate::tui::agent_panel;
-use crate::tui::app::{App, Screen, Section, SpecRow};
+use crate::tui::app::{App, Focus, Screen, SpecRow};
 use crate::tui::style::{self, comment_style};
 use crate::tui::workspace::Workspace;
 
@@ -33,72 +33,20 @@ pub fn draw_workspace(frame: &mut Frame, ws: &mut Workspace) {
         draw_repo_select(frame, ws, area);
         return;
     }
-    let body = if ws.apps.len() > 1 {
-        let [strip, body] =
-            Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(area);
-        draw_repo_strip(frame, ws, strip);
-        body
-    } else {
-        area
-    };
     let active = ws.active;
-    draw_app(frame, &mut ws.apps[active], body);
+    let count = ws.apps.len();
+    let elsewhere_asks = ws
+        .apps
+        .iter()
+        .enumerate()
+        .any(|(i, app)| i != active && app.agent.permission().is_some());
+    let crumbs = &mut ws.apps[active].crumbs;
+    crumbs.place = (count > 1).then_some((active + 1, count));
+    crumbs.elsewhere_asks = elsewhere_asks;
+    draw_app(frame, &mut ws.apps[active], area);
     if ws.picker.is_some() {
         draw_repo_picker(frame, ws, area);
     }
-}
-
-/// ` 1 codereview │ 2 omnidiff ⠋ │ 3 nvim-review ?3 `: number, name, and what is going on
-/// there: `?` while its agent waits for permission, a spinner while it works, the pending
-/// comment count.
-fn draw_repo_strip(frame: &mut Frame, ws: &Workspace, area: Rect) {
-    let theme = ws.app().theme.clone();
-    let mut labels: Vec<(String, Style)> = Vec::new();
-    for (i, app) in ws.apps.iter().enumerate() {
-        let mut label = format!(" {} {}", i + 1, app.session.name());
-        if app.agent.permission().is_some() {
-            label.push_str(" ?");
-        } else if app.agent_active() {
-            label.push(' ');
-            label.push_str(app.agent.spinner());
-        }
-        let pending = app.session.review.pending_count();
-        if pending > 0 {
-            label.push_str(&format!(" ·{pending}"));
-        }
-        label.push(' ');
-        let style_ = if i == ws.active {
-            style::accent(&theme).reversed()
-        } else if app.agent.permission().is_some() {
-            style::fg(theme.moved).bold()
-        } else {
-            style::dim(&theme)
-        };
-        labels.push((label, style_));
-    }
-    // More repositories than fit: start from the first that still leaves the active one
-    // visible, and mark what is cut off on the left.
-    let hint = " gt/gT next/previous  W pick";
-    let room = (area.width as usize).saturating_sub(hint.len() + 2);
-    let mut start = ws.active;
-    let mut used = labels[ws.active].0.width() + 1;
-    while start > 0 && used + labels[start - 1].0.width() < room {
-        start -= 1;
-        used += labels[start].0.width() + 1;
-    }
-    let mut spans: Vec<Span> = Vec::new();
-    if start > 0 {
-        spans.push(Span::styled("‹", style::dim(&theme)));
-    }
-    for (label, style_) in labels.into_iter().skip(start) {
-        spans.push(Span::styled(label, style_));
-        spans.push(Span::styled("│", style::dim(&theme)));
-    }
-    spans.push(Span::styled(hint, style::dim(&theme)));
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(style::fg(theme.fg).patch(style::bg(theme.panel))),
-        area,
-    );
 }
 
 fn draw_repo_picker(frame: &mut Frame, ws: &Workspace, area: Rect) {
@@ -206,7 +154,7 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Length(1),
     ])
     .areas(area);
-    draw_sections(frame, app, bar);
+    draw_top(frame, app, bar);
     match app.screens.last_mut().expect("screen") {
         Screen::Explorer => draw_explorer(frame, app, main),
         Screen::Log(_) => draw_log(frame, app, main),
@@ -239,37 +187,60 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-/// The sections across the top, tests first, the one on screen lit, each with the digit
-/// that goes there; what is waiting in one is said beside its name.
-fn draw_sections(frame: &mut Frame, app: &App, area: Rect) {
+/// The row across the top: on the left the breadcrumb, where in the repository one is — its
+/// address, the branch, the review range and the commit — and on the right the focus picker,
+/// the focus on screen lit, each with the digit that goes there. Between them, what is waiting:
+/// pending comments, and the agent working or asking.
+fn draw_top(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let mut spans: Vec<Span> = Vec::new();
-    for section in Section::ALL {
-        let waiting = match section {
-            Section::Review => {
-                let pending = app.session.review.pending_count();
-                (pending > 0).then(|| pending.to_string())
-            }
-            Section::Agent if app.agent.permission().is_some() => Some("asks".into()),
-            Section::Agent if app.agent_active() => Some("●".into()),
-            _ => None,
-        };
-        let label = format!(" {} {} ", section.key(), section.name());
-        spans.push(if section == app.section {
+    let crumbs = &app.crumbs;
+    let sep = || Span::styled(" › ", style::dim(theme));
+    let mut left: Vec<Span> = vec![" ".into(), crumbs.address.clone().bold()];
+    if let Some((at, of)) = crumbs.place {
+        left.push(Span::styled(format!(" ({at}/{of})"), style::dim(theme)));
+    }
+    if crumbs.elsewhere_asks {
+        left.push(Span::styled(" ?", style::fg(theme.moved).bold()));
+    }
+    left.push(sep());
+    left.push(crumbs.branch.clone().into());
+    left.push(sep());
+    left.push(Span::styled(
+        app.stretch.name().to_string(),
+        style::accent(theme),
+    ));
+    if !crumbs.commit.is_empty() {
+        left.push(sep());
+        left.push(Span::styled(crumbs.commit.clone(), style::dim(theme)));
+    }
+    let mut right: Vec<Span> = Vec::new();
+    let pending = app.session.review.pending_count();
+    if pending > 0 {
+        right.push(Span::styled(format!("·{pending} "), style::fg(theme.moved)));
+    }
+    if app.agent.permission().is_some() {
+        right.push(Span::styled("agent asks ", style::fg(theme.moved).bold()));
+    } else if app.agent_active() {
+        right.push(Span::styled("agent ● ", style::fg(theme.moved)));
+    }
+    for focus in Focus::ALL {
+        let label = format!(" {} {} ", focus.key(), focus.name());
+        right.push(if focus == app.focus {
             Span::styled(label, style::accent(theme).reversed())
         } else {
             label.into()
         });
-        if let Some(waiting) = waiting {
-            spans.push(Span::styled(waiting, style::fg(theme.moved)));
-        }
-        spans.push(" ".into());
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    let right_width: usize = right.iter().map(|s| s.width()).sum();
+    let [crumb_area, focus_area] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(right_width as u16)])
+            .areas(area);
+    frame.render_widget(Paragraph::new(Line::from(left)), crumb_area);
+    frame.render_widget(Paragraph::new(Line::from(right)), focus_area);
 }
 
 /// The options panel: each setting with what it is now, and under them what the one the
-/// cursor is on does, since a name like "auto-hide" does not say when.
+/// cursor is on does.
 fn draw_options(frame: &mut Frame, app: &App, area: Rect) {
     let Some(row) = app.options else {
         return;
@@ -403,7 +374,7 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
         prompt.draw(frame, area);
         return;
     }
-    // Where in the section this is: its first screen and what was opened over it, the last
+    // Where in the focus this is: its first screen and what was opened over it, the last
     // few of them.
     let names: Vec<&str> = app.screens.iter().map(|s| s.name()).collect();
     let trail = match names.len() {
@@ -494,7 +465,7 @@ fn hint_for(screen: &Screen) -> &'static str {
             "Enter open/close, diff, test or area  h close fold  / search  c group by  K kind  f files a test names  s stretch  q back"
         }
         Screen::EndToEnd(_) => {
-            "Enter the test  Space play  ] [ steps  w stretch  b record before  s source  o video  1-5 sections  q quit"
+            "Enter the test  Space play  ] [ steps  w stretch  b record before  s source  o video  1-4 focus  q quit"
         }
         Screen::EndToEndTest(_) => {
             "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q back"
@@ -506,25 +477,28 @@ fn hint_for(screen: &Screen) -> &'static str {
 }
 
 const HELP: &[(&str, &str)] = &[
-    ("Sections", ""),
+    ("Focus, picked at the top right", ""),
     (
         "1  E",
         "Tests: the end-to-end tests, each with the recording of its last run; what a repository opens on",
     ),
-    (
-        "2  P",
-        "All tests: every test by what kind of test it is, and what the last 7 days did to them; in the log, what that commit did",
-    ),
-    ("3  C", "Code: the file tree and the open file"),
-    ("4  R", "Review: every comment in REVIEW.md"),
-    ("5  A  Ctrl-a", "Agent: the conversation with the agent"),
+    ("2", "Code: the file tree and the open file"),
+    ("3", "Docs: the repository's Markdown documents"),
+    ("4", "Data: its datasets, CSV, JSON and the like"),
     (
         "q / Esc",
-        "back; on a section's first screen, to the tests; on the tests, quit",
+        "back; on a focus's first screen, to the tests; on the tests, quit",
     ),
+    ("\\", "hide or show the side panel"),
     ("", ""),
     ("Everywhere", ""),
     ("?", "this help"),
+    (
+        "P",
+        "every test by what kind of test it is, and what the last 7 days did to them; in the log, what that commit did",
+    ),
+    ("R", "the review: every comment in REVIEW.md, over the code"),
+    ("A  Ctrl-a", "the agent panel, over whatever is on screen"),
     ("L", "repository log"),
     ("U", "the tests that name the open file"),
     (
@@ -536,10 +510,7 @@ const HELP: &[(&str, &str)] = &[
     ("N", "add a general note"),
     ("r", "re-read the repository and both Markdown files"),
     ("t", "colour scheme picker; the choice is saved"),
-    (
-        ",",
-        "options: side panels that hide, diff layout, colour scheme",
-    ),
+    (",", "options: diff layout, colour scheme"),
     ("Ctrl-h", "toggle syntax highlighting"),
     ("i", "ask the agent something, from anywhere"),
     (

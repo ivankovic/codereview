@@ -19,17 +19,6 @@ pub struct Config {
     /// The checks this machine may run in a repository: tests, coverage, a linter. Named
     /// `analysis` because that is what the page calls them; `[[analysis]]` in the file.
     pub analysis: Vec<Check>,
-    /// The terminal UI's side panel: the file tree, or the outline of the open file.
-    pub sidebar: SidebarConfig,
-}
-
-/// Whether each of the explorer's side panels gets out of the way. A panel that hides is
-/// there while it has the focus and gone while the file has it, and the file takes its width.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SidebarConfig {
-    pub files_auto_hide: bool,
-    pub outline_auto_hide: bool,
 }
 
 /// One check: what to call it, what to run, and what to read afterwards.
@@ -142,7 +131,6 @@ impl Default for Config {
             timestamps: true,
             agent: AgentConfig::default(),
             analysis: Vec::new(),
-            sidebar: SidebarConfig::default(),
         }
     }
 }
@@ -230,10 +218,6 @@ mod tests {
                 watch: vec!["/srv/review/repos/one".into()],
                 repos: vec!["/srv/review/repos/one".into()],
             }],
-            sidebar: SidebarConfig {
-                files_auto_hide: true,
-                outline_auto_hide: false,
-            },
         };
         config.save_to(&path).unwrap();
         assert!(path.exists(), "the directory was made as well");

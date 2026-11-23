@@ -252,13 +252,12 @@ the Light or Dark scheme and highlights with Dark's syntax theme.
 
 The config file is `$CODEREVIEW_CONFIG`, else `$XDG_CONFIG_HOME/codereview/config.toml`, else
 `~/.config/codereview/config.toml`: `theme`, `layout` (`auto`, `side-by-side`, `unified`),
-`timestamps`, `[agent]` with `kind`, `claude_command`, `claude_args`, `command` and
-`args`, `[sidebar]` with `files_auto_hide` and `outline_auto_hide`, and any number of
-`[[analysis]]` checks. Missing keys take defaults; a malformed file is an error. The terminal UI
-saves on Enter in the picker (`t`; `j`/`k` preview live, `Esc` restores), on every layout change
-(`v`) and on every change in the options panel (`,`), and hands what it saved to the other
-repositories open beside it; the browser UI saves from its header dropdown. Both read the file
-when they start.
+`timestamps`, `[agent]` with `kind`, `claude_command`, `claude_args`, `command` and `args`, and
+any number of `[[analysis]]` checks. Missing keys take defaults, and keys it no longer has are
+ignored; a malformed file is an error. The terminal UI saves on Enter in the picker (`t`; `j`/`k`
+preview live, `Esc` restores), on every layout change (`v`) and on every change in the options
+panel (`,`), and hands what it saved to the other repositories open beside it; the browser UI
+saves from its header dropdown. Both read the file when they start.
 
 ## Analysis
 
@@ -638,26 +637,38 @@ of the size of one object per segment; the page unpacks them on arrival.
 
 ## Terminal UI
 
-The top row is five sections, in the order the page has its tabs: Tests, All tests, Code, Review and
-Agent, each with the digit that goes there, `1` to `5`, the one on screen lit, and beside Review the
-number of pending comments and beside Agent whether it is working or asking. Each section is a stack
-of screens of its own, its first screen at the bottom: the end-to-end tests, every test by its kind,
-the explorer, the review list and the agent panel. A section left keeps its stack and is read again
-when it is come back to; asked for the section already on screen, the digit goes back to its first
-screen. `q` or `Esc` pops one screen; on a section's first screen it goes to the tests, and on the
-tests it quits (or, started on a directory of checkouts, goes back to the repository list). `E`,
-`P`, `C`, `R` and `A` or `Ctrl-a` go to the same five sections as the digits, except that `P` in the
-log opens every test as that commit left them over the log, and that in the agent panel `C` clears
-the conversation and, while it asks for permission, a digit is an answer. The status line starts
-with where in the section the screen is: its first screen and what was opened over it, the last two
-when there are more than three. Anything that opens a file — a test's source, the code a test ran, a
+The top row is a breadcrumb on the left and the focus picker on the right. The breadcrumb says
+where in the repository one is: its address — where `origin` points, without the scheme, or the
+checkout's path with the home directory as `~` — with its place among the open repositories when
+there are several and a `?` when another one's agent is asking, then the branch, the review range
+(the stretch the tests are seen through) and HEAD's abbreviated commit. It is read when the
+repository is. The focus picker is the four focuses, Tests, Code, Docs and Data, each with the
+digit that goes there, `1` to `4`, the one on screen lit; before it, the number of pending
+comments and whether the agent is working or asking. A focus is what the reader is looking at:
+the end-to-end tests and every test by its kind; the code; the repository's Markdown documents,
+other than `REVIEW.md`, `NOTES.md`, `OVERVIEW.md` and a changelog; and its datasets — CSV, TSV,
+JSON, JSON lines, GeoJSON and Parquet files, except the JSON that configures a tool
+(`package.json`, `tsconfig.json` and the like, and anything under `.vscode`). Each focus is a stack
+of screens of its own, its first screen at the bottom — the end-to-end tests, or the explorer — and
+has an explorer of its own, whose tree holds only the files the focus is about and whose open file,
+folds, filter and side panel are kept apart from the others'. A focus left keeps its stack and its
+explorer and is read again when it is come back to; asked for the focus already on screen, the
+digit goes back to its first screen. `q` or `Esc` pops one screen; on a focus's first screen it
+goes to the tests, and on the tests it quits (or, started on a directory of checkouts, goes back to
+the repository list). `E` goes to the tests like `1`. Every test by its kind, `P`, is opened over
+the end-to-end tests, or brought back where it was there; in the log, `P` opens every test as the
+commit under the cursor left them, over the log. The review, `R`, is opened over the code. The
+agent panel, `A` or `Ctrl-a`, opens over whatever is on screen, and in it `C` clears the
+conversation and, while it asks for permission, a digit is an answer. The status line starts with
+where in the focus the screen is: its first screen and what was opened over it, the last two when
+there are more than three. Anything that opens a file — a test's source, the code a test ran, a
 comment in the review, a symbol — opens the explorer over the screen it was opened from, so `q` goes
-back there; where the section already has the explorer, it is that one, and what was opened over it
+back there; where the focus already has the explorer, it is that one, and what was opened over it
 is closed. A list of places to go, once one is picked, is closed with it. `a` and `i`, which ask the
 agent something, open its panel over the screen they were pressed on, and `q` there comes back to
 it.
 
-A repository opens on its end-to-end tests, the first screen of the first section, with nothing
+A repository opens on its end-to-end tests, the first screen of the first focus, with nothing
 under them, unless a file was named on the command line, which opens in the code; this goes for
 a repository that appears later in a directory of checkouts too. `E` or `1` brings them back from
 any screen, where they were left; the tests that name the open file, which `E` used to show, are
@@ -735,10 +746,10 @@ when the first picture is opened, not before, with a second to answer; one whose
 defines, parsed on its own so it does not wait for the symbol index, fields left out, each
 definition indented under the ones whose lines hold it; its cursor follows the file's while the file
 has the focus, `Enter` jumps to a definition as `Ctrl-o` can come back from, and `Space` shows it
-without leaving the outline. Either panel can be set to hide: it is drawn while it has the focus and
-left out while the file has it, the file taking its width, and `Tab`, or `q` from the file, brings
-it back; with no file open it always shows. `,` opens the options panel — each panel's auto-hide,
-the diff layout, the colour scheme — where `Space` changes a setting, saves it at once, and the
+without leaving the outline. The side panel is the one part of the screen that hides: `\` hides
+it, the file taking its width, and shows it again, as does anything that gives it the focus —
+`Tab`, `q` from the file, `O`; with no file open it always shows. `,` opens the options panel —
+the diff layout and the colour scheme — where `Space` changes a setting, saves it at once, and the
 setting under the cursor is explained. `c` on the tree comments on the selected file or directory as
 a whole; `c` in the viewer comments on the line or the selection. Other screens: repository log and
 per-file history (commit list, details, files of the selected commit, paging in 200s), working tree

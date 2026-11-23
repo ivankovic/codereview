@@ -2,9 +2,10 @@
 
 ## One frame, four focuses (PLAN.md phase 7)
 
-- Terminal UI: the frame (breadcrumb, focus picker, sidebar, main view) and the Tests focus,
-  the breadcrumb's pickers choosing a branch, a pull request or a comparison as the range;
-  then Code, Docs and Data; the five sections, their stacks and auto-hiding panels removed.
+- Terminal UI: the Tests focus as a sidebar (overview, then each test) beside the main view.
+- Terminal UI: the breadcrumb's pickers choosing a branch, a pull request or a comparison as the
+  range; Docs rendered rather than shown as source; CSV shown as a table.
+- Terminal UI: the review's comments in the Code sidebar rather than a screen over the code.
 - Browser UI: the same, with addresses for ranges, pull requests and documents; tabs, the card
   grid and zen removed.
 - End-to-end tests of each, in both harnesses; SPECS.md and the README rewritten as each lands.

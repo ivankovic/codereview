@@ -15,10 +15,10 @@ use crate::session::{DiffTarget, Session};
 use crate::spec::{Stretch, TestChange, What};
 use crate::theme::Theme;
 mod end_to_end;
+mod focus;
 mod one_test;
 mod overlays;
 mod screens;
-mod sections;
 
 use crate::tui::agent_panel;
 use crate::tui::diff_view::{DiffLayout, DiffView};
@@ -114,12 +114,12 @@ impl<T> ListState<T> {
 }
 
 pub use end_to_end::{E2eRow, EndToEndState, Player};
+pub use focus::{Explorer, Focus};
 pub use one_test::{EndToEndTestState, TestRow};
 pub use screens::{
     ChangesState, DiffState, Hit, LocationsState, LogState, NotesState, ReviewState, SpecRow,
     SpecState, spec_rows,
 };
-pub use sections::Section;
 
 pub enum Screen {
     Explorer,
@@ -180,24 +180,15 @@ pub enum Sidebar {
 /// A row of the options panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
-    FilesAutoHide,
-    OutlineAutoHide,
     DiffLayout,
     ColourScheme,
 }
 
 impl Setting {
-    pub const ALL: [Setting; 4] = [
-        Setting::FilesAutoHide,
-        Setting::OutlineAutoHide,
-        Setting::DiffLayout,
-        Setting::ColourScheme,
-    ];
+    pub const ALL: [Setting; 2] = [Setting::DiffLayout, Setting::ColourScheme];
 
     pub fn label(self) -> &'static str {
         match self {
-            Setting::FilesAutoHide => "Files: auto-hide",
-            Setting::OutlineAutoHide => "Outline: auto-hide",
             Setting::DiffLayout => "Diff layout",
             Setting::ColourScheme => "Colour scheme",
         }
@@ -205,20 +196,57 @@ impl Setting {
 
     pub fn explanation(self) -> &'static str {
         match self {
-            Setting::FilesAutoHide => {
-                "Hide the file tree while the file has the focus, and give the file its width. \
-                 Tab, or q from the file, brings it back."
-            }
-            Setting::OutlineAutoHide => {
-                "Hide the outline while the file has the focus, the same way. O switches the \
-                 side panel between the file tree and the outline."
-            }
             Setting::DiffLayout => {
                 "How a diff is laid out: side by side when the terminal is wide enough, \
                  always side by side, or always one column. v changes it in a diff."
             }
             Setting::ColourScheme => "Opens the colour scheme picker, which t opens as well.",
         }
+    }
+}
+
+/// What the breadcrumb across the top says: where the repository is, the branch, the commit.
+/// The review range comes from the stretch, which changes without the repository changing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Crumbs {
+    /// The remote's address without its scheme, or the checkout's path.
+    pub address: String,
+    pub branch: String,
+    /// HEAD, abbreviated; empty before the first commit.
+    pub commit: String,
+    /// Which of the open repositories this is, and how many there are, when more than one.
+    pub place: Option<(usize, usize)>,
+    /// Whether another open repository's agent is waiting for an answer.
+    pub elsewhere_asks: bool,
+}
+
+/// An address as the breadcrumb shows it: `github.com/o/n` for any of git's ways of writing
+/// one, the path for a local remote.
+pub fn short_address(url: &str) -> String {
+    let rest = url
+        .split_once("://")
+        .map(|(_, r)| r)
+        .unwrap_or(url)
+        .trim_start_matches("git@");
+    let rest = rest.rsplit_once('@').map(|(_, r)| r).unwrap_or(rest);
+    let rest = match rest.split_once(':') {
+        Some((host, path)) if !host.contains('/') && !path.starts_with("//") => {
+            format!("{host}/{path}")
+        }
+        _ => rest.to_string(),
+    };
+    rest.trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_string()
+}
+
+/// A path with the home directory written `~`.
+fn tilde(path: &std::path::Path) -> String {
+    match std::env::var_os("HOME").map(PathBuf::from) {
+        Some(home) if path.starts_with(&home) && home.as_os_str().len() > 1 => {
+            format!("~/{}", path.strip_prefix(&home).unwrap_or(path).display())
+        }
+        _ => path.display().to_string(),
     }
 }
 
@@ -278,11 +306,18 @@ pub struct App {
     /// The end-to-end tests being recorded at a stretch's base commit, in a worktree of it:
     /// the commit, and the run.
     pub base_run: Option<(String, crate::analysis::Running)>,
-    /// The section on screen, whose stack `screens` is.
-    pub section: Section,
-    /// The stacks of the other sections, as they were left; the one on screen is empty here.
-    parked: [Vec<Screen>; 5],
-    /// The section on screen's stack: its first screen, and what was opened over it.
+    /// The focus on screen, whose stack `screens` is.
+    pub focus: Focus,
+    /// The stacks of the other focuses, as they were left; the one on screen is empty here.
+    parked: [Vec<Screen>; 4],
+    /// The explorers of the other focuses, as they were left; `None` for the one on screen
+    /// and for one not yet shown.
+    parked_explorers: [Option<Explorer>; 4],
+    /// Whether `\` has hidden the side panel.
+    pub sidebar_hidden: bool,
+    /// What the breadcrumb says, read when the repository is.
+    pub crumbs: Crumbs,
+    /// The focus on screen's stack: its first screen, and what was opened over it.
     pub screens: Vec<Screen>,
     pub prompt: Option<Prompt>,
     pub message: Option<(String, bool)>,
@@ -330,8 +365,11 @@ impl App {
             kept_at: std::time::Instant::now(),
             stretch: Stretch::Week,
             base_run: None,
-            section: Section::Tests,
+            focus: Focus::Tests,
             parked: Default::default(),
+            parked_explorers: Default::default(),
+            sidebar_hidden: false,
+            crumbs: Crumbs::default(),
             screens: Vec::new(),
             prompt: None,
             message: None,
@@ -352,12 +390,13 @@ impl App {
             pending_g: false,
             agent: agent_panel::Panel::new(),
         };
+        app.read_crumbs();
         app.warm();
         // A repository opens on what it demonstrably does, its end-to-end tests, unless a file
         // was named to open, which opens in the code.
         match open {
             Some(path) => {
-                app.section = Section::Code;
+                app.focus = Focus::Code;
                 app.screens.push(Screen::Explorer);
                 app.tree.select(&path);
                 app.open_file(&path);
@@ -366,6 +405,20 @@ impl App {
             None => app.push_end_to_end(),
         }
         app
+    }
+
+    /// Reads what the breadcrumb says, when the repository is read.
+    fn read_crumbs(&mut self) {
+        let repo = &self.session.repo;
+        self.crumbs = Crumbs {
+            address: repo
+                .remote_url()
+                .map(|u| short_address(&u))
+                .unwrap_or_else(|| tilde(repo.root())),
+            branch: repo.head_label(),
+            commit: repo.short_hash("HEAD").unwrap_or_default(),
+            ..std::mem::take(&mut self.crumbs)
+        };
     }
 
     /// Starts building the symbol index on a thread of its own. `Index::build` reads the
@@ -386,13 +439,13 @@ impl App {
     pub fn screen(&self) -> &Screen {
         self.screens
             .last()
-            .expect("at least the section's first screen")
+            .expect("at least the focus's first screen")
     }
 
     fn screen_mut(&mut self) -> &mut Screen {
         self.screens
             .last_mut()
-            .expect("at least the section's first screen")
+            .expect("at least the focus's first screen")
     }
 
     pub fn info(&mut self, text: impl Into<String>) {
@@ -479,7 +532,8 @@ impl App {
             self.error(format!("{e:#}"));
             return;
         }
-        self.tree.replace_files(&self.session.files);
+        self.refresh_trees();
+        self.read_crumbs();
         if let Some(path) = self.viewer.as_ref().map(|v| v.path.clone()) {
             let (cursor, scroll, ran) = self
                 .viewer
@@ -1064,7 +1118,7 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('a') => {
-                    self.switch_section(Section::Agent);
+                    self.open_agent();
                     return true;
                 }
                 KeyCode::Char('o') => {
@@ -1074,12 +1128,12 @@ impl App {
                 _ => {}
             }
         }
-        // The sections, by number, except where the agent asks for a numbered answer.
+        // The focuses, by number, except where the agent asks for a numbered answer.
         if let KeyCode::Char(c) = key.code
-            && let Some(section) = Section::from_key(c)
+            && let Some(focus) = Focus::from_key(c)
             && !(matches!(self.screen(), Screen::Agent) && self.agent.permission().is_some())
         {
-            self.switch_section(section);
+            self.switch_focus(focus);
             return true;
         }
         // Keys that work everywhere.
@@ -1104,12 +1158,15 @@ impl App {
             // The agent panel from anywhere, for terminals (tmux with a Ctrl-a prefix) where
             // Ctrl-a never arrives. The review list keeps `A` for "address all".
             KeyCode::Char('A') if !matches!(self.screen(), Screen::Agent | Screen::Review(_)) => {
-                self.switch_section(Section::Agent);
+                self.open_agent();
                 return true;
             }
-            // The code; the agent panel keeps `C` for clearing the conversation.
-            KeyCode::Char('C') if !matches!(self.screen(), Screen::Agent) => {
-                self.switch_section(Section::Code);
+            // The side panel, hidden or shown, wherever there is one.
+            KeyCode::Char('\\') => {
+                self.sidebar_hidden = !self.sidebar_hidden;
+                if self.sidebar_hidden && self.viewer.is_some() {
+                    self.focus_tree = false;
+                }
                 return true;
             }
             KeyCode::Char('i') if !matches!(self.screen(), Screen::Agent) => {
@@ -1131,7 +1188,7 @@ impl App {
             }
             // The end-to-end tests, what the repository opened on, from anywhere.
             KeyCode::Char('E') => {
-                self.switch_section(Section::Tests);
+                self.switch_focus(Focus::Tests);
                 return true;
             }
             // The tests that name the open file.
@@ -1147,12 +1204,16 @@ impl App {
                             self.push_spec(Stretch::Commit(hash));
                         }
                     }
-                    _ => self.switch_section(Section::AllTests),
+                    _ => self.show_spec(),
                 }
                 return true;
             }
+            // The review's comments, over the code.
             KeyCode::Char('R') if !matches!(self.screen(), Screen::Agent) => {
-                self.switch_section(Section::Review);
+                self.switch_focus(Focus::Code);
+                if !matches!(self.screen(), Screen::Review(_)) {
+                    self.push_review();
+                }
                 return true;
             }
             KeyCode::Char('T') => {
@@ -1226,7 +1287,7 @@ impl App {
         if self.screens.len() > 1 {
             self.screens.pop();
         } else {
-            self.leave_section();
+            self.leave_focus();
         }
     }
 
@@ -1247,6 +1308,7 @@ impl App {
                     }
                 } else if !self.focus_tree {
                     self.focus_tree = true;
+                    self.sidebar_hidden = false;
                 } else if self.sidebar == Sidebar::Files && !self.tree.filter.is_empty() {
                     self.tree.filter.clear();
                     self.tree.rebuild();
@@ -1257,6 +1319,7 @@ impl App {
             KeyCode::Tab => {
                 if self.viewer.is_some() {
                     self.focus_tree = !self.focus_tree;
+                    self.sidebar_hidden &= !self.focus_tree;
                 }
             }
             KeyCode::Char('f') if ctrl => {
@@ -1267,13 +1330,14 @@ impl App {
                     &was,
                 ));
             }
-            // The other side panel, with the focus, so that one set to hide is seen.
+            // The other side panel, with the focus, shown if it was hidden.
             KeyCode::Char('O') => {
                 self.sidebar = match self.sidebar {
                     Sidebar::Files => Sidebar::Outline,
                     Sidebar::Outline => Sidebar::Files,
                 };
                 self.focus_tree = true;
+                self.sidebar_hidden = false;
             }
             _ if self.focus_tree && self.sidebar == Sidebar::Outline => {
                 self.handle_outline_key(key)
@@ -1395,21 +1459,6 @@ impl App {
         }
         self.jump_to_col(&path, line, column);
         self.focus_tree = !focus_file;
-    }
-
-    /// Whether the side panel on show is one set to hide while the file has the focus.
-    fn sidebar_hides(&self) -> bool {
-        let config = self.session.config.sidebar;
-        match self.sidebar {
-            Sidebar::Files => config.files_auto_hide,
-            Sidebar::Outline => config.outline_auto_hide,
-        }
-    }
-
-    /// Whether the explorer draws its left pane: always, unless it hides and the file has
-    /// the focus. With no file open there is nothing to give the width to.
-    pub fn sidebar_shown(&self) -> bool {
-        !(self.sidebar_hides() && self.viewer.is_some() && !self.focus_tree)
     }
 
     /// Whether the open file is a picture this terminal has not yet been asked about drawing:

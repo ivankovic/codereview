@@ -98,7 +98,7 @@ fn draw_tree(frame: &mut Frame, app: &mut App, left: Rect) {
     let title: Line = if app.tree.filter.is_empty() {
         vec![
             " files ".into(),
-            format!("{} ", app.session.files.len()).dim(),
+            format!("{} ", app.focus.files(&app.session.files).len()).dim(),
         ]
         .into()
     } else {
@@ -259,7 +259,7 @@ fn draw_file(frame: &mut Frame, app: &mut App, right: Rect) {
                 "".into(),
                 format!(
                     "  {} files, {} pending comments, {} notes.",
-                    app.session.files.len(),
+                    app.focus.files(&app.session.files).len(),
                     app.session.review.pending_count(),
                     app.session.notes.notes().len()
                 )

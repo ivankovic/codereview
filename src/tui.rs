@@ -160,7 +160,7 @@ fn open_editor(path: &Path, line: usize) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::app::{App, Screen, Section};
+    use super::app::{App, Focus, Screen};
     use crate::session::tests::{scratch_repo, scratch_session};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
@@ -194,7 +194,7 @@ mod tests {
         let dir = scratch_repo();
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
-        app.switch_section(Section::Code);
+        app.switch_focus(Focus::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
         draw(&mut term, &mut app);
 
@@ -223,7 +223,7 @@ mod tests {
         let dir = scratch_repo();
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
-        app.switch_section(Section::Code);
+        app.switch_focus(Focus::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
         draw(&mut term, &mut app);
 
@@ -241,45 +241,34 @@ mod tests {
         assert!(comment.line.is_some(), "{comment:?}");
     }
 
-    /// A side panel set to hide is there while it has the focus and gone while the file has
-    /// it. The setting is made in the options panel and saved to the config file at once.
+    /// `\\` hides the side panel and gives the file its width; a key that gives the panel the
+    /// focus brings it back, and with no file open it is always there.
     #[test]
-    fn a_side_panel_set_to_hide_gives_the_file_its_width() {
+    fn backslash_hides_the_side_panel_and_gives_the_file_its_width() {
         let dir = scratch_repo();
         let mut app = App::new(scratch_session(dir.path()), None);
-        app.switch_section(Section::Code);
+        app.switch_focus(Focus::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
         assert!(draw(&mut term, &mut app).contains(" files "));
 
-        // The first row of the options panel is the file tree's.
-        app.handle_key(key(','));
-        let screen = draw(&mut term, &mut app);
-        assert!(screen.contains("Files: auto-hide"), "{screen}");
-        press(&mut app, &[KeyCode::Char(' '), KeyCode::Esc]);
-        assert!(app.options.is_none());
-        assert!(app.session.config.sidebar.files_auto_hide);
-        let saved = crate::config::Config::load_from(
-            &dir.path().join(".git").join("codereview-config.toml"),
-        )
-        .unwrap();
-        assert!(saved.sidebar.files_auto_hide, "saved as it was changed");
-
-        // With nothing open the tree has the focus and stays; opening a file hides it, and
-        // Tab, or q from the file, brings it back.
+        // With nothing open there is nothing to give the width to.
+        app.handle_key(key('\\'));
         assert!(draw(&mut term, &mut app).contains(" files "));
+
         press(&mut app, &[KeyCode::Char('j'), KeyCode::Enter]);
         let screen = draw(&mut term, &mut app);
         assert!(
             !screen.contains(" files ") && screen.contains("fn a() {}"),
             "{screen}"
         );
-        press(&mut app, &[KeyCode::Tab]);
+        app.handle_key(key('\\'));
         assert!(draw(&mut term, &mut app).contains(" files "));
-        press(&mut app, &[KeyCode::Tab]);
+        app.handle_key(key('\\'));
         assert!(!draw(&mut term, &mut app).contains(" files "));
-        press(&mut app, &[KeyCode::Char('q')]);
+        press(&mut app, &[KeyCode::Tab]);
         assert!(draw(&mut term, &mut app).contains(" files "));
-        assert!(!app.quit, "q from the file only brings the tree back");
+        assert!(app.focus_tree, "Tab gave the panel the focus and showed it");
+        assert!(!app.quit);
     }
 
     /// The outline sits where the tree does, follows the file's cursor, and goes where it
@@ -288,7 +277,7 @@ mod tests {
     fn the_outline_follows_the_file_and_goes_where_it_points() {
         let dir = scratch_repo();
         let mut app = App::new(scratch_session(dir.path()), None);
-        app.switch_section(Section::Code);
+        app.switch_focus(Focus::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
         draw(&mut term, &mut app);
         app.handle_key(key('O'));
@@ -321,13 +310,8 @@ mod tests {
         assert_eq!(app.outline.as_ref().unwrap().cursor, 1);
         assert!(draw(&mut term, &mut app).contains("┌ outline"));
 
-        // Set to hide, it goes while the file has the focus.
-        app.handle_key(key(','));
-        press(
-            &mut app,
-            &[KeyCode::Char('j'), KeyCode::Char(' '), KeyCode::Esc],
-        );
-        assert!(app.session.config.sidebar.outline_auto_hide);
+        // Hidden, it is gone until it is given the focus again.
+        app.handle_key(key('\\'));
         assert!(!draw(&mut term, &mut app).contains("┌ outline"));
         press(&mut app, &[KeyCode::Tab]);
         assert!(draw(&mut term, &mut app).contains("┌ outline"));
@@ -373,11 +357,11 @@ mod tests {
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
-        // A repository opens on its tests; the code is the third section.
-        assert_eq!(app.section, Section::Tests);
+        // A repository opens on its tests; the code is the second focus.
+        assert_eq!(app.focus, Focus::Tests);
         assert!(matches!(app.screen(), Screen::EndToEnd(_)));
-        press(&mut app, &[KeyCode::Char('3')]);
-        assert_eq!(app.section, Section::Code);
+        press(&mut app, &[KeyCode::Char('2')]);
+        assert_eq!(app.focus, Focus::Code);
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("1 Tests"));
         assert!(screen.contains("a.rs"));
@@ -478,17 +462,18 @@ mod tests {
         // Nothing staged: the screen is replaced by a message and popped.
         assert!(matches!(app.screen(), Screen::Explorer));
         press(&mut app, &[KeyCode::Char('R')]);
-        assert_eq!(app.section, Section::Review);
+        assert_eq!(app.focus, Focus::Code);
+        assert!(matches!(app.screen(), Screen::Review(_)));
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("needs a doc comment"));
         press(&mut app, &[KeyCode::Char('j'), KeyCode::Char('d')]);
         assert_eq!(app.session.review.pending_count(), 1);
         press(&mut app, &[KeyCode::Char('u')]);
         assert_eq!(app.session.review.pending_count(), 2);
-        // A comment opens its file over the review, which `q` comes back to.
+        // A comment opens its file in the code's own explorer.
         press(&mut app, &[KeyCode::Enter]);
         assert!(matches!(app.screen(), Screen::Explorer));
-        assert_eq!(app.screens.len(), 2);
+        assert_eq!(app.screens.len(), 1);
         press(&mut app, &[KeyCode::Char('N')]);
         for ch in "tiny".chars() {
             app.handle_key(key(ch));
@@ -499,20 +484,15 @@ mod tests {
         press(&mut app, &[KeyCode::Char('?')]);
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("keys"));
-        // Out of the notes, out of the file into the tree, back to the review, back to the
-        // tests, and only then out.
+        // Out of the notes, out of the file into the tree, back to the tests, and only then
+        // out.
         press(
             &mut app,
-            &[
-                KeyCode::Esc,
-                KeyCode::Char('q'),
-                KeyCode::Char('q'),
-                KeyCode::Char('q'),
-            ],
+            &[KeyCode::Esc, KeyCode::Char('q'), KeyCode::Char('q')],
         );
-        assert!(matches!(app.screen(), Screen::Review(_)));
+        assert!(matches!(app.screen(), Screen::Explorer));
         press(&mut app, &[KeyCode::Char('q')]);
-        assert_eq!(app.section, Section::Tests);
+        assert_eq!(app.focus, Focus::Tests);
         assert!(!app.quit);
         press(&mut app, &[KeyCode::Char('q')]);
         assert!(app.quit);
@@ -1237,8 +1217,12 @@ mod tests {
         assert!(screen.contains("Asks less than before: 1"), "{screen}");
         assert!(screen.contains("weakened"), "{screen}");
         assert!(screen.contains("2 → 1 assertions"), "{screen}");
-        assert_eq!(app.section, Section::AllTests);
-        assert_eq!(app.screens.len(), 1, "cycling replaces the screen");
+        assert_eq!(app.focus, Focus::Tests);
+        assert_eq!(
+            app.screens.len(),
+            2,
+            "over the tests; cycling replaces the screen"
+        );
 
         // Enter on the change: its file's diff across the stretch.
         let rows = |app: &App| match app.screen() {
@@ -1340,9 +1324,9 @@ mod tests {
         press(&mut app, &[KeyCode::Enter, KeyCode::Esc]);
         assert!(matches!(app.screen(), Screen::Spec(_)));
         assert!(rows(&app).iter().any(|r| matches!(r, SpecRow::Area(_))));
-        // Every test is a section's first screen, so leaving it goes to the end-to-end ones.
+        // Every test is opened over the end-to-end ones, so leaving it goes back to them.
         press(&mut app, &[KeyCode::Esc]);
-        assert_eq!(app.section, Section::Tests);
+        assert_eq!(app.focus, Focus::Tests);
         assert!(matches!(app.screen(), Screen::EndToEnd(_)));
     }
 
@@ -1471,7 +1455,7 @@ mod tests {
             .next()
             .unwrap()
             .to_string();
-        assert!(strip.contains("2 second"), "{strip}");
+        assert!(strip.contains("(1/2)"), "the breadcrumb counts it: {strip}");
         assert!(!ws.find_new(), "found once");
     }
 
@@ -1550,8 +1534,11 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(120, 24)).unwrap();
         let screen = draw_ws(&mut term, &mut ws);
         let strip = screen.lines().next().unwrap().to_string();
-        assert!(strip.contains(&format!("1 {name_a}")), "{strip}");
-        assert!(strip.contains(&format!("2 {name_b}")), "{strip}");
+        assert!(
+            strip.contains(&name_a) && strip.contains("(1/2)"),
+            "{strip}"
+        );
+        assert!(!strip.contains(&name_b), "{strip}");
         assert_eq!(ws.active, 0);
         assert!(
             ws.app().viewer.is_some(),
@@ -1613,7 +1600,7 @@ mod tests {
         std::fs::write(dir.path().join("src/deep/inner.rs"), "fn inner() {}\n").unwrap();
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
-        app.switch_section(Section::Code);
+        app.switch_focus(Focus::Code);
         let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
         draw(&mut term, &mut app);
 
@@ -1685,7 +1672,7 @@ mod tests {
         let dir = scratch_repo();
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
-        app.switch_section(Section::Code);
+        app.switch_focus(Focus::Code);
         let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
         press(&mut app, &[KeyCode::Char('L')]);
         assert!(matches!(app.screen(), Screen::Log(_)));

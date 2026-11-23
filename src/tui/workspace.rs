@@ -248,7 +248,7 @@ impl Workspace {
         self.app_mut().info(format!("repository {i}: {name}"));
     }
 
-    /// Hands the active app's saved theme, layout and side panel settings to the others.
+    /// Hands the active app's saved theme and layout to the others.
     /// Skipped while the theme picker previews, since a preview is not a decision yet.
     fn propagate_settings(&mut self) {
         let active = &self.apps[self.active];
@@ -257,7 +257,6 @@ impl Workspace {
         }
         let theme = active.theme.clone();
         let layout = active.layout;
-        let sidebar = active.session.config.sidebar;
         for (i, app) in self.apps.iter_mut().enumerate() {
             if i == self.active {
                 continue;
@@ -267,9 +266,6 @@ impl Workspace {
             }
             if app.layout != layout {
                 app.adopt_layout(layout);
-            }
-            if app.session.config.sidebar != sidebar {
-                app.adopt_sidebar(sidebar);
             }
         }
     }

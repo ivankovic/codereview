@@ -368,16 +368,6 @@ impl Session {
         self.config.layout = layout.to_string();
     }
 
-    /// Remembers whether the terminal UI's side panels hide, in the config file.
-    pub fn set_sidebar(&mut self, sidebar: crate::config::SidebarConfig) -> Result<()> {
-        self.update_config(|c| c.sidebar = sidebar)
-    }
-
-    /// Takes over side panel settings another session saved, without writing them again.
-    pub fn adopt_sidebar(&mut self, sidebar: crate::config::SidebarConfig) {
-        self.config.sidebar = sidebar;
-    }
-
     /// What `path` defines, read from the working tree and parsed on its own: the outline of
     /// one file needs nothing from the others, so it does not wait for the whole index.
     pub fn outline(&self, path: &str) -> Result<Vec<crate::symbols::Symbol>> {

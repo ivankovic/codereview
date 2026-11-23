@@ -106,24 +106,26 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 
 ### Terminal UI
 
-It opens on the end-to-end tests, and the top row is the five sections, tests first: **Tests**,
-**All tests**, **Code**, **Review**, **Agent**. Each keeps its own stack of screens; `q` steps
-back, from a section's first screen to the tests, and from the tests out. `?` shows every key.
-The essentials:
+It opens on the end-to-end tests. The top row is a breadcrumb on the left — the repository's
+address, the branch, the review range, the commit — and on the right the focus: **Tests**,
+**Code**, **Docs** (the Markdown documents) or **Data** (CSV, JSON and other datasets). Each keeps
+its own stack of screens and its own file tree; `q` steps back, from a focus's first screen to the
+tests, and from the tests out. `?` shows every key. The essentials:
 
 | Key | What |
 | --- | --- |
 | `1` or `E` | Tests, what it opens on: `Space` plays, `Enter` a test on its own, `s` source |
-| `2` or `P` | All tests, by kind: `c` the next question, `K` a test's answers |
-| `3` or `C` | Code: the file tree and the file |
-| `4` or `R` | Review: every comment in REVIEW.md |
-| `5`, `A` or `Ctrl-a` | Agent (`A` inside it: address every pending comment) |
+| `2` `3` `4` | Code, Docs, Data: the file tree, or outline, and the file |
+| `\` | hide or show the side panel |
+| `P` | every test, by kind: `c` the next question, `K` a test's answers |
+| `R` | the review, over the code: every comment in REVIEW.md |
+| `A` or `Ctrl-a` | the agent panel, over the screen (`A` in the review: address every comment) |
 | `w` `b` | on the tests: the stretch marked; record the tests at its base to compare |
-| `q` `Esc` | back; on a section's first screen, the tests; on the tests, quit |
+| `q` `Esc` | back; on a focus's first screen, the tests; on the tests, quit |
 | `U` | the tests that name the open file |
 | `Tab` | switch between the side panel and the file |
 | `O` | side panel: the file tree, or the outline of the file (`Enter` goes to a definition) |
-| `,` | options: side panels that hide while the file has the focus, diff layout, colour scheme |
+| `,` | options: diff layout, colour scheme |
 | `Enter` | open the file; on a comment row, edit it; on `… N more`, the rest of the directory |
 | `c` | comment on the line, or on the `V` selection; in the tree, on the whole file or directory |
 | `x` `e` `d` `u` | complete, edit, delete a comment, undo the delete |

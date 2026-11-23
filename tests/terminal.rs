@@ -162,16 +162,15 @@ fn a_repository_without_end_to_end_tests_says_so_first() {
 }
 
 #[test]
-fn the_sections_run_along_the_top_with_the_tests_first() {
+fn the_focuses_are_picked_at_the_top_right_with_the_tests_first() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
     t.on_the_tests();
     let screen = t.screen();
     let top = screen.lines().next().unwrap_or_default().to_string();
-    let order =
-        ["1 Tests", "2 All tests", "3 Code", "4 Review", "5 Agent"].map(|name| top.find(name));
+    let order = ["1 Tests", "2 Code", "3 Docs", "4 Data"].map(|name| top.find(name));
     t.check(
-        "the top row is Tests, All tests, Code, Review, Agent, in that order",
+        "the focus picker is Tests, Code, Docs, Data, in that order",
         order.iter().all(Option::is_some) && order.is_sorted(),
         || top.clone(),
     );
@@ -186,19 +185,141 @@ fn the_sections_run_along_the_top_with_the_tests_first() {
 }
 
 #[test]
-fn a_number_goes_to_a_section_and_q_comes_back_to_the_tests() {
+fn the_breadcrumb_says_where_in_the_repository_one_is() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
     t.on_the_tests();
-    t.step("go to the review, the fourth section");
-    t.keys("4");
-    t.wait_for(" review 0 pending, 0 completed");
-    t.step("go to the code, the third");
+    let top = t.screen().lines().next().unwrap_or_default().to_string();
+    let root = t.repo().display().to_string();
+    let name = root.rsplit('/').next().unwrap_or_default().to_string();
+    t.check(
+        "the breadcrumb names the checkout, the branch, the range and the commit",
+        top.contains(&name)
+            && top.contains("› main ›")
+            && top.contains("› last 7 days ›")
+            && top.split(" › ").count() == 4,
+        || top.clone(),
+    );
+}
+
+#[test]
+fn a_remote_s_address_is_shown_without_its_scheme() {
+    let mut t = term!(|root: &Path| {
+        let out = std::process::Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:someone/scratch.git",
+            ])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    });
+    t.documents("SPECS.md#Terminal UI");
+    t.on_the_tests();
+    t.wait_for("github.com/someone/scratch › main");
+}
+
+#[test]
+fn a_focus_left_keeps_its_place() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.go_to_the_code();
+    t.step("open src/main.rs");
+    t.keys(DOWN);
+    t.keys(ENTER);
+    t.wait_for("src/main.rs 1/7");
+    t.step("go to the documents, then back to the code");
     t.keys("3");
+    t.wait_for("files 1");
+    t.wait_until_gone("src/main.rs 1/7");
+    t.keys("2");
+    t.wait_for("src/main.rs 1/7");
+}
+
+#[test]
+fn r_opens_the_review_over_the_code() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.on_the_tests();
+    t.step("open the review from the tests");
+    t.keys("R");
+    t.wait_for(" review 0 pending, 0 completed");
+    t.step("step back to the code under it");
+    t.keys("q");
+    t.wait_for("files 5");
+}
+
+#[test]
+fn a_number_goes_to_a_focus_and_q_comes_back_to_the_tests() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.on_the_tests();
+    t.step("go to the code, the second focus");
+    t.keys("2");
     t.wait_for("files 5");
     t.step("step back out of the code");
     t.keys("q");
     t.wait_for("1 end-to-end test of 2 tests");
+}
+
+#[test]
+fn the_docs_focus_lists_only_the_documents() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.on_the_tests();
+    t.step("go to the documents, the third focus");
+    t.keys("3");
+    t.wait_for("files 1");
+    let screen = t.screen();
+    t.check(
+        "the tree holds README.md and no code",
+        screen.contains("README.md") && !screen.contains("main.rs"),
+        || screen.clone(),
+    );
+}
+
+#[test]
+fn the_data_focus_lists_only_the_datasets() {
+    let mut t = term!(|root: &Path| {
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::fs::write(root.join("data/scores.csv"), "name,score\nana,3\n").unwrap();
+        std::fs::write(root.join("package.json"), "{}\n").unwrap();
+    });
+    t.documents("SPECS.md#Terminal UI");
+    t.on_the_tests();
+    t.step("go to the data, the fourth focus");
+    t.keys("4");
+    t.wait_for("scores.csv");
+    let screen = t.screen();
+    t.check(
+        "the tree holds the CSV and not the JSON that configures a tool, nor the code",
+        !screen.contains("package.json") && !screen.contains("main.rs"),
+        || screen.clone(),
+    );
+    t.step("open the dataset");
+    t.keys(DOWN);
+    t.keys(ENTER);
+    t.wait_for("ana,3");
+}
+
+#[test]
+fn backslash_hides_the_side_panel_and_brings_it_back() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.go_to_the_code();
+    t.step("open src/main.rs");
+    t.keys(DOWN);
+    t.keys(ENTER);
+    t.wait_for("src/main.rs 1/7");
+    t.step("hide the side panel");
+    t.keys("\\");
+    t.wait_until_gone("files 5");
+    t.step("show it again");
+    t.keys("\\");
+    t.wait_for("files 5");
 }
 
 #[test]
@@ -214,7 +335,7 @@ fn a_file_named_on_the_command_line_opens_in_the_code_with_the_tests_a_q_away() 
 }
 
 #[test]
-fn a_pending_comment_is_counted_beside_review_in_the_top_row() {
+fn a_pending_comment_is_counted_in_the_top_row() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
     t.go_to_the_code();
@@ -229,8 +350,8 @@ fn a_pending_comment_is_counted_beside_review_in_the_top_row() {
     t.wait_for("src/main.rs 1/7 ●1");
     let top = t.screen().lines().next().unwrap_or_default().to_string();
     t.check(
-        "the top row counts one pending comment beside Review",
-        top.contains("4 Review 1"),
+        "the top row counts one pending comment",
+        top.contains("·1 "),
         || top.clone(),
     );
 }
@@ -354,8 +475,8 @@ fn the_tests_read_as_a_specification_grouped_by_how_they_interact() {
     let mut t = term!();
     t.documents("SPECS.md#What kind of test each one is");
     t.on_the_tests();
-    t.step("go to every test, the second section");
-    t.keys("2");
+    t.step("list every test");
+    t.keys("P");
     t.wait_for("specification 2 tests");
     t.wait_for("How does the test interact with it?");
     t.wait_for("GUI/TUI 1");
@@ -370,8 +491,8 @@ fn c_groups_the_specification_by_the_next_question() {
     let mut t = term!();
     t.documents("SPECS.md#What kind of test each one is");
     t.on_the_tests();
-    t.step("go to every test, the second section");
-    t.keys("2");
+    t.step("list every test");
+    t.keys("P");
     t.wait_for("How does the test interact with it?");
     t.step("group the tests by the next question");
     t.keys("c");
@@ -384,8 +505,8 @@ fn k_answers_every_question_for_the_test_under_the_cursor() {
     let mut t = term!();
     t.documents("SPECS.md#What kind of test each one is");
     t.on_the_tests();
-    t.step("go to every test and find the unit test");
-    t.keys("2");
+    t.step("list every test and find the unit test");
+    t.keys("P");
     t.wait_for("API 1");
     t.keys("/");
     t.keys("round trips");

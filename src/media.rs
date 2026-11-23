@@ -29,3 +29,51 @@ mod tests {
         assert_eq!(image_type("Makefile"), None);
     }
 }
+
+/// The files that configure a tool rather than hold data, though they are JSON.
+const NOT_DATA: &[&str] = &[
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "jsconfig.json",
+    "composer.json",
+    "deno.json",
+    "manifest.json",
+    "renovate.json",
+];
+
+/// Whether `path` is a dataset, by its name: CSV, TSV, JSON in its forms, or Parquet, except
+/// the JSON that configures a tool. What the Data focus lists.
+pub fn is_dataset(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let lower = name.to_ascii_lowercase();
+    let Some((_, ext)) = lower.rsplit_once('.') else {
+        return false;
+    };
+    matches!(
+        ext,
+        "csv" | "tsv" | "json" | "jsonl" | "ndjson" | "geojson" | "parquet"
+    ) && !NOT_DATA.contains(&lower.as_str())
+        && !lower.starts_with("tsconfig.")
+        && !path.starts_with(".vscode/")
+}
+
+#[cfg(test)]
+mod dataset_tests {
+    use super::is_dataset;
+
+    #[test]
+    fn a_dataset_is_data_not_a_tool_s_configuration() {
+        for path in ["tests/data/kinds/kinds.csv", "a/b.json", "x.jsonl", "t.TSV"] {
+            assert!(is_dataset(path), "{path}");
+        }
+        for path in [
+            "package.json",
+            "web/tsconfig.base.json",
+            ".vscode/settings.json",
+            "a.rs",
+        ] {
+            assert!(!is_dataset(path), "{path}");
+        }
+    }
+}

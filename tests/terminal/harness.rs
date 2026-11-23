@@ -235,15 +235,15 @@ impl Term {
         });
     }
 
-    /// Goes from the end-to-end tests, which a repository opens on, to the code, the third
-    /// section: the file tree and the file beside it.
+    /// Goes from the end-to-end tests, which a repository opens on, to the code, the second
+    /// focus: the file tree and the file beside it.
     #[track_caller]
     pub fn go_to_the_code(&mut self) {
         let line = std::panic::Location::caller().line();
         self.on_the_tests();
-        self.push(line, "action", "go to the code (3)".into(), None, None);
+        self.push(line, "action", "go to the code (2)".into(), None, None);
         self.described = true;
-        self.keys("3");
+        self.keys("2");
         self.wait_until(line, "shows “files 5”", |s| s.contains("files 5"));
     }
 
@@ -315,6 +315,15 @@ impl Term {
     pub fn wait_for(&mut self, text: &str) {
         let line = std::panic::Location::caller().line();
         self.wait_until(line, &format!("shows “{text}”"), |s| s.contains(text));
+    }
+
+    /// Waits until the screen no longer shows `text`, and fails the test if it still does.
+    #[track_caller]
+    pub fn wait_until_gone(&mut self, text: &str) {
+        let line = std::panic::Location::caller().line();
+        self.wait_until(line, &format!("no longer shows “{text}”"), |s| {
+            !s.contains(text)
+        });
     }
 
     fn wait_until(&mut self, line: u32, what: &str, ok: impl Fn(&str) -> bool) {

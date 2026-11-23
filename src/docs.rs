@@ -34,6 +34,13 @@ pub struct DocLink {
 /// The Markdown that is the tool's own bookkeeping, not documentation of the software.
 const NOT_DOCS: &[&str] = &["REVIEW.md", "NOTES.md", "OVERVIEW.md", "CHANGELOG.md"];
 
+/// Whether `path` is one of the repository's documents: Markdown that is not the tool's own
+/// bookkeeping. What the Docs focus lists, and what a test's documentation is looked for in.
+pub fn is_document(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".md")
+        && !NOT_DOCS.contains(&path.rsplit('/').next().unwrap_or(path))
+}
+
 /// At most this many files, each at most this big, are read.
 const MOST_FILES: usize = 200;
 const MOST_BYTES: u64 = 1 << 20;
@@ -80,11 +87,7 @@ struct Read {
 /// Every section of every Markdown file in `files`, read from the repository at `root`.
 fn sections(root: &std::path::Path, files: &[String]) -> Vec<Read> {
     let mut out = Vec::new();
-    let docs = files
-        .iter()
-        .filter(|f| f.to_ascii_lowercase().ends_with(".md"))
-        .filter(|f| !NOT_DOCS.contains(&f.rsplit('/').next().unwrap_or(f)))
-        .take(MOST_FILES);
+    let docs = files.iter().filter(|f| is_document(f)).take(MOST_FILES);
     for path in docs {
         let full = root.join(path);
         if std::fs::metadata(&full).map_or(true, |m| m.len() > MOST_BYTES) {

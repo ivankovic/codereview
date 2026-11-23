@@ -79,18 +79,9 @@ impl App {
         }
     }
 
-    /// Takes over the side panel settings another repository's app saved.
-    pub fn adopt_sidebar(&mut self, sidebar: crate::config::SidebarConfig) {
-        self.session.adopt_sidebar(sidebar);
-    }
-
     /// What a setting is now, as the options panel shows it.
     pub fn setting_value(&self, setting: Setting) -> String {
-        let on = |b: bool| if b { "on" } else { "off" }.to_string();
-        let sidebar = self.session.config.sidebar;
         match setting {
-            Setting::FilesAutoHide => on(sidebar.files_auto_hide),
-            Setting::OutlineAutoHide => on(sidebar.outline_auto_hide),
             Setting::DiffLayout => self.layout.label().to_string(),
             Setting::ColourScheme => self.theme.name.clone(),
         }
@@ -115,29 +106,16 @@ impl App {
     }
 
     fn change_setting(&mut self, setting: Setting) {
-        let mut sidebar = self.session.config.sidebar;
         match setting {
-            Setting::FilesAutoHide => sidebar.files_auto_hide = !sidebar.files_auto_hide,
-            Setting::OutlineAutoHide => sidebar.outline_auto_hide = !sidebar.outline_auto_hide,
             Setting::DiffLayout => {
                 self.layout = self.layout.next();
                 let outcome = self.session.set_layout(self.layout.name());
                 self.report(outcome);
-                return;
             }
             Setting::ColourScheme => {
                 self.options = None;
                 self.open_theme_picker();
-                return;
             }
-        }
-        let outcome = self.session.set_sidebar(sidebar);
-        if self.report(outcome).is_some() {
-            let value = self.setting_value(setting);
-            self.info(format!(
-                "{}: {value}, saved to the config file",
-                setting.label()
-            ));
         }
     }
 
