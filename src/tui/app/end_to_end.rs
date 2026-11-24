@@ -18,11 +18,11 @@ use crate::recording::{Cast, Kind, Recording};
 use crate::stretch::{Outcome, Report, Touched};
 use crate::tui::viewer::RanBy;
 
-/// One row of the side panel — the overview, a file's heading, a test, or a recording whose
-/// test is gone — or of the overview beside it, which is what the stretch did.
+/// One row of the list — the overview, a file's heading, a test, or a recording whose
+/// test is gone — or of the overview opened from it, which is what the stretch did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum E2eRow {
-    /// The first row of the side panel: what the tests are, and what the stretch did to them.
+    /// The first row of the list: what the tests are, and what the stretch did to them.
     Overview,
     /// The heading over what the stretch of history did.
     Stretch,
@@ -82,12 +82,12 @@ pub struct EndToEndState {
     pub full: bool,
     /// Every file of changed code no end-to-end test ran is listed, not only the first few.
     pub all_unran: bool,
-    /// What the stretch did, the overview's own rows, beside the side panel while it is on
+    /// What the stretch did, the overview's own rows, shown once it is opened from the list,
     /// the overview.
     pub overview: ListState<E2eRow>,
-    /// The selected test's own view, beside the side panel.
+    /// The selected test's own view, opened from the list.
     pub test: Option<Box<EndToEndTestState>>,
-    /// Whether the keys go to what is beside the side panel rather than to the panel.
+    /// Whether the overview or a test is open, across the width, rather than the list.
     pub main: bool,
 }
 
@@ -220,8 +220,10 @@ impl EndToEndState {
             test: None,
             main: false,
         };
-        // On the overview, the first row: what a repository opens on.
+        // On the overview, the first row, opened: what a repository opens on is what the
+        // stretch did, and `q` from it is the list of every test.
         state.settle(1);
+        state.main = matches!(state.rows.current(), Some(E2eRow::Overview));
         state
     }
 
@@ -486,7 +488,11 @@ impl App {
                 state.find(&key);
             }
             state.full = old.full;
-            state.main = old.main;
+            // A list read before the tests were had nothing open; what comes keeps opening on
+            // the overview.
+            if !old.rows.items.is_empty() {
+                state.main = old.main;
+            }
             state.test = old.test.take();
             self.screens.pop();
         }
@@ -553,7 +559,10 @@ impl App {
                 fresh.find(&key);
             }
             fresh.full = state.full;
-            fresh.main = state.main;
+            // As in `push_end_to_end`: a list read before the tests were opened nothing.
+            if !state.rows.items.is_empty() {
+                fresh.main = state.main;
+            }
             fresh.test = state.test.take();
             fresh.casts = std::mem::take(&mut state.casts);
             **state = fresh;
@@ -633,7 +642,7 @@ impl App {
         }
     }
 
-    /// Makes the view of the test under the side panel's cursor, beside it: when the cursor
+    /// Makes the view of the test under the list's cursor, to open: when the cursor
     /// came to another test, or, `again`, to read the same one afresh, where it was left.
     pub(super) fn load_test_view(&mut self, again: bool) {
         let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
@@ -662,7 +671,7 @@ impl App {
     }
 
     pub(super) fn handle_end_to_end_key(&mut self, key: KeyEvent) {
-        // The view beside the list follows its cursor, however the cursor got there.
+        // The view opened from the list follows its cursor, however the cursor got there.
         self.load_test_view(false);
         let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
             return;
@@ -687,7 +696,7 @@ impl App {
         }
     }
 
-    /// The overview beside the side panel: what the stretch did, each row leading to it.
+    /// The overview, opened from the list: what the stretch did, each row leading to it.
     fn handle_overview_key(&mut self, key: KeyEvent) {
         let height = self.measured.list_height.max(1) as isize;
         let Some(Screen::EndToEnd(state)) = self.screens.last_mut() else {
@@ -725,7 +734,7 @@ impl App {
         }
     }
 
-    /// The side panel: the overview, the tests, and the recordings of tests no longer here.
+    /// The list: the overview, the tests, and the recordings of tests no longer here.
     fn handle_end_to_end_list_key(&mut self, key: KeyEvent) {
         let height = self.measured.list_height.max(1) as isize;
         let now = Instant::now();
@@ -745,10 +754,12 @@ impl App {
         let missing = state.opening.as_ref().is_some_and(Opening::missing);
         let on_test = state.test.is_some() && state.test().is_some();
         match key.code {
-            // The selected test's recording, played and moved through from the side panel.
-            KeyCode::Char(' ' | 'p' | ']' | '[' | '0' | 'z' | 'o') if on_test => {
+            // The selected test's recording, opened to be watched, and played or moved through.
+            KeyCode::Char(' ' | 'p' | ']' | '[' | '0') if on_test => {
+                state.main = true;
                 self.handle_end_to_end_test_key(key)
             }
+            KeyCode::Char('z' | 'o') if on_test => self.handle_end_to_end_test_key(key),
             KeyCode::Char('q') | KeyCode::Esc if state.full => state.full = false,
             KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
             KeyCode::Char(' ') | KeyCode::Char('p') => {
@@ -780,7 +791,7 @@ impl App {
             }
             KeyCode::Char('w') => self.next_stretch(),
             KeyCode::Char('b') => self.record_base(),
-            // The overview and a test are beside the panel: the keys go there.
+            // The overview or a test, opened across the whole width: the keys go there.
             KeyCode::Enter | KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right
                 if matches!(state.rows.current(), Some(E2eRow::Overview)) || on_test =>
             {

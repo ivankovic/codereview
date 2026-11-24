@@ -74,44 +74,29 @@ pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
         draw_test_view(frame, &theme, test, inner, true);
         return;
     }
-    // The side panel, which `\\` hides while there is something beside it, and beside it the
-    // overview or the selected test.
-    let list_width = if app.sidebar_hidden {
-        0
-    } else {
-        (inner.width / 3).clamp(24.min(inner.width), 48)
-    };
-    let [list, gap, main] = Layout::horizontal([
-        Constraint::Length(list_width),
-        Constraint::Length(u16::from(list_width > 0)),
-        Constraint::Fill(1),
-    ])
-    .areas(inner);
-    let _ = gap;
-    let main_keys = state.main;
-    if list_width > 0 {
-        draw_list(frame, &theme, state, base_status.as_deref(), list, false);
+    // One thing at a time, across the whole width: the list of the overview and the tests, or,
+    // once one is opened from it, the overview or the test.
+    if !state.main {
+        draw_list(frame, &theme, state, base_status.as_deref(), inner, false);
+        app.measured.list_height = inner.height as usize;
+        return;
     }
     let height = match (state.rows.current(), &mut state.test) {
         (Some(E2eRow::Overview), _) => {
-            draw_overview(frame, &theme, state, base_status.as_deref(), main);
-            main.height
+            draw_overview(frame, &theme, state, base_status.as_deref(), inner);
+            inner.height
         }
-        (Some(E2eRow::Test(_)), Some(test)) => draw_test_view(frame, &theme, test, main, main_keys),
+        (Some(E2eRow::Test(_)), Some(test)) => draw_test_view(frame, &theme, test, inner, true),
         _ => {
-            draw_detail(frame, &theme, state, main);
-            list.height
+            draw_detail(frame, &theme, state, inner);
+            inner.height
         }
     };
-    app.measured.list_height = if main_keys {
-        height as usize
-    } else {
-        list.height as usize
-    };
+    app.measured.list_height = height as usize;
 }
 
-/// Beside the side panel, while it is on the overview: what the stretch did to the tests and
-/// the code, each row leading to it, and what the one under the cursor means.
+/// The overview, opened from the list: what the stretch did to the tests and the code, each
+/// row leading to it, and what the one under the cursor means.
 fn draw_overview(
     frame: &mut Frame,
     theme: &Theme,
@@ -868,7 +853,7 @@ fn clip(text: &str, width: usize) -> String {
     out
 }
 
-/// One end-to-end test, beside the side panel: how its last run went, its recording, and the
+/// One end-to-end test, opened from the list: how its last run went, its recording, and the
 /// list that leads into the code and the documentation. Returns the height of that list, for
 /// paging through it.
 fn draw_test_view(

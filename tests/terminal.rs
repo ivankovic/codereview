@@ -47,68 +47,67 @@ fn a_repository_opens_on_its_end_to_end_tests_and_plays_a_recording() {
     });
     t.documents("SPECS.md#What a repository opens on");
     t.wait_for("1 end-to-end test of 2 tests");
-    t.wait_for("✓ a review survives a restart");
     t.wait_for("In the last 7 days");
-    t.step("select the test, under the overview");
+    t.step("go to the list of tests, and open the one under the overview");
+    t.keys("q");
+    t.wait_for("✓ a review survives a restart");
     t.keys(DOWN);
+    t.keys(ENTER);
     t.wait_for("tests/e2e.rs:2 · its path says e2e");
     t.wait_for("a review, before");
     t.wait_for("0:00.0 / 0:01.5 paused");
     t.step("play the recording");
     t.keys(" ");
     t.wait_for("the review, after the restart");
-    t.step("open the test it is a recording of");
+    t.step("open the test it is a recording of, at the step the recording is on");
     t.keys("s");
-    t.wait_for("tests/e2e.rs 2/4");
+    t.wait_for("tests/e2e.rs 3/4");
     t.wait_for("fn a_review_survives_a_restart()");
 }
 
 #[test]
-fn the_tests_open_on_the_overview_with_each_test_in_the_side_panel() {
+fn the_tests_open_on_the_overview_and_q_lists_every_test() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
+    t.wait_for("In the last 7 days");
+    let screen = t.screen();
+    let first = screen.lines().nth(2).unwrap_or_default().to_string();
+    t.check(
+        "the overview has the whole width, with no list beside it",
+        first.starts_with("│In the last 7 days") && !screen.contains("Overview"),
+        || screen.clone(),
+    );
+    t.step("go to the list of every test");
+    t.keys("q");
     t.wait_for("○ a review survives a restart");
     let screen = t.screen();
     let first = screen.lines().nth(2).unwrap_or_default().to_string();
     t.check(
-        "the side panel starts with the overview, and beside it is what the stretch did",
-        first.starts_with("│Overview") && first.contains("In the last 7 days"),
+        "the list starts with the overview, and nothing is beside it",
+        first.starts_with("│Overview") && !screen.contains("In the last 7 days"),
         || screen.clone(),
     );
 }
-
 #[test]
-fn q_from_a_test_beside_the_list_gives_the_list_the_keys_again() {
+fn q_from_a_test_goes_back_to_the_list() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
+    t.wait_for("In the last 7 days");
+    t.step("go to the list, and open the test");
+    t.keys("q");
     t.wait_for("○ a review survives a restart");
-    t.step("select the test and go into it");
     t.keys(DOWN);
     t.keys(ENTER);
     t.wait_for("q/Tab the list");
+    t.wait_until_gone("Enter/Tab open");
     t.step("come back to the list");
     t.keys("q");
-    t.wait_for("Enter/Tab beside");
+    t.wait_for("Enter/Tab open");
     let still_there = t.alternate_screen();
     t.check("q did not quit", still_there, || {
         "the program left the screen".into()
     });
 }
-
-#[test]
-fn backslash_hides_the_list_beside_the_tests() {
-    let mut t = term!();
-    t.documents("SPECS.md#Terminal UI");
-    t.wait_for("○ a review survives a restart");
-    t.step("hide the side panel");
-    t.keys("\\");
-    t.wait_until_gone("○ a review survives a restart");
-    t.wait_for("In the last 7 days");
-    t.step("show it again");
-    t.keys("\\");
-    t.wait_for("○ a review survives a restart");
-}
-
 #[test]
 fn a_test_leads_to_the_code_it_ran_and_what_documents_it() {
     let mut t = term!(|root: &Path| {
@@ -142,8 +141,10 @@ fn a_test_leads_to_the_code_it_ran_and_what_documents_it() {
         std::fs::write(readme, text).unwrap();
     });
     t.documents("SPECS.md#Terminal UI");
+    t.wait_for("In the last 7 days");
+    t.step("go to the list, and open the test");
+    t.keys("q");
     t.wait_for("✓ a review survives a restart");
-    t.step("select the test, and give what is beside the list the keys");
     t.keys(DOWN);
     t.keys(ENTER);
     t.wait_for("Code it ran");
@@ -181,7 +182,7 @@ fn changed_code_no_end_to_end_test_ran_is_marked() {
         .unwrap();
     });
     t.documents("SPECS.md#What a repository opens on");
-    t.wait_for("✓ a review survives a restart");
+    t.wait_for("In the last 7 days");
     t.step("mark the uncommitted work instead of the last 7 days");
     t.keys("w");
     t.wait_for("marking the last commit");
@@ -190,14 +191,13 @@ fn changed_code_no_end_to_end_test_ran_is_marked() {
     t.wait_for("No end-to-end test ran 1 of 1 changed lines");
     t.wait_for("▌src/main.rs  1 of 1");
     t.wait_for(": no command records the tests");
-    t.step("go into the overview, which starts on the changed code nothing ran");
-    t.keys(ENTER);
-    t.wait_for("ran in no end-to-end");
+    t.step("the overview starts on the changed code nothing ran, and says what it is");
+    t.wait_for("in no end-to-end");
     t.step("move to the base the tests could be recorded at, and back");
     t.keys("j");
     t.wait_for("There is no command");
     t.keys("k");
-    t.wait_for("ran in no end-to-end");
+    t.wait_for("in no end-to-end");
     t.keys(ENTER);
     t.wait_for("src/main.rs 6/7");
     t.wait_for("6 ▌    println!");
@@ -599,7 +599,7 @@ fn the_data_focus_lists_only_the_datasets() {
 }
 
 #[test]
-fn the_code_has_no_side_panel_and_backslash_hides_the_tests_list() {
+fn the_code_has_no_side_panel() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
     t.go_to_the_code();
@@ -611,14 +611,6 @@ fn the_code_has_no_side_panel_and_backslash_hides_the_tests_list() {
         !screen.contains("files 5") && !screen.contains("outline") && !screen.contains("README.md"),
         || screen.clone(),
     );
-    t.step("go back to the tests, and hide their list");
-    t.keys("1");
-    t.wait_for("○ a review survives a restart");
-    t.keys("\\");
-    t.wait_until_gone("○ a review survives a restart");
-    t.step("show it again");
-    t.keys("\\");
-    t.wait_for("○ a review survives a restart");
 }
 
 #[test]
@@ -746,8 +738,10 @@ fn a_pending_comment_is_counted_in_the_top_row() {
 fn a_test_s_source_opens_over_the_tests_and_q_goes_back_to_them() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
+    t.wait_for("In the last 7 days");
+    t.step("go to the list, select the test and open its source");
+    t.keys("q");
     t.wait_for("○ a review survives a restart");
-    t.step("select the test and open its source");
     t.keys(DOWN);
     t.keys("s");
     t.wait_for("tests/e2e.rs 2/4");
@@ -912,8 +906,10 @@ fn q_steps_back_and_then_gives_the_terminal_back() {
     t.keys("L");
     t.wait_for("log main 2 commits");
     t.keys("q");
-    t.wait_for("1 end-to-end test of 2 tests");
-    t.step("leave");
+    t.wait_for("In the last 7 days");
+    t.step("go to the list of tests, then leave");
+    t.keys("q");
+    t.wait_for("Enter/Tab open");
     t.keys("q");
     t.exits();
     let alternate = t.alternate_screen();

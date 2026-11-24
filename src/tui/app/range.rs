@@ -466,10 +466,10 @@ impl App {
         self.stretch = stretch;
         self.refresh_end_to_end(false);
         self.switch_focus(Focus::Tests);
-        // On the overview, which is what the range did to the tests.
+        // On the overview, opened, which is what the range did to the tests.
         if let Some(Screen::EndToEnd(state)) = self.screens.last_mut() {
             state.rows.cursor = 0;
-            state.main = false;
+            state.main = matches!(state.rows.current(), Some(E2eRow::Overview));
             state.test = None;
         }
         self.info(format!(

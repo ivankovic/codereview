@@ -178,10 +178,10 @@ mod tests {
         }
     }
 
-    /// The selected test's view, beside the end-to-end tests.
+    /// The selected test's view, opened from the list of end-to-end tests.
     fn test_view(app: &App) -> &super::app::EndToEndTestState {
         match app.screen() {
-            Screen::EndToEnd(state) => state.test.as_deref().expect("a test beside the list"),
+            Screen::EndToEnd(state) => state.test.as_deref().expect("a test opened from the list"),
             _ => panic!("not the end-to-end tests"),
         }
     }
@@ -892,6 +892,13 @@ mod tests {
         press(&mut app, &[KeyCode::Char('E')]);
         assert!(matches!(app.screen(), Screen::EndToEnd(_)));
         until_indexed(&mut app);
+        // It opens on the overview, across the whole width, with no list beside it.
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("In the last 7 days"), "{screen}");
+        assert!(!screen.contains("○ a comment is saved"), "{screen}");
+        // `q` is the list of every test, the overview its first row.
+        press(&mut app, &[KeyCode::Char('q')]);
+        assert!(!app.quit);
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("2 end-to-end tests of"), "{screen}");
         assert!(screen.contains("1 without a recording"), "{screen}");
@@ -901,14 +908,15 @@ mod tests {
         );
         assert!(screen.contains("✓ a file opens"), "{screen}");
         assert!(screen.contains("○ a comment is saved"), "{screen}");
-        // It opens on the overview; the first test is a row down.
-        assert!(screen.contains("In the last 7 days"), "{screen}");
-        press(&mut app, &[KeyCode::Char('j')]);
+        assert!(!screen.contains("In the last 7 days"), "{screen}");
+        // Enter opens the test under the cursor, on its own.
+        press(&mut app, &[KeyCode::Char('j'), KeyCode::Enter]);
         let screen = draw(&mut term, &mut app);
         assert!(
             screen.contains("tests/cli.rs:3 · it drives a terminal"),
             "{screen}"
         );
+        assert!(!screen.contains("○ a comment is saved"), "{screen}");
         assert!(screen.contains("✓ passed in 1.2 s"), "{screen}");
         // The recording, paused at its start, and its steps beside it.
         assert!(screen.contains("first screen"), "{screen}");
@@ -937,13 +945,19 @@ mod tests {
         assert!(screen.contains("second screen"), "{screen}");
 
         // The test without a recording says so.
-        press(&mut app, &[KeyCode::Char('j')]);
+        press(
+            &mut app,
+            &[KeyCode::Char('q'), KeyCode::Char('j'), KeyCode::Enter],
+        );
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("No recording"), "{screen}");
 
         // `s` is the test's source, opened over the list; `E` comes back to the list, and
         // from the list, which is the first screen there is, `q` quits.
-        press(&mut app, &[KeyCode::Char('k'), KeyCode::Char('s')]);
+        press(
+            &mut app,
+            &[KeyCode::Char('q'), KeyCode::Char('k'), KeyCode::Char('s')],
+        );
         assert!(matches!(app.screen(), Screen::Explorer));
         let viewer = app.viewer.as_ref().unwrap();
         assert_eq!(viewer.path, "tests/cli.rs");
@@ -1060,6 +1074,9 @@ mod tests {
             screen.contains(&format!("Before {short}: recorded, 1 test")),
             "{screen}"
         );
+        // The list, `q` from the overview, says what each test did.
+        press(&mut app, &[KeyCode::Char('q')]);
+        let screen = draw(&mut term, &mut app);
         assert!(
             screen.contains("✓ a review is saved Δ") && screen.contains("✗→✓ screen changed"),
             "the test ran the change, failed before, passes now: {screen}"
@@ -1081,7 +1098,7 @@ mod tests {
         }
         let screen = draw(&mut term, &mut app);
         assert!(
-            screen.contains("ran in no end-to-end test"),
+            screen.contains("in no end-to-end test."),
             "the row says what it is: {screen}"
         );
         press(&mut app, &[KeyCode::Enter]);
@@ -1194,8 +1211,11 @@ mod tests {
         press(&mut app, &[KeyCode::Char('E')]);
         until_indexed(&mut app);
 
-        // The test is beside the list once selected; Enter gives it the keys.
-        press(&mut app, &[KeyCode::Char('j'), KeyCode::Enter]);
+        // From the overview, `q` is the list; Enter opens the test under the cursor.
+        press(
+            &mut app,
+            &[KeyCode::Char('q'), KeyCode::Char('j'), KeyCode::Enter],
+        );
         let state = test_view(&app);
         let rows = state.rows.items.clone();
         let screen = draw(&mut term, &mut app);

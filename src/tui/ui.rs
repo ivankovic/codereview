@@ -575,7 +575,7 @@ fn hint_for(screen: &Screen) -> &'static str {
             "Enter go there  b record before  w stretch  q/Tab the list"
         }
         Screen::EndToEnd(_) => {
-            "Enter/Tab beside  Space play  ] [ steps  w stretch  b record before  s source  ge video  o open  \\ panel  1-4 focus  q quit"
+            "Enter/Tab open  Space play  ] [ steps  w stretch  b record before  s source  ge video  o open  1-4 focus  q quit"
         }
         Screen::Agent => {
             "i ask  A address all pending  Esc cancel  1-9/y/n answer  t thoughts  l log  C clear  R restart  q back"
@@ -605,7 +605,6 @@ const HELP: &[(&str, &str)] = &[
         "q / Esc",
         "back; on a focus's first screen, to the tests; on the tests, quit",
     ),
-    ("\\", "hide or show the tests' side panel"),
     ("", ""),
     ("Everywhere", ""),
     ("?", "this help"),

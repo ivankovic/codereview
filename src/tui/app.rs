@@ -279,8 +279,6 @@ pub struct App {
     /// The explorers of the other focuses, as they were left; `None` for the one on screen
     /// and for one not yet shown.
     parked_explorers: [Option<Explorer>; 4],
-    /// Whether `\` has hidden the side panel.
-    pub sidebar_hidden: bool,
     /// What the breadcrumb says, read when the repository is.
     pub crumbs: Crumbs,
     /// The focus on screen's stack: its first screen, and what was opened over it.
@@ -345,7 +343,6 @@ impl App {
             focus: Focus::Tests,
             parked: Default::default(),
             parked_explorers: Default::default(),
-            sidebar_hidden: false,
             crumbs: Crumbs::default(),
             screens: Vec::new(),
             prompt: None,
@@ -1173,11 +1170,6 @@ impl App {
             // Ctrl-a never arrives. The review list keeps `A` for "address all".
             KeyCode::Char('A') if !matches!(self.screen(), Screen::Agent | Screen::Review(_)) => {
                 self.open_agent();
-                return true;
-            }
-            // The side panel, hidden or shown, wherever there is one.
-            KeyCode::Char('\\') => {
-                self.sidebar_hidden = !self.sidebar_hidden;
                 return true;
             }
             KeyCode::Char('i') if !matches!(self.screen(), Screen::Agent) => {
