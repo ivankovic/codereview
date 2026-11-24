@@ -82,17 +82,7 @@ impl App {
             .as_ref()
             .filter(|_| matches!(self.screen(), Screen::Explorer))
             .map(|v| (v.path.clone(), v.lines.join("\n")));
-        // The open range's files, on whichever focus's stack it is.
-        let changed = self
-            .screens
-            .iter()
-            .chain(self.parked.iter().flatten())
-            .filter_map(|s| match s {
-                Screen::Range(r) => Some(r.files.iter().map(|f| f.path.clone())),
-                _ => None,
-            })
-            .flatten()
-            .collect();
+        let changed = self.range_files();
         self.finder = Some(Finder {
             input: Prompt::new(crate::tui::prompt::PromptKind::Search, "search", ""),
             groups: Vec::new(),

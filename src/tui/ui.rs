@@ -702,7 +702,7 @@ const HELP: &[(&str, &str)] = &[
     ),
     (
         "J",
-        "where next from here: the definition (d), the usages (u), the tests that ran the line or name it (t), the documents (o)",
+        "where next from here: the definition (d), the usages (u), what it uses (c), the tests that ran the line or name it (t), the documents (o), the range's files (r), the commit that last changed the line (h), the comments (m)",
     ),
     (
         "Ctrl-o  Tab",

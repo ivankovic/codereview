@@ -64,7 +64,27 @@ impl App {
         let v = self.viewer.as_ref()?;
         let line = v.current_line()?;
         let (path, column) = (v.path.clone(), v.column());
-        Some(crate::nav::here(&mut self.session, &path, line, column))
+        let changed = self.range_files();
+        Some(crate::nav::here_in(
+            &mut self.session,
+            &path,
+            line,
+            column,
+            &changed,
+        ))
+    }
+
+    /// The files the open review range changed, on whichever focus's stack it is.
+    pub(super) fn range_files(&self) -> std::collections::HashSet<String> {
+        self.screens
+            .iter()
+            .chain(self.parked.iter().flatten())
+            .filter_map(|s| match s {
+                Screen::Range(r) => Some(r.files.iter().map(|f| f.path.clone())),
+                _ => None,
+            })
+            .flatten()
+            .collect()
     }
 
     /// Runs `then` with where the cursor is, at once when the symbols are read, otherwise
@@ -111,8 +131,23 @@ impl App {
         });
     }
 
-    /// Goes to `place`, leaving where the cursor was on the trail.
+    /// Goes to `place`, leaving where the cursor was on the trail: the file at the line, or,
+    /// for a commit, the file's change in it.
     pub(super) fn go_to_place(&mut self, place: &Place) {
+        if let Some(hash) = &place.commit {
+            let Some(files) = self.report(self.session.commit_files(hash)) else {
+                return;
+            };
+            let Some(index) = files.iter().position(|f| f.path == place.path) else {
+                self.info(format!("{} is not among that commit's files", place.path));
+                return;
+            };
+            self.push_jump();
+            self.forward.clear();
+            let hash = hash.clone();
+            self.push_diff(DiffTarget::Commit { hash }, files, index);
+            return;
+        }
         self.push_jump();
         self.forward.clear();
         self.jump_to(&place.path, place.line);

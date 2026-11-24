@@ -668,6 +668,33 @@ fn j_lists_where_to_go_next_from_a_definition() {
 }
 
 #[test]
+fn j_offers_the_commit_that_last_changed_the_line() {
+    let mut t = term!();
+    t.documents("SPECS.md#Navigation");
+    t.go_to_the_code();
+    t.step("search for src/main.rs and open it");
+    t.open_file("src/main.rs");
+    t.step("search the file for parse_review, which puts the cursor on it");
+    t.keys("/");
+    t.keys("parse_rev");
+    t.wait_for("In this file 1");
+    t.keys(ENTER);
+    t.wait_for("src/main.rs 4/7");
+    t.step("J: what it uses, its history, and the rest");
+    t.keys("J");
+    t.wait_for("History 1  (h)");
+    t.wait_for("the first version");
+    t.step("h, then Enter: the line's change in that commit");
+    t.keys("h");
+    t.keys(ENTER);
+    t.wait_for("review::parse_review();");
+    t.wait_until_gone("History 1  (h)");
+    t.step("Ctrl-o: back to the line");
+    t.keys("\x0f");
+    t.wait_for("src/main.rs 4/7");
+}
+
+#[test]
 fn slash_finds_a_test_by_its_words() {
     let mut t = term!();
     t.documents("SPECS.md#Navigation");
