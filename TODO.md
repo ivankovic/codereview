@@ -15,6 +15,9 @@
 - Terminal UI: a list of the trail, to go back to any point of it rather than one step at a time.
 - The search and the jump menu in a diff and in omnidiff's view, not only in the file viewer.
 - Language-server backend for symbol navigation, for repositories that have one running.
+
+## Other
+
 - Agent: turn a review the agent writes into REVIEW.md comments automatically when it answers
   in prose instead.
 - Agent: picking the agent's mode.
