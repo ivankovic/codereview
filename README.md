@@ -117,14 +117,13 @@ essentials:
 
 | Key | What |
 | --- | --- |
-| `1` or `E` | Tests: the overview, then each test, the selected one beside them; `Enter` goes in |
+| `1` or `E` | Tests: the overview; `q` lists every test, `Enter` opens one on its own |
 | `Space` `s` | play the selected test's recording; open its source |
 | `2` `3` `4` | Code, Docs, Data: the open file; Docs and Data list their files to open |
 | `/` | search: the open file, definitions, paths, tests, headings, comments, then all text |
 | `Enter` | on a name: to its definition, or from a definition to its usages; on a comment, edit it |
 | `J` | where next: the definition, usages, the tests that ran the line or name it, the docs |
 | `Ctrl-o` `Tab` | back and forward along the trail of jumps |
-| `\` | hide or show the tests' side panel |
 | `P` | every test, by kind: `c` the next question, `K` a test's answers |
 | `R` | the review, over the code: every comment in REVIEW.md |
 | `A` or `Ctrl-a` | the agent panel, over the screen (`A` in the review: address every comment) |
@@ -185,20 +184,19 @@ all of that, and nothing turns it off.
 
 Click a line number to comment, shift-click to extend the range (or the form's Extend range button
 and another line number, on a phone); the Comment button in the file header comments on the whole
-file, as does the Comment on a document's row in Docs. The frame is the terminal UI's: a
-breadcrumb across the top, and the focus at the right — Tests (end to end, and every test), Code
-(the summary, the file, changes, log, comments and notes), Docs and Data — with the agent a button
-beside it. There is no side panel anywhere: the tests open on their overview, Every test lists
-them, and a test opens on its own, with `‹ tests` and the browser's back to return. There is no file tree: Search, or `/`,
-finds a file, a definition, a test, a heading or any text, and a click on a name in the code shows
-where it leads — its definition, its usages, the tests that ran it, the documents that mention it.
-Everything else the terminal UI does is a button. Every view has an
-address, so the browser's back returns to the previous view and a file, a diff or a commit can be
-linked to. The page keeps itself current: when the agent, another window or a git command changes
-the repository, it notices within a couple of seconds and redraws where you are, without moving the
-scroll. When the change reads well,
-**Commit** in the changes view records it: the sheet names the files going in and any comment on
-them still pending, and the repository's hooks run as they would in a terminal.
+file, as does the Comment on a document's row in Docs. The frame is the terminal UI's: a breadcrumb
+across the top, and the focus at the right — Tests (end to end, and every test), Code (the summary,
+the file, changes, log, comments and notes), Docs and Data — with the agent a button beside it.
+There is no side panel anywhere: the tests open on their overview, Every test lists them, and a test
+opens on its own, with `‹ tests` and the browser's back to return. There is no file tree: Search, or
+`/`, finds a file, a definition, a test, a heading or any text, and a click on a name in the code
+shows where it leads — its definition, its usages, the tests that ran it, the documents that mention
+it. Everything else the terminal UI does is a button. Every view has an address, so the browser's
+back returns to the previous view and a file, a diff or a commit can be linked to. The page keeps
+itself current: when the agent, another window or a git command changes the repository, it notices
+within a couple of seconds and redraws where you are, without moving the scroll. When the change
+reads well, **Commit** in the changes view records it: the sheet names the files going in and any
+comment on them still pending, and the repository's hooks run as they would in a terminal.
 
 The page works on a phone: one pane at a time, the focus picker under the breadcrumb, and it can be
 added to the home screen as an app. Review comments, diffs and the agent's transcript are what a

@@ -782,33 +782,32 @@ opens its file there at that line, which counts in the pull request's head; a co
 whole pull request has nowhere to go. The breadcrumb names the range: a stretch by its name, a
 pull request as `#` and its number, a comparison as its head against its base.
 
-A repository opens on its end-to-end tests, the first screen of the first focus, with nothing
-under them, unless a file was named on the command line, which opens in the code; this goes for
-a repository that appears later in a directory of checkouts too. `E` or `1` brings them back from
-any screen, where they were left; the tests that name the open file, which `E` used to show, are
-on `U`. Until the symbol index is built the tests are
-those `OVERVIEW.md` lists, and with no such file the screen says it is reading them; either way
-it reads them again once the index is in, and again on `r`, staying on the same test. The side
-panel starts with the overview, selected when the tests open, then has each test file as a
-heading with its tests under it, each marked passed, failed or without a recording, and a
-security mark where it has one; recordings whose test is gone follow under a heading of their
-own. The title counts the end-to-end tests against all the tests, the failed and those without a
-recording. Beside the side panel is what is selected in it: on the overview, what the stretch
-did, described below; on a test, the test's own view; on a recording whose test is gone, its
-label, file and line, how its last run went, and its recording with its steps. `Enter`, `Tab`,
-`l` or `→` give what is beside the panel the keys, which move a cursor of its own while the
-panel's stays, dimmed, on what is shown; `q`, `Esc`, `Tab`, `h` or `←` give the panel the keys
-back. `\` hides the panel and shows it again. A terminal recording is played into frames when
-its test is first selected, shown paused at its first frame in a box titled with the position,
-the length and whether it plays, and cropped to the box with a note when it is bigger; `z`
-gives it the whole of the tests' screen. `Space` or `p` plays and pauses, from the start again
-once it has ended; `]` and `[` go to the next and previous step; `0` goes back to the start;
-these work from the panel as well, on the selected test; while it plays the screen is drawn
-every 40 ms. A video cannot be drawn, so it is named, and `ge` hands it to the system's opener
-(`xdg-open`, or `open` on macOS). `s` in the panel opens the test's source at its line. A
-repository with no end-to-end tests opens on that finding instead: what one would look like for
-the kind of software it seems to be, how many tests of other kinds it has, and `a`, which sends
-the agent the request for the first ones, each leaving a recording.
+A repository opens on its end-to-end tests, the first screen of the first focus, with nothing under
+them, unless a file was named on the command line, which opens in the code; this goes for a
+repository that appears later in a directory of checkouts too. `E` or `1` brings them back from any
+screen, where they were left; the tests that name the open file, which `E` used to show, are on `U`.
+Until the symbol index is built the tests are those `OVERVIEW.md` lists, and with no such file the
+screen says it is reading them; either way it reads them again once the index is in, and again on
+`r`, staying on the same test. There is no side panel: one thing is shown at a time, across the
+whole width. The tests open on the overview, what the stretch did, described below. `q`, `Esc`,
+`Tab`, `h` or `←` from it is the list of every test: the overview first, then each test file as a
+heading with its tests under it, each marked passed, failed or without a recording, and a security
+mark where it has one; recordings whose test is gone follow under a heading of their own. The title
+counts the end-to-end tests against all the tests, the failed and those without a recording.
+`Enter`, `Tab`, `l` or `→` on a row of the list opens it on its own: the overview; a test, as the
+test's own view; a recording whose test is gone, as its label, file and line, how its last run went,
+and its recording with its steps. The same keys that left the overview come back from it to the
+list, on the row that was opened. A range that is opened lands on the overview too. A terminal
+recording is played into frames when its test is first selected, shown paused at its first frame in
+a box titled with the position, the length and whether it plays, and cropped to the box with a note
+when it is bigger; `z` gives it the whole of the tests' screen. `Space` or `p` plays and pauses,
+from the start again once it has ended; `]` and `[` go to the next and previous step; `0` goes back
+to the start; `Space`, `p`, `]`, `[` and `0` on a test in the list open it and do the same; while it
+plays the screen is drawn every 40 ms. A video cannot be drawn, so it is named, and `ge` hands it to
+the system's opener (`xdg-open`, or `open` on macOS). `s` in the panel opens the test's source at
+its line. A repository with no end-to-end tests opens on that finding instead: what one would look
+like for the kind of software it seems to be, how many tests of other kinds it has, and `a`, which
+sends the agent the request for the first ones, each leaving a recording.
 
 A test's own view, beside the panel: where it is and why it counts, how its last run went and when,
 how long it took, how many commits and changed files the tree has moved on since, and what any
@@ -862,8 +861,7 @@ goes back along the trail and `Tab` forward. `gd` and `Ctrl-]` still go to a def
 `*` still list the occurrences. `/` opens the search over the screen: what is typed at the top, the
 groups under it, `Tab` and `Shift-Tab` to the next and previous group, the arrows to move, `Enter`
 to go, `Esc` to close; in the file, `>` and `<` then step through the matches. Where `/` is a
-screen's own — a diff's, the tests' — `g/` opens the search. The tests' side panel, the overview and
-the list of tests, is the one part of the screen that hides: `\` hides it and shows it again. `,`
+screen's own — a diff's, the tests' — `g/` opens the search. No part of the screen hides. `,`
 opens the options panel — the diff layout and the colour scheme — where `Space` changes a setting,
 saves it at once, and the setting under the cursor is explained. `c` in the viewer comments on the
 line or the selection. Other screens: repository log and per-file history (commit list, details,
