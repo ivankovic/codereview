@@ -620,6 +620,11 @@ impl Index {
         out
     }
 
+    /// Every definition in the repository, in no particular order: for a matcher of one's own.
+    pub fn symbols(&self) -> impl Iterator<Item = &Symbol> {
+        self.files.values().flat_map(|f| f.symbols.iter())
+    }
+
     /// Definitions whose name contains `query` (case-insensitive), names starting with it
     /// first, then shorter names first.
     pub fn search(&self, query: &str) -> Vec<Symbol> {

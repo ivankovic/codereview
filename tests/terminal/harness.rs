@@ -249,7 +249,21 @@ impl Term {
         self.push(line, "action", "go to the code (2)".into(), None, None);
         self.described = true;
         self.keys("2");
-        self.wait_until(line, "shows “files 5”", |s| s.contains("files 5"));
+        self.wait_until(line, "says how to get to a file", |s| {
+            s.contains("/ searches for a file")
+        });
+    }
+
+    /// Opens `path` the way a person does without a tree: `/`, a few of its letters, `Enter`
+    /// on it among the files found.
+    #[track_caller]
+    pub fn open_file(&mut self, path: &str) {
+        self.keys("/");
+        self.wait_for("a name, a path, a test, a heading, or any text");
+        self.keys(&format!("f:{path}"));
+        self.wait_for("Files 1");
+        self.keys("\r");
+        self.wait_for(&format!("{path} 1/"));
     }
 
     /// The scratch repository the program was started in.

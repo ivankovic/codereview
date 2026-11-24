@@ -647,6 +647,50 @@ quarter of a second to highlight. On the wire a file's lines are packed: the dis
 once, in a table, and per line `[style, text]` pairs with runs of one style joined, a sixth
 of the size of one object per segment; the page unpacks them on arrival.
 
+## Navigation
+
+There is no file tree and no outline: a repository with thousands of files, most of them written
+by an agent, is not read by walking a tree of them. A reader goes from what they are reading to the
+next place it leads, or searches for somewhere new. Both front ends ask the same two questions of
+the core and show the same answers.
+
+**Where next.** From a line and a column of a file, the core works out what is there — the name
+under the cursor, whether the line defines it or uses it, and the innermost definition the line is
+in — and the places to go from there, in groups, each place a file, a line, the line's text and
+what it is to the place the reader is at. The groups, in this order, each left out when empty:
+the definitions of the name, other than the one the cursor is on; its usages, each with the
+definition it is in, other than in documents and at a definition; the tests, first every
+end-to-end test whose recorded coverage ran the line, then every test whose code names the
+definition the line is in; and the documents, every line of a Markdown document that has the name,
+or else the enclosing definition's name, as a whole word, with the heading it is under. Names are
+not resolved: a name defined twice has two definitions, and the usages of a common name include
+another thing's. A group lists at most two hundred places. The obvious step is, on a use, its
+definition, straight there when there is one, the one sharing the longest leading path with the
+file open first among several, which are then offered to pick from; and on a definition, its
+usages, to pick from.
+
+**The trail.** Every jump — the obvious step, a place picked from the groups, a search result —
+leaves where the cursor was on a trail. Back goes along it to where each jump was made from, and
+forward again to where back came from, until a new jump starts a new trail forward. The breadcrumb
+says how far back it goes, as `↶` and a count.
+
+**Search.** One query is looked for, as it is typed, in the open file (its lines, with smart case:
+case-insensitive unless the query has a capital), the definitions (by name), the paths, the tests
+(by their sentence), the documents' headings and the review's comments; once typing stops for a
+quarter of a second, also in every file's text, tracked or not but never ignored, through git's
+grep, away from the interface so it never waits. Results come in those groups, in that order, at
+most fifty each, the best first. A name or a path matches when the query's letters are in it in
+order: a letter that starts a word — the first, one after a separator, a capital after a small
+letter — or follows the letter before it counts for more, a letter skipped costs, and the whole
+name or its start matching counts most, so a few letters of each word find a name. A test or a
+heading matches word by word, every word of the query the start of one of its words. What is near
+ranks higher: in the file open, in its directory, or among the files of the open range. A prefix
+narrows the search to one group — `f:` paths, `s:` definitions, `t:` tests, `d:` headings,
+`c:` comments — and a query in double quotes is exact text, between slashes a regular expression,
+both searched in the text only. A result in the open file leaves the query searched for in it, so
+the next and previous matches are a key away, with the cursor on the match. A path that is a
+directory, when something asks to show one, opens the search for the files in it.
+
 ## Terminal UI
 
 The top row is a breadcrumb on the left and the focus picker on the right. The breadcrumb says
@@ -666,30 +710,30 @@ and the bar goes with it; work on another thread keeps it up until its answer is
 symbol index in the background puts the bar up only once it has taken longer than a moment.
 
 The focus picker is the four focuses, Tests, Code, Docs and Data, each with the digit that goes
-there, `1` to `4`, the one on screen lit; before it, the number of pending
-comments and whether the agent is working or asking. A focus is what the reader is looking at:
-the end-to-end tests and every test by its kind; the code; the repository's Markdown documents,
-other than `REVIEW.md`, `NOTES.md`, `OVERVIEW.md` and a changelog; and its datasets — CSV, TSV,
-JSON, JSON lines, GeoJSON and Parquet files, except the JSON that configures a tool
-(`package.json`, `tsconfig.json` and the like, and anything under `.vscode`). Each focus is a stack
-of screens of its own, its first screen at the bottom — the end-to-end tests, or the explorer — and
-has an explorer of its own, whose tree holds only the files the focus is about and whose open file,
-folds, filter and side panel are kept apart from the others'. A focus left keeps its stack and its
-explorer and is read again when it is come back to; asked for the focus already on screen, the
-digit goes back to its first screen. `q` or `Esc` pops one screen; on a focus's first screen it
-goes to the tests, and on the tests it quits (or, started on a directory of checkouts, goes back to
-the repository list). `E` goes to the tests like `1`. Every test by its kind, `P`, is opened over
-the end-to-end tests, or brought back where it was there; in the log, `P` opens every test as the
-commit under the cursor left them, over the log. The review, `R`, is opened over the code. The
-agent panel, `A` or `Ctrl-a`, opens over whatever is on screen, and in it `C` clears the
-conversation and, while it asks for permission, a digit is an answer. The status line starts with
-where in the focus the screen is: its first screen and what was opened over it, the last two when
-there are more than three. Anything that opens a file — a test's source, the code a test ran, a
-comment in the review, a symbol — opens the explorer over the screen it was opened from, so `q` goes
-back there; where the focus already has the explorer, it is that one, and what was opened over it
-is closed. A list of places to go, once one is picked, is closed with it. `a` and `i`, which ask the
-agent something, open its panel over the screen they were pressed on, and `q` there comes back to
-it.
+there, `1` to `4`, the one on screen lit; before it, the number of pending comments and whether the
+agent is working or asking. A focus is what the reader is looking at: the end-to-end tests and every
+test by its kind; the code; the repository's Markdown documents, other than `REVIEW.md`, `NOTES.md`,
+`OVERVIEW.md` and a changelog; and its datasets — CSV, TSV, JSON, JSON lines, GeoJSON and Parquet
+files, except the JSON that configures a tool (`package.json`, `tsconfig.json` and the like, and
+anything under `.vscode`). Each focus is a stack of screens of its own, its first screen at the
+bottom — the end-to-end tests, or the explorer — and has an explorer of its own, whose open file is
+kept apart from the others'. Where no file is open, the documents and the data list their files, to
+open one or comment on it as a whole; the code lists none, and says what the repository holds and
+how to get to a file. A focus left keeps its stack and its explorer and is read again when it is
+come back to; asked for the focus already on screen, the digit goes back to its first screen. `q` or
+`Esc` pops one screen; on a focus's first screen it goes to the tests, and on the tests it quits
+(or, started on a directory of checkouts, goes back to the repository list). `E` goes to the tests
+like `1`. Every test by its kind, `P`, is opened over the end-to-end tests, or brought back where it
+was there; in the log, `P` opens every test as the commit under the cursor left them, over the log.
+The review, `R`, is opened over the code. The agent panel, `A` or `Ctrl-a`, opens over whatever is
+on screen, and in it `C` clears the conversation and, while it asks for permission, a digit is an
+answer. The status line starts with where in the focus the screen is: its first screen and what was
+opened over it, the last two when there are more than three. Anything that opens a file — a test's
+source, the code a test ran, a comment in the review, a symbol — opens the explorer over the screen
+it was opened from, so `q` goes back there; where the focus already has the explorer, it is that
+one, and what was opened over it is closed. A list of places to go, once one is picked, is closed
+with it. `a` and `i`, which ask the agent something, open its panel over the screen they were
+pressed on, and `q` there comes back to it.
 
 `o`, open, from any screen but the agent's (or `gp`), opens the range picker over the screen,
 in two steps. First, what to review: the forge's
@@ -798,40 +842,38 @@ played beside the one now (one above the other when both do not fit across), and
 paired: both times, both marks, the step, and `only now`, `only before` or `screen changed`; `Enter`
 on a pair takes both recordings to it, and `Space`, `]`, `[` and `0` move both.
 
-The explorer has a side panel — the file tree (folding, filter, status letters, pending-comment
-counts for files and directories; past the tenth file of a directory the rest fold behind `… N
-more`, except the changed, the commented on and the one under the cursor, and nothing folds under a
-filter), or, after `O`, the outline of the open file — and the file viewer (syntax highlighting,
-line numbers, change markers against HEAD or the index, comment rows under the lines they refer to,
-comments on the whole file above its first line, optional blame column, search with smart case,
-visual line selection). A picture — PNG, JPEG, GIF, WebP, BMP or ICO — is drawn in the viewer,
-fitted to it, where the terminal speaks a graphics protocol (kitty, sixel or iTerm2); where it does
-not, the viewer says it is a picture and how big. The terminal is asked which protocol it speaks
-when the first picture is opened, not before, with a second to answer; one whose `TERM` is unset or
-`dumb` is not asked. An SVG is text and shows as its source. The outline is what the open file
-defines, parsed on its own so it does not wait for the symbol index, fields left out, each
-definition indented under the ones whose lines hold it; its cursor follows the file's while the file
-has the focus, `Enter` jumps to a definition as `Ctrl-o` can come back from, and `Space` shows it
-without leaving the outline. The side panel is the one part of the screen that hides: `\` hides
-it, the file taking its width, and shows it again, as does anything that gives it the focus —
-`Tab`, `q` from the file, `O`; with no file open it always shows. `,` opens the options panel —
-the diff layout and the colour scheme — where `Space` changes a setting, saves it at once, and the
-setting under the cursor is explained. `c` on the tree comments on the selected file or directory as
-a whole; `c` in the viewer comments on the line or the selection. Other screens: repository log and
-per-file history (commit list, details, files of the selected commit, paging in 200s), working tree
-and staged change lists, a diff view (auto, side by side or unified, hunk navigation, next and
-previous file of the same commit, comments on after-side lines), the review list (jump to, complete,
-edit, delete, re-anchor), the notes list, a locations list (definitions, occurrences, symbols; Enter
-jumps, and a jump stack brings the cursor back), and the agent panel (transcript with roles, tool
-calls and plans; a permission bar answered by number or `y`/`n`; the running turn cancelled with
-Esc; the transcript kept while other screens are shown). The viewer has a column cursor moved by
-character and word, drawn in reverse video, from which the identifier for navigation is taken. A
-single-line prompt at the bottom takes comment and note text, search queries, line numbers, the tree
-filter, symbol searches and agent prompts. The agent starts on another thread so the interface never
-waits for it. `ge`, open elsewhere, suspends the UI and runs `$VISUAL` or `$EDITOR` at the
-current line, in the file or on a diff's after side; on every screen `ge` is what opens outside
-the tool. The mouse
-wheel scrolls.
+The explorer is the file viewer, across the whole width (syntax highlighting, line numbers, change
+markers against HEAD or the index, comment rows under the lines they refer to, comments on the whole
+file above its first line, optional blame column, visual line selection). `q` closes the file, back
+to what the focus lists, or, when it was opened over another screen, goes back there. A picture —
+PNG, JPEG, GIF, WebP, BMP or ICO — is drawn in the viewer, fitted to it, where the terminal speaks a
+graphics protocol (kitty, sixel or iTerm2); where it does not, the viewer says it is a picture and
+how big. The terminal is asked which protocol it speaks when the first picture is opened, not
+before, with a second to answer; one whose `TERM` is unset or `dumb` is not asked. An SVG is text
+and shows as its source. In the viewer, `Enter` takes the obvious step from the name under the
+cursor (see Navigation) and `J` opens the menu of every group, over the screen: each group a heading
+with its count and a letter that moves to it, `Enter` going to the place under the cursor; `Ctrl-o`
+goes back along the trail and `Tab` forward. `gd` and `Ctrl-]` still go to a definition and `gr` and
+`*` still list the occurrences. `/` opens the search over the screen: what is typed at the top, the
+groups under it, `Tab` and `Shift-Tab` to the next and previous group, the arrows to move, `Enter`
+to go, `Esc` to close; in the file, `>` and `<` then step through the matches. Where `/` is a
+screen's own — a diff's, the tests' — `g/` opens the search. The tests' side panel, the overview and
+the list of tests, is the one part of the screen that hides: `\` hides it and shows it again. `,`
+opens the options panel — the diff layout and the colour scheme — where `Space` changes a setting,
+saves it at once, and the setting under the cursor is explained. `c` in the viewer comments on the
+line or the selection. Other screens: repository log and per-file history (commit list, details,
+files of the selected commit, paging in 200s), working tree and staged change lists, a diff view
+(auto, side by side or unified, hunk navigation, next and previous file of the same commit, comments
+on after-side lines), the review list (jump to, complete, edit, delete, re-anchor), the notes list,
+a locations list (definitions, occurrences; Enter jumps, as `Ctrl-o` comes back from), and the agent
+panel (transcript with roles, tool calls and plans; a permission bar answered by number or `y`/`n`;
+the running turn cancelled with Esc; the transcript kept while other screens are shown). The viewer
+has a column cursor moved by character and word, drawn in reverse video, from which the identifier
+for navigation is taken. A single-line prompt at the bottom takes comment and note text, a diff's
+search, line numbers and agent prompts. The agent starts on another thread so the interface never
+waits for it. `ge`, open elsewhere, suspends the UI and runs `$VISUAL` or `$EDITOR` at the current
+line, in the file or on a diff's after side; on every screen `ge` is what opens outside the tool.
+The mouse wheel scrolls.
 
 ## Browser UI
 

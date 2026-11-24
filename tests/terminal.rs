@@ -281,13 +281,11 @@ fn a_focus_left_keeps_its_place() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
     t.go_to_the_code();
-    t.step("open src/main.rs");
-    t.keys(DOWN);
-    t.keys(ENTER);
-    t.wait_for("src/main.rs 1/7");
+    t.step("search for src/main.rs and open it");
+    t.open_file("src/main.rs");
     t.step("go to the documents, then back to the code");
     t.keys("3");
-    t.wait_for("files 1");
+    t.wait_for(" documents 1 ");
     t.wait_until_gone("src/main.rs 1/7");
     t.keys("2");
     t.wait_for("src/main.rs 1/7");
@@ -303,7 +301,7 @@ fn r_opens_the_review_over_the_code() {
     t.wait_for(" review 0 pending, 0 completed");
     t.step("step back to the code under it");
     t.keys("q");
-    t.wait_for("files 5");
+    t.wait_for("/ searches for a file");
 }
 
 /// A branch in the scratch repository: `feature`, one commit past `main`, changing the README.
@@ -555,7 +553,7 @@ fn a_number_goes_to_a_focus_and_q_comes_back_to_the_tests() {
     t.on_the_tests();
     t.step("go to the code, the second focus");
     t.keys("2");
-    t.wait_for("files 5");
+    t.wait_for("/ searches for a file");
     t.step("step back out of the code");
     t.keys("q");
     t.wait_for("1 end-to-end test of 2 tests");
@@ -568,10 +566,10 @@ fn the_docs_focus_lists_only_the_documents() {
     t.on_the_tests();
     t.step("go to the documents, the third focus");
     t.keys("3");
-    t.wait_for("files 1");
+    t.wait_for(" documents 1 ");
     let screen = t.screen();
     t.check(
-        "the tree holds README.md and no code",
+        "the list holds README.md and no code",
         screen.contains("README.md") && !screen.contains("main.rs"),
         || screen.clone(),
     );
@@ -591,31 +589,97 @@ fn the_data_focus_lists_only_the_datasets() {
     t.wait_for("scores.csv");
     let screen = t.screen();
     t.check(
-        "the tree holds the CSV and not the JSON that configures a tool, nor the code",
+        "the list holds the CSV and not the JSON that configures a tool, nor the code",
         !screen.contains("package.json") && !screen.contains("main.rs"),
         || screen.clone(),
     );
     t.step("open the dataset");
-    t.keys(DOWN);
     t.keys(ENTER);
     t.wait_for("ana,3");
 }
 
 #[test]
-fn backslash_hides_the_side_panel_and_brings_it_back() {
+fn the_code_has_no_side_panel_and_backslash_hides_the_tests_list() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
     t.go_to_the_code();
-    t.step("open src/main.rs");
-    t.keys(DOWN);
-    t.keys(ENTER);
-    t.wait_for("src/main.rs 1/7");
-    t.step("hide the side panel");
+    t.step("search for src/main.rs and open it");
+    t.open_file("src/main.rs");
+    let screen = t.screen();
+    t.check(
+        "the file has the whole width, with no tree or outline beside it",
+        !screen.contains("files 5") && !screen.contains("outline") && !screen.contains("README.md"),
+        || screen.clone(),
+    );
+    t.step("go back to the tests, and hide their list");
+    t.keys("1");
+    t.wait_for("○ a review survives a restart");
     t.keys("\\");
-    t.wait_until_gone("files 5");
+    t.wait_until_gone("○ a review survives a restart");
     t.step("show it again");
     t.keys("\\");
-    t.wait_for("files 5");
+    t.wait_for("○ a review survives a restart");
+}
+
+#[test]
+fn enter_on_a_name_goes_to_its_definition_and_ctrl_o_comes_back() {
+    let mut t = term!();
+    t.documents("SPECS.md#Navigation");
+    t.go_to_the_code();
+    t.step("search for src/main.rs and open it");
+    t.open_file("src/main.rs");
+    t.step("search the file for parse_review, which puts the cursor on it");
+    t.keys("/");
+    t.keys("parse_rev");
+    t.wait_for("In this file 1");
+    t.keys(ENTER);
+    t.wait_for("src/main.rs 4/7");
+    t.step("Enter on the name: to where it is defined");
+    t.keys(ENTER);
+    t.wait_for("src/review.rs 1/");
+    t.step("the top row counts the jumps to come back from: the search, then Enter");
+    t.wait_for("↶2");
+    t.step("Ctrl-o: back to where the jump was made");
+    t.keys("\x0f");
+    t.wait_for("src/main.rs 4/7");
+}
+
+#[test]
+fn j_lists_where_to_go_next_from_a_definition() {
+    let mut t = term!();
+    t.documents("SPECS.md#Navigation");
+    t.go_to_the_code();
+    t.step("search for src/review.rs and open it, on parse_review's definition");
+    t.open_file("src/review.rs");
+    t.keys("w");
+    t.keys("w");
+    t.step("J: every place to go from it");
+    t.keys("J");
+    t.wait_for("from parse_review, defined here ·");
+    t.wait_for("Usages 2  (u)");
+    t.wait_for("src/main.rs:4");
+    t.wait_for("— in main");
+    t.wait_for("Tests 1  (t)");
+    t.wait_for("a review round trips");
+    t.step("t, then Enter: to the test that names it");
+    t.keys("t");
+    t.keys(ENTER);
+    t.wait_for("src/review.rs 8/");
+}
+
+#[test]
+fn slash_finds_a_test_by_its_words() {
+    let mut t = term!();
+    t.documents("SPECS.md#Navigation");
+    t.go_to_the_code();
+    t.step("search for a few words of a test");
+    t.keys("/");
+    t.keys("survives restart");
+    t.wait_for("Tests 1");
+    t.wait_for("a review survives a restart");
+    t.step("open it");
+    t.keys(ENTER);
+    t.wait_for("tests/e2e.rs 2/4");
 }
 
 #[test]
@@ -624,8 +688,9 @@ fn a_file_named_on_the_command_line_opens_in_the_code_with_the_tests_a_q_away() 
     t.documents("SPECS.md#Terminal UI");
     t.wait_for("src/main.rs 1/7");
     t.wait_for(" explore ");
-    t.step("step back out of the file and the tree");
+    t.step("close the file, then step back out of the code");
     t.keys("q");
+    t.wait_for("/ searches for a file");
     t.keys("q");
     t.wait_for("1 end-to-end test of 2 tests");
 }
@@ -635,10 +700,8 @@ fn a_pending_comment_is_counted_in_the_top_row() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
     t.go_to_the_code();
-    t.step("open src/main.rs and comment on its first line");
-    t.keys(DOWN);
-    t.keys(ENTER);
-    t.wait_for("src/main.rs 1/7");
+    t.step("search for src/main.rs, open it, and comment on its first line");
+    t.open_file("src/main.rs");
     t.keys("c");
     t.wait_for("comment on src/main.rs:1:");
     t.keys("why here?");
@@ -662,14 +725,13 @@ fn a_test_s_source_opens_over_the_tests_and_q_goes_back_to_them() {
     t.keys("s");
     t.wait_for("tests/e2e.rs 2/4");
     t.wait_for(" end to end › explore ");
-    t.step("step back out of the file and the tree");
-    t.keys("q");
+    t.step("step back out of the file, to the tests it was opened from");
     t.keys("q");
     t.wait_for("○ a review survives a restart");
     let screen = t.screen();
     t.check(
         "the tests are on screen again, not the code",
-        !screen.contains("files 5"),
+        !screen.contains("/ searches for a file"),
         || screen.clone(),
     );
 }
@@ -682,7 +744,7 @@ fn the_code_says_what_the_repository_holds_and_where_to_go() {
     t.wait_for("5 files, 0 pending comments, 0 notes");
     t.wait_for("L  repository log");
     t.wait_for("S  working tree changes");
-    t.wait_for("README.md");
+    t.wait_for("/ searches for a file, a definition, a test, a heading or any text");
 }
 
 #[test]
@@ -690,10 +752,8 @@ fn a_comment_left_on_a_line_is_written_to_review_md() {
     let mut t = term!();
     t.documents("SPECS.md#REVIEW.md");
     t.go_to_the_code();
-    t.step("open src/main.rs from the tree");
-    t.keys(DOWN);
-    t.keys(ENTER);
-    t.wait_for("src/main.rs 1/7");
+    t.step("search for src/main.rs and open it");
+    t.open_file("src/main.rs");
     t.step("move to line 2 and start a comment");
     t.keys("j");
     t.keys("c");
@@ -715,14 +775,12 @@ fn a_search_goes_to_the_line_that_matches() {
     let mut t = term!();
     t.documents("README.md#Terminal UI");
     t.go_to_the_code();
-    t.step("open src/main.rs from the tree");
-    t.keys(DOWN);
-    t.keys(ENTER);
-    t.wait_for("src/main.rs 1/7");
-    t.step("search for “write”");
+    t.step("search for src/main.rs and open it");
+    t.open_file("src/main.rs");
+    t.step("search for “write”, found first in the file open");
     t.keys("/");
-    t.wait_for("search:");
     t.keys("write");
+    t.wait_for("In this file 1");
     t.keys(ENTER);
     t.wait_for("src/main.rs 5/7");
     t.wait_for("/write (1)");

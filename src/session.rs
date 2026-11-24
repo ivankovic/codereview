@@ -368,14 +368,6 @@ impl Session {
         self.config.layout = layout.to_string();
     }
 
-    /// What `path` defines, read from the working tree and parsed on its own: the outline of
-    /// one file needs nothing from the others, so it does not wait for the whole index.
-    pub fn outline(&self, path: &str) -> Result<Vec<crate::symbols::Symbol>> {
-        let bytes = self.repo.read_working(path)?.unwrap_or_default();
-        let text = String::from_utf8_lossy(&bytes);
-        Ok(crate::symbols::symbols_of(path, &text))
-    }
-
     /// The repository's directory name, to tell repositories apart.
     pub fn name(&self) -> String {
         self.root()

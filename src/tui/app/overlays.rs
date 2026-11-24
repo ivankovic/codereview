@@ -234,20 +234,11 @@ impl App {
                     }
                 }
             }
-            PromptKind::Filter { .. } => {
-                self.tree.filter = text;
-                self.tree.rebuild();
-            }
             PromptKind::Agent { context } => {
                 if text.trim().is_empty() {
                     return;
                 }
                 self.ask_agent(text, context);
-            }
-            PromptKind::SymbolSearch => {
-                if !text.trim().is_empty() {
-                    self.symbol_search(text.trim());
-                }
             }
             PromptKind::SpecSearch { .. } => self.search_spec(text),
         }
@@ -259,12 +250,8 @@ impl App {
         };
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                // A filter applies as it is typed, so cancelling has to undo it.
-                if let PromptKind::Filter { was } = &p.kind {
-                    self.tree.filter = was.clone();
-                    self.prompt = None;
-                    self.tree.rebuild();
-                } else if let PromptKind::SpecSearch { was } = &p.kind {
+                // A search that applies as it is typed has to be undone on cancelling.
+                if let PromptKind::SpecSearch { was } = &p.kind {
                     let was = was.clone();
                     self.prompt = None;
                     self.search_spec(was);
@@ -285,10 +272,7 @@ impl App {
             (KeyCode::Right, _) => p.right(),
             (KeyCode::Backspace, _) => {
                 p.backspace();
-                if matches!(p.kind, PromptKind::Filter { .. }) {
-                    self.tree.filter = p.text.clone();
-                    self.tree.rebuild();
-                } else if matches!(p.kind, PromptKind::SpecSearch { .. }) {
+                if matches!(p.kind, PromptKind::SpecSearch { .. }) {
                     let text = p.text.clone();
                     self.search_spec(text);
                 }
@@ -296,10 +280,7 @@ impl App {
             (KeyCode::Delete, _) => p.delete(),
             (KeyCode::Char(c), m) if !m.contains(KeyModifiers::CONTROL) => {
                 p.insert(c);
-                if matches!(p.kind, PromptKind::Filter { .. }) {
-                    self.tree.filter = p.text.clone();
-                    self.tree.rebuild();
-                } else if matches!(p.kind, PromptKind::SpecSearch { .. }) {
+                if matches!(p.kind, PromptKind::SpecSearch { .. }) {
                     let text = p.text.clone();
                     self.search_spec(text);
                 }

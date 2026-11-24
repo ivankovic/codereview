@@ -37,9 +37,10 @@ line they were left on and finding it again after edits.
   any file in any commit, from the [omnidiff](https://github.com/ivankovic/omnidiff) engine:
   insertions, deletions, updates and moves, not just lines that happen to align.
 - **Diff** the working tree or the index against HEAD, or any commit against the working tree.
-- **Navigate by symbol**: jump to where the name under the cursor is defined, list every place
-  it occurs, list a file's definitions, search definitions by name. Tree-sitter, no language
-  server, every file in the repository, as fast as the tree changes.
+- **Go where the code leads** rather than walk a file tree: from the name under the cursor to its
+  definition, its usages, the tests that ran the line and the documents that mention it; or
+  search one box for a file, a definition, a test, a heading or any text, fuzzily, with what the
+  range changed first. Tree-sitter, no language server, every file in the repository.
 - **Run the checks** the project already has — tests, coverage, a linter, `make check` — from
   the page, found in the repository when nothing is configured, and see what they said: the
   exit code and the tail of the output from the run, the test count from it or from the
@@ -109,15 +110,21 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 It opens on the end-to-end tests. The top row is a breadcrumb on the left — the repository's
 address, the branch, the review range, the commit — and on the right the focus: **Tests**,
 **Code**, **Docs** (the Markdown documents) or **Data** (CSV, JSON and other datasets). Each keeps
-its own stack of screens and its own file tree; `q` steps back, from a focus's first screen to the
-tests, and from the tests out. `?` shows every key. The essentials:
+its own stack of screens and its own open file; `q` steps back, from a focus's first screen to the
+tests, and from the tests out. There is no file tree: `/` searches for somewhere new, and from a
+file, `Enter` and `J` go where the name under the cursor leads. `?` shows every key. The
+essentials:
 
 | Key | What |
 | --- | --- |
 | `1` or `E` | Tests: the overview, then each test, the selected one beside them; `Enter` goes in |
 | `Space` `s` | play the selected test's recording; open its source |
-| `2` `3` `4` | Code, Docs, Data: the file tree, or outline, and the file |
-| `\` | hide or show the side panel |
+| `2` `3` `4` | Code, Docs, Data: the open file; Docs and Data list their files to open |
+| `/` | search: the open file, definitions, paths, tests, headings, comments, then all text |
+| `Enter` | on a name: to its definition, or from a definition to its usages; on a comment, edit it |
+| `J` | where next: the definition, usages, the tests that ran the line or name it, the docs |
+| `Ctrl-o` `Tab` | back and forward along the trail of jumps |
+| `\` | hide or show the tests' side panel |
 | `P` | every test, by kind: `c` the next question, `K` a test's answers |
 | `R` | the review, over the code: every comment in REVIEW.md |
 | `A` or `Ctrl-a` | the agent panel, over the screen (`A` in the review: address every comment) |
@@ -125,11 +132,8 @@ tests, and from the tests out. `?` shows every key. The essentials:
 | `o` | open: a pull request, a worktree, a branch or a tag, then its base; `/` filters |
 | `q` `Esc` | back; on a focus's first screen, the tests; on the tests, quit |
 | `U` | the tests that name the open file |
-| `Tab` | switch between the side panel and the file |
-| `O` | side panel: the file tree, or the outline of the file (`Enter` goes to a definition) |
 | `,` | options: diff layout, colour scheme |
-| `Enter` | open the file; on a comment row, edit it; on `… N more`, the rest of the directory |
-| `c` | comment on the line, or on the `V` selection; in the tree, on the whole file or directory |
+| `c` | comment on the line, or on the `V` selection; in a list of documents, on a whole one |
 | `x` `e` `d` `u` | complete, edit, delete a comment, undo the delete |
 | `n` `N` | note on the file, general note |
 | `H` | history of the file |
@@ -140,13 +144,11 @@ tests, and from the tests out. `?` shows every key. The essentials:
 | `h` `l` `w` `b` `0` `$` | move the column cursor |
 | `gd` or `Ctrl-]` | go to the definition of the name under the cursor |
 | `gr` or `*` | every occurrence of the name under the cursor |
-| `gs` or `@`, `gS` or `#` | symbols in this file; search symbols by name |
-| `Ctrl-o` | back to where you were before a jump |
 | `a` | ask the agent about the line, the selection, or the comment under the cursor |
 | `i` | ask the agent something, from anywhere |
 | `gt` `gT` `W` | next / previous repository, the repository picker (when several are open) |
 | `l` | in the agent panel: show or hide the backend's log lines |
-| `/` `> <` | search, next and previous match |
+| `> <` `g/` | next and previous match in the file; the search where `/` is a screen's own |
 | `ge` | open elsewhere: the line in `$EDITOR`, a video in its player, a pull request on the forge |
 
 In a diff: `n`/`p` step through hunks, `]`/`[` through the files of the same commit, `v` cycles

@@ -15,7 +15,9 @@ use crate::session::{DiffTarget, Session};
 use crate::spec::{Stretch, TestChange, What};
 use crate::theme::Theme;
 mod end_to_end;
+mod find;
 mod focus;
+mod jump;
 mod loading;
 mod omni;
 mod one_test;
@@ -25,9 +27,7 @@ mod screens;
 
 use crate::tui::agent_panel;
 use crate::tui::diff_view::{DiffLayout, DiffView};
-use crate::tui::outline::Outline;
 use crate::tui::prompt::{Prompt, PromptKind};
-use crate::tui::tree::Tree;
 use crate::tui::viewer::Viewer;
 
 /// Commits fetched per page of a log.
@@ -117,7 +117,9 @@ impl<T> ListState<T> {
 }
 
 pub use end_to_end::{E2eRow, EndToEndState, Player};
+pub use find::{FindRow, Finder};
 pub use focus::{Explorer, Focus};
+pub use jump::{JumpMenu, JumpRow};
 pub use loading::Loading;
 pub use omni::{OmniState, Shown};
 pub use one_test::{EndToEndTestState, TestRow};
@@ -178,15 +180,6 @@ pub struct Picture {
     pub shown: std::result::Result<ratatui_image::protocol::StatefulProtocol, String>,
 }
 
-/// What the explorer's left pane shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Sidebar {
-    /// The file tree.
-    Files,
-    /// What the open file defines.
-    Outline,
-}
-
 /// A row of the options panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
@@ -233,7 +226,6 @@ pub struct Crumbs {
 /// What the draw pass measured last time, so key handling can page by the right amount.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Measured {
-    pub tree_height: usize,
     pub main_height: usize,
     pub main_width: usize,
     pub list_height: usize,
@@ -255,16 +247,10 @@ pub enum WorkspaceRequest {
 
 pub struct App {
     pub session: Session,
-    pub tree: Tree,
+    /// The files the focus lists where none is open: the documents, or the datasets. The
+    /// tests and the code list none; `/` finds a file, and `J` the next one.
+    pub files: ListState<String>,
     pub viewer: Option<Viewer>,
-    /// Whether the explorer's left pane, the tree or the outline, has the focus rather
-    /// than the file.
-    pub focus_tree: bool,
-    /// Which of the two the left pane shows.
-    pub sidebar: Sidebar,
-    /// The outline of the open file, made when it is first shown and dropped when another
-    /// file opens.
-    pub outline: Option<Outline>,
     /// The options panel, open, with the highlighted row.
     pub options: Option<usize>,
     /// How this terminal draws pictures, when it can: kitty, sixel or iTerm2. `None` in one
@@ -328,6 +314,12 @@ pub struct App {
     last_deleted: Option<Comment>,
     /// Positions left by a symbol jump, for `Ctrl-o`: (path, 0-based line, column).
     jumps: Vec<(String, usize, usize)>,
+    /// Positions `Ctrl-o` came back from, for `Tab` to go forward to again.
+    forward: Vec<(String, usize, usize)>,
+    /// The jump menu, `J`, while it is up.
+    pub jump_menu: Option<JumpMenu>,
+    /// The search, `/`, while it is up.
+    pub finder: Option<Finder>,
     /// A `g` was pressed and the next key completes the chord.
     pending_g: bool,
     /// The agent panel: the conversation, and the agent having it.
@@ -336,16 +328,12 @@ pub struct App {
 
 impl App {
     pub fn new(session: Session, open: Option<String>) -> Self {
-        let tree = Tree::new(&session.files);
         let theme = session.theme.clone();
         let layout = DiffLayout::from_name(&session.config.layout);
         let mut app = Self {
             session,
-            tree,
+            files: ListState::new(Vec::new()),
             viewer: None,
-            focus_tree: true,
-            sidebar: Sidebar::Files,
-            outline: None,
             options: None,
             graphics: None,
             graphics_known: false,
@@ -380,6 +368,9 @@ impl App {
             edit_target: None,
             last_deleted: None,
             jumps: Vec::new(),
+            forward: Vec::new(),
+            jump_menu: None,
+            finder: None,
             pending_g: false,
             agent: agent_panel::Panel::new(),
         };
@@ -391,9 +382,7 @@ impl App {
             Some(path) => {
                 app.focus = Focus::Code;
                 app.screens.push(Screen::Explorer);
-                app.tree.select(&path);
                 app.open_file(&path);
-                app.focus_tree = false;
             }
             None => app.push_end_to_end(),
         }
@@ -460,7 +449,6 @@ impl App {
     // ----- explorer --------------------------------------------------------------------------
 
     pub fn open_file(&mut self, path: &str) {
-        self.outline = None;
         self.picture = None;
         let view = match self.session.file_view(path) {
             Ok(v) => v,
@@ -548,12 +536,22 @@ impl App {
         self.jump_to_col(path, line, 0);
     }
 
-    /// Shows a whole path: the file at its first line, or a directory in the tree.
+    /// Shows a whole path: the file at its first line, or, for a directory, the search for
+    /// the files in it.
     pub fn jump_to_path(&mut self, path: &str) {
-        if self.tree.node(path).is_some_and(|n| n.is_dir) {
-            self.show_explorer();
-            self.tree.select(path);
-            self.focus_tree = true;
+        let dir = format!("{}/", path.trim_end_matches('/'));
+        if !self.session.files.iter().any(|f| f == path)
+            && self.session.files.iter().any(|f| f.starts_with(&dir))
+        {
+            self.open_finder();
+            if let Some(f) = &mut self.finder {
+                f.input = crate::tui::prompt::Prompt::new(
+                    PromptKind::Search,
+                    "search",
+                    &format!("f:{dir}"),
+                );
+            }
+            self.refind();
             return;
         }
         self.jump_to(path, 1);
@@ -562,11 +560,9 @@ impl App {
     /// Like `jump_to`, landing on byte `column` of the line.
     pub fn jump_to_col(&mut self, path: &str, line: usize, column: usize) {
         self.show_explorer();
-        self.tree.select(path);
         if self.viewer.as_ref().is_none_or(|v| v.path != path) {
             self.open_file(path);
         }
-        self.focus_tree = false;
         if let Some(v) = &mut self.viewer {
             v.go_to_line(line.saturating_sub(1));
             v.col = column;
@@ -588,7 +584,15 @@ impl App {
 
     fn jump_back(&mut self) {
         match self.jumps.pop() {
-            Some((path, line, col)) => self.jump_to_col(&path, line + 1, col),
+            Some((path, line, col)) => {
+                // Where it comes back from, for `Tab` to go forward to again.
+                if let Some(v) = &self.viewer
+                    && let Some(here) = v.current_line()
+                {
+                    self.forward.push((v.path.clone(), here, v.column()));
+                }
+                self.jump_to_col(&path, line + 1, col)
+            }
             None => self.info("no earlier position"),
         }
     }
@@ -665,33 +669,6 @@ impl App {
             format!("{n} occurrences of {name}")
         };
         self.push_locations(title, items);
-    }
-
-    fn file_symbols(&mut self) {
-        let Some(path) = self.viewer.as_ref().map(|v| v.path.clone()) else {
-            self.info("open a file first");
-            return;
-        };
-        self.index_note();
-        let symbols = self.session.symbols_in(&path);
-        if symbols.is_empty() {
-            self.info(format!("no symbols found in {path}"));
-            return;
-        }
-        let items = symbols.into_iter().map(hit_from_symbol).collect();
-        self.push_locations(format!("symbols in {path}"), items);
-    }
-
-    fn symbol_search(&mut self, query: &str) {
-        self.index_note();
-        let found = self.session.search_symbols(query);
-        if found.is_empty() {
-            self.info(format!("no symbol matches {query:?}"));
-            return;
-        }
-        let n = found.len();
-        let items = found.into_iter().map(hit_from_symbol).collect();
-        self.push_locations(format!("{n} symbols matching {query:?}"), items);
     }
 
     fn ask_about_context(&mut self) {
@@ -818,6 +795,7 @@ impl App {
             changed = true;
         }
         changed |= self.advance_playback();
+        changed |= self.tick_finder();
         changed |= self.take_answers();
         changed |= self.watch_base_run();
         if active && self.kept_at.elapsed() >= std::time::Duration::from_secs(5) {
@@ -840,11 +818,10 @@ impl App {
     // ----- comments and notes ----------------------------------------------------------------
 
     fn start_comment(&mut self) {
-        // The tree comments on whatever it has selected, file or directory, as a whole. Its
-        // focus outlives the explorer, so only the explorer itself asks it.
-        if self.focus_tree && matches!(self.screen(), Screen::Explorer) {
-            if let Some(n) = self.tree.current().cloned() {
-                self.start_path_comment(&n.path);
+        // A list of files comments on the one it has selected, as a whole.
+        if self.viewer.is_none() && matches!(self.screen(), Screen::Explorer) {
+            if let Some(path) = self.files.current().cloned() {
+                self.start_path_comment(&path);
             }
             return;
         }
@@ -1078,6 +1055,14 @@ impl App {
             self.handle_range_picker_key(key);
             return true;
         }
+        if self.jump_menu.is_some() {
+            self.handle_jump_menu_key(key);
+            return true;
+        }
+        if self.finder.is_some() {
+            self.handle_finder_key(key);
+            return true;
+        }
         if self.options.is_some() {
             self.handle_options_key(key);
             return true;
@@ -1120,10 +1105,8 @@ impl App {
                     self.handle_screen_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE))
                 }
                 KeyCode::Char('r') => self.find_references(),
-                KeyCode::Char('s') => self.file_symbols(),
-                KeyCode::Char('S') => {
-                    self.prompt = Some(Prompt::new(PromptKind::SymbolSearch, "symbol", ""));
-                }
+                // The search, from any screen, where `/` is a screen's own.
+                KeyCode::Char('/') => self.open_finder(),
                 KeyCode::Char('t') => self.workspace_request = Some(WorkspaceRequest::NextRepo),
                 KeyCode::Char('T') => self.workspace_request = Some(WorkspaceRequest::PrevRepo),
                 _ => {}
@@ -1195,9 +1178,6 @@ impl App {
             // The side panel, hidden or shown, wherever there is one.
             KeyCode::Char('\\') => {
                 self.sidebar_hidden = !self.sidebar_hidden;
-                if self.sidebar_hidden && self.viewer.is_some() {
-                    self.focus_tree = false;
-                }
                 return true;
             }
             KeyCode::Char('i') if !matches!(self.screen(), Screen::Agent) => {
@@ -1324,8 +1304,10 @@ impl App {
     }
 
     fn handle_explorer_key(&mut self, key: KeyEvent) {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let half = (self.measured.main_height / 2).max(1) as isize;
+        if self.viewer.is_none() {
+            return self.handle_files_key(key);
+        }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
                 if self.viewer.as_ref().is_some_and(|v| v.visual.is_some()) {
@@ -1338,159 +1320,46 @@ impl App {
                     if let Some(v) = &mut self.viewer {
                         v.search = None;
                     }
-                } else if !self.focus_tree {
-                    self.focus_tree = true;
-                    self.sidebar_hidden = false;
-                } else if self.sidebar == Sidebar::Files && !self.tree.filter.is_empty() {
-                    self.tree.filter.clear();
-                    self.tree.rebuild();
-                } else {
+                } else if self.screens.len() > 1 {
+                    // Opened over another screen: back to it.
                     self.pop_screen();
+                } else {
+                    // The focus's own: closed, back to what the focus lists.
+                    self.viewer = None;
+                    self.picture = None;
                 }
             }
-            KeyCode::Tab => {
-                if self.viewer.is_some() {
-                    self.focus_tree = !self.focus_tree;
-                    self.sidebar_hidden &= !self.focus_tree;
-                }
-            }
-            KeyCode::Char('f') if ctrl => {
-                let was = self.tree.filter.clone();
-                self.prompt = Some(Prompt::new(
-                    PromptKind::Filter { was: was.clone() },
-                    "filter",
-                    &was,
-                ));
-            }
-            // The other side panel, with the focus, shown if it was hidden.
-            KeyCode::Char('O') => {
-                self.sidebar = match self.sidebar {
-                    Sidebar::Files => Sidebar::Outline,
-                    Sidebar::Outline => Sidebar::Files,
-                };
-                self.focus_tree = true;
-                self.sidebar_hidden = false;
-            }
-            _ if self.focus_tree && self.sidebar == Sidebar::Outline => {
-                self.handle_outline_key(key)
-            }
-            _ if self.focus_tree => self.handle_tree_key(key),
+            // Forward along the trail, to where `Ctrl-o` came back from.
+            KeyCode::Tab => self.jump_forward(),
             _ => self.handle_viewer_key(key, half),
         }
     }
 
-    fn handle_tree_key(&mut self, key: KeyEvent) {
-        let height = self.measured.tree_height.max(1) as isize;
+    /// Where no file is open: the documents or the datasets, listed to open one; the code
+    /// lists none, and says what to press.
+    fn handle_files_key(&mut self, key: KeyEvent) {
+        let height = self.measured.main_height.max(1) as isize;
+        if self.files.handle_nav(key, height) {
+            return;
+        }
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => self.tree.move_by(1),
-            KeyCode::Char('k') | KeyCode::Up => self.tree.move_by(-1),
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.tree.move_by(height / 2)
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.tree.move_by(-height / 2)
-            }
-            KeyCode::PageDown => self.tree.move_by(height),
-            KeyCode::PageUp => self.tree.move_by(-height),
-            KeyCode::Char('g') | KeyCode::Home => self.tree.go_top(),
-            KeyCode::Char('G') | KeyCode::End => self.tree.go_bottom(),
-            KeyCode::Char('h') | KeyCode::Left => self.tree.collapse(),
-            KeyCode::Char('l') | KeyCode::Right => {
-                if self.tree.current().is_some_and(|n| n.is_dir) {
-                    self.tree.expand();
-                } else if self.viewer.is_some() {
-                    self.focus_tree = false;
-                }
-            }
-            KeyCode::Char('z') => self.tree.collapse_all(),
-            KeyCode::Char('Z') => self.tree.expand_all(),
-            KeyCode::Char('/') => {
-                let was = self.tree.filter.clone();
-                self.prompt = Some(Prompt::new(
-                    PromptKind::Filter { was: was.clone() },
-                    "filter",
-                    &was,
-                ));
-            }
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                if let Some(path) = self.tree.activate() {
+            KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
+            KeyCode::Char('/') => self.open_finder(),
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                if let Some(path) = self.files.current().cloned() {
+                    self.push_jump();
                     self.open_file(&path);
-                    if key.code == KeyCode::Enter {
-                        self.focus_tree = false;
-                    }
-                }
-            }
-            KeyCode::Char('H') => {
-                if let Some(n) = self.tree.current().filter(|n| !n.is_dir).cloned() {
-                    self.push_log(Some(n.path));
                 }
             }
             KeyCode::Char('D') => self.diff_current_file(),
             KeyCode::Char('c') => self.start_comment(),
-            KeyCode::Char('n') => {
-                if let Some(n) = self.tree.current().filter(|n| !n.is_dir).cloned() {
-                    self.prompt = Some(Prompt::new(
-                        PromptKind::Note {
-                            path: Some(n.path.clone()),
-                        },
-                        format!("note on {}", n.path),
-                        "",
-                    ));
-                }
-            }
-            KeyCode::Char('o') => {
-                if let Some(n) = self.tree.current().filter(|n| !n.is_dir).cloned() {
-                    self.editor_request = Some((self.session.root().join(&n.path), 1));
+            KeyCode::Char('H') => {
+                if let Some(path) = self.files.current().cloned() {
+                    self.push_log(Some(path));
                 }
             }
             _ => {}
         }
-    }
-
-    fn handle_outline_key(&mut self, key: KeyEvent) {
-        let height = self.measured.tree_height.max(1) as isize;
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if matches!(
-            key.code,
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right
-        ) {
-            self.go_to_symbol(true);
-            return;
-        }
-        if key.code == KeyCode::Char(' ') {
-            self.go_to_symbol(false);
-            return;
-        }
-        let Some(outline) = &mut self.outline else {
-            return;
-        };
-        match key.code {
-            KeyCode::Char('j') | KeyCode::Down => outline.move_by(1),
-            KeyCode::Char('k') | KeyCode::Up => outline.move_by(-1),
-            KeyCode::Char('d') if ctrl => outline.move_by(height / 2),
-            KeyCode::Char('u') if ctrl => outline.move_by(-height / 2),
-            KeyCode::PageDown => outline.move_by(height),
-            KeyCode::PageUp => outline.move_by(-height),
-            KeyCode::Home => outline.go_top(),
-            KeyCode::Char('G') | KeyCode::End => outline.go_bottom(),
-            _ => {}
-        }
-    }
-
-    /// Takes the file to the definition under the outline's cursor: with the focus, as a jump
-    /// `Ctrl-o` comes back from, or, for a look, leaving the focus in the outline.
-    fn go_to_symbol(&mut self, focus_file: bool) {
-        let Some((path, line, column)) = self.outline.as_ref().and_then(|o| {
-            o.current()
-                .map(|i| (o.path.clone(), i.symbol.line, i.symbol.column))
-        }) else {
-            return;
-        };
-        if focus_file {
-            self.push_jump();
-        }
-        self.jump_to_col(&path, line, column);
-        self.focus_tree = !focus_file;
     }
 
     /// Whether the open file is a picture this terminal has not yet been asked about drawing:
@@ -1540,35 +1409,10 @@ impl App {
         self.picture = Some(Picture { path, shown });
     }
 
-    /// Makes the outline of the open file if it is not made yet, and, unless it has the
-    /// focus, moves its cursor to where the file's is. Called by the draw pass, so the
-    /// outline is only ever made for a file someone is looking at it for.
-    pub fn ensure_outline(&mut self) {
-        let Some(v) = &self.viewer else {
-            self.outline = None;
-            return;
-        };
-        if self.outline.as_ref().is_none_or(|o| o.path != v.path) {
-            let path = v.path.clone();
-            let symbols = self.session.outline(&path).unwrap_or_default();
-            self.outline = Some(Outline::new(&path, symbols));
-        }
-        let following = !(self.focus_tree && self.sidebar == Sidebar::Outline);
-        if let (Some(o), Some(line)) = (&mut self.outline, v.current_line())
-            && following
-        {
-            o.follow(line);
-        }
-    }
-
     fn diff_current_file(&mut self) {
-        let path = if self.focus_tree {
-            self.tree
-                .current()
-                .filter(|n| !n.is_dir)
-                .map(|n| n.path.clone())
-        } else {
-            self.viewer.as_ref().map(|v| v.path.clone())
+        let path = match &self.viewer {
+            Some(v) => Some(v.path.clone()),
+            None => self.files.current().cloned(),
         };
         let Some(path) = path else {
             return;
@@ -1621,10 +1465,6 @@ impl App {
             // Ctrl-] reaches a terminal program as 0x1D, which crossterm reports as Ctrl-5.
             KeyCode::Char(']') | KeyCode::Char('5') if ctrl => self.goto_definition(),
             KeyCode::Char('*') => self.find_references(),
-            KeyCode::Char('@') => self.file_symbols(),
-            KeyCode::Char('#') => {
-                self.prompt = Some(Prompt::new(PromptKind::SymbolSearch, "symbol", ""));
-            }
             KeyCode::Char('a') => self.ask_about_context(),
             KeyCode::Char('V') | KeyCode::Char('v') => {
                 v.visual = match v.visual {
@@ -1638,6 +1478,9 @@ impl App {
             {
                 self.edit_comment()
             }
+            // From what the cursor is on: the obvious next place, or every one.
+            KeyCode::Enter => self.default_jump(),
+            KeyCode::Char('J') => self.open_jump_menu(),
             KeyCode::Char('x') => self.toggle_comment(),
             KeyCode::Char('d') => self.delete_comment(),
             KeyCode::Char('u') => self.undo_delete(),
@@ -1647,9 +1490,7 @@ impl App {
             KeyCode::Char('[') => v.next_comment(false),
             KeyCode::Char('}') => v.next_change(true),
             KeyCode::Char('{') => v.next_change(false),
-            KeyCode::Char('/') => {
-                self.prompt = Some(Prompt::new(PromptKind::Search, "search", ""));
-            }
+            KeyCode::Char('/') => self.open_finder(),
             KeyCode::Char('>') => v.next_match(true),
             KeyCode::Char('<') => v.next_match(false),
             KeyCode::Char(':') => {
@@ -1688,8 +1529,8 @@ impl App {
         let height = self.measured.main_height.max(1);
         match self.screens.last_mut().expect("screen") {
             Screen::Explorer => {
-                if self.focus_tree {
-                    self.tree.move_by(delta);
+                if self.viewer.is_none() {
+                    self.files.move_by(delta);
                 } else if let Some(v) = &mut self.viewer {
                     v.scroll_by(delta, height);
                 }

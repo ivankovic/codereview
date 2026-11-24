@@ -374,6 +374,45 @@ impl Repo {
             .collect())
     }
 
+    /// The lines of the working tree's files, tracked or not but never ignored, that hold
+    /// `pattern`: as fixed text, or as an extended regular expression when `regex`; ignoring
+    /// case when `ignore_case`. At most `most` of them, as (path, 1-based line, text). Binary
+    /// files are skipped, and a pattern that matches nothing gives nothing rather than an error.
+    pub fn grep(
+        &self,
+        pattern: &str,
+        regex: bool,
+        ignore_case: bool,
+        most: usize,
+    ) -> Result<Vec<(String, usize, String)>> {
+        let mut command = git_command(&self.root);
+        command.args(["grep", "-n", "-z", "-I", "--untracked", "--no-color"]);
+        command.arg(if regex { "-E" } else { "-F" });
+        if ignore_case {
+            command.arg("-i");
+        }
+        let output = command
+            .args(["-e", pattern])
+            .output()
+            .context("cannot run git grep")?;
+        // Exit status 1 is "nothing matched"; anything above it is a pattern git refused.
+        match output.status.code() {
+            Some(0) => {}
+            Some(1) => return Ok(Vec::new()),
+            _ => bail!("git grep: {}", said(&output.stderr)),
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|l| {
+                let mut parts = l.splitn(3, '\0');
+                let path = parts.next()?.to_string();
+                let line = parts.next()?.parse().ok()?;
+                Some((path, line, parts.next()?.to_string()))
+            })
+            .take(most)
+            .collect())
+    }
+
     /// Working tree and index status, keyed by path.
     pub fn status(&self) -> Result<BTreeMap<String, StatusEntry>> {
         let out = self.git(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;

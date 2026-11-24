@@ -17,11 +17,13 @@ use crate::tui::workspace::Workspace;
 
 mod end_to_end;
 mod explorer;
+mod jump;
 mod range;
 mod screens;
 
 use end_to_end::draw_end_to_end;
 use explorer::draw_explorer;
+use jump::{draw_finder, draw_jump_menu};
 use range::{draw_omni, draw_range, draw_range_picker};
 use screens::{
     draw_changes, draw_diff, draw_locations, draw_log, draw_notes, draw_review, draw_spec,
@@ -188,6 +190,12 @@ pub fn draw_app(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.options.is_some() {
         draw_options(frame, app, area);
     }
+    if app.jump_menu.is_some() {
+        draw_jump_menu(frame, app, area);
+    }
+    if app.finder.is_some() {
+        draw_finder(frame, app, area);
+    }
     if app.range_picker.is_some() {
         draw_range_picker(frame, app, area);
     }
@@ -281,6 +289,13 @@ fn draw_top(frame: &mut Frame, app: &App, area: Rect) {
     if let Some(path) = file {
         left.push(sep());
         left.push(path.bold());
+    }
+    // How far back the trail goes, which `Ctrl-o` walks.
+    if app.trail_depth() > 0 {
+        left.push(Span::styled(
+            format!(" ↶{}", app.trail_depth()),
+            style::dim(theme),
+        ));
     }
     let mut right: Vec<Span> = Vec::new();
     let pending = app.session.review.pending_count();
@@ -534,7 +549,7 @@ fn draw_status(frame: &mut Frame, app: &mut App, area: Rect) {
 fn hint_for(screen: &Screen) -> &'static str {
     match screen {
         Screen::Explorer => {
-            "c comment  gd def  gr uses  @ symbols  O outline  a/i ask agent  A agent panel  H history  D diff  / search  , options"
+            "Enter go to it  J where next  / search  Ctrl-o back  c comment  a/i ask agent  H history  D diff  , options"
         }
         Screen::Log(_) => "Enter files/diff  Tab switch  w vs working tree  H file history  q back",
         Screen::Changes(_) => {
@@ -574,17 +589,30 @@ const HELP: &[(&str, &str)] = &[
         "1  E",
         "Tests: the end-to-end tests, each with the recording of its last run; what a repository opens on",
     ),
-    ("2", "Code: the file tree and the open file"),
-    ("3", "Docs: the repository's Markdown documents"),
-    ("4", "Data: its datasets, CSV, JSON and the like"),
+    (
+        "2",
+        "Code: the open file, reached by / and J; a range's changed files",
+    ),
+    (
+        "3",
+        "Docs: the repository's Markdown documents, listed to open",
+    ),
+    (
+        "4",
+        "Data: its datasets, CSV, JSON and the like, listed to open",
+    ),
     (
         "q / Esc",
         "back; on a focus's first screen, to the tests; on the tests, quit",
     ),
-    ("\\", "hide or show the side panel"),
+    ("\\", "hide or show the tests' side panel"),
     ("", ""),
     ("Everywhere", ""),
     ("?", "this help"),
+    (
+        "/  g/",
+        "search: the open file, definitions, paths, tests, headings, comments, then every file's text; f: s: t: d: c: narrow, \"…\" is exact, /…/ a regex; g/ where / is a screen's own",
+    ),
     (
         "o",
         "open: a pull request, a worktree, a branch or a tag to review, then what to compare it with; or a stretch",
@@ -668,21 +696,24 @@ const HELP: &[(&str, &str)] = &[
     ("q", "back to the list"),
     ("", ""),
     ("Explorer", ""),
-    ("Tab", "switch between the side panel and the file"),
-    ("O", "side panel: the file tree, or the outline of the file"),
     (
-        "Enter  Space",
-        "in the outline: go to the definition; Space stays in the outline",
+        "Enter",
+        "on a use, to its definition; on a definition, its usages to pick from; on a comment row, edit it",
     ),
-    ("j/k h/l", "move; in the tree h/l fold and unfold"),
-    ("Enter", "open the file; on a comment row, edit it"),
-    ("/", "filter the tree; search the file"),
-    ("> <", "next / previous search match"),
+    (
+        "J",
+        "where next from here: the definition (d), the usages (u), the tests that ran the line or name it (t), the documents (o)",
+    ),
+    (
+        "Ctrl-o  Tab",
+        "back / forward along the trail of jumps, ↶ in the top row",
+    ),
+    ("j/k", "move"),
+    ("> <", "next / previous match of what / found in the file"),
     (":", "go to line"),
-    ("z / Z", "fold / unfold every directory"),
     (
         "c",
-        "comment on the line (or the V selection); in the tree, on the whole file or directory",
+        "comment on the line (or the V selection); in a list of documents, on the whole one",
     ),
     ("V", "start / end a line selection"),
     ("x", "mark the comment done / pending"),
@@ -707,9 +738,6 @@ const HELP: &[(&str, &str)] = &[
         "gr  *",
         "every occurrence of the identifier under the cursor",
     ),
-    ("gs  @", "symbols defined in this file"),
-    ("gS  #", "search symbols across the repository"),
-    ("Ctrl-o", "back to where you were before a jump"),
     (
         "a",
         "ask the agent about the line, the selection, or the comment",

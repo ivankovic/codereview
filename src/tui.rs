@@ -4,10 +4,8 @@ pub mod agent_panel;
 pub mod app;
 pub mod diff_view;
 pub mod kinds;
-pub mod outline;
 pub mod prompt;
 pub mod style;
-pub mod tree;
 pub mod ui;
 pub mod viewer;
 pub mod workspace;
@@ -210,46 +208,64 @@ mod tests {
         out
     }
 
+    /// The documents are listed where none is open, and `c` there comments on the one
+    /// selected as a whole.
     #[test]
-    fn comment_on_a_whole_file_from_the_tree() {
+    fn comment_on_a_whole_document_from_the_list() {
         let dir = scratch_repo();
-        let session = scratch_session(dir.path());
+        std::fs::write(dir.path().join("GUIDE.md"), "# Guide\n\nRead me.\n").unwrap();
+        let mut session = scratch_session(dir.path());
+        session.refresh().unwrap();
         let mut app = App::new(session, None);
-        app.switch_focus(Focus::Code);
+        app.switch_focus(Focus::Docs);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
-        draw(&mut term, &mut app);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains(" documents 1 "), "{screen}");
+        assert!(
+            screen.contains("GUIDE.md") && !screen.contains("a.rs"),
+            "{screen}"
+        );
 
-        // With the tree focused, c comments on the selected path as a whole.
-        press(&mut app, &[KeyCode::Char('j'), KeyCode::Char('c')]);
+        press(&mut app, &[KeyCode::Char('c')]);
         assert!(app.prompt.is_some());
-        for ch in "needs tests".chars() {
+        for ch in "needs examples".chars() {
             app.handle_key(key(ch));
         }
         press(&mut app, &[KeyCode::Enter]);
         let comment = app.session.review.comments()[0].clone();
-        assert_eq!((comment.path.as_str(), comment.line), ("a.rs", None));
+        assert_eq!((comment.path.as_str(), comment.line), ("GUIDE.md", None));
 
         // It heads the file, above line 1, and the review list shows it without a line.
         press(&mut app, &[KeyCode::Enter]);
         let screen = draw(&mut term, &mut app);
-        let (before, after) = screen.split_once("needs tests").unwrap();
-        assert!(!before.contains("fn a() {}") && after.contains("fn a() {}"));
+        let (before, after) = screen.split_once("needs examples").unwrap();
+        assert!(
+            !before.contains("Read me.") && after.contains("Read me."),
+            "{screen}"
+        );
+        // `q` closes the document, back to the list.
+        press(&mut app, &[KeyCode::Char('q')]);
+        assert!(app.viewer.is_none());
         press(&mut app, &[KeyCode::Char('R')]);
         let screen = draw(&mut term, &mut app);
-        assert!(screen.contains("◆ a.rs Tester: needs tests"));
+        assert!(
+            screen.contains("◆ GUIDE.md Tester: needs examples"),
+            "{screen}"
+        );
     }
 
     #[test]
-    fn a_diff_opened_from_the_tree_still_comments_on_lines() {
+    fn a_diff_opened_from_a_file_still_comments_on_lines() {
         let dir = scratch_repo();
         let session = scratch_session(dir.path());
         let mut app = App::new(session, None);
         app.switch_focus(Focus::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        app.jump_to("a.rs", 1);
         draw(&mut term, &mut app);
 
-        // D from the tree keeps the tree focused; c must still take the after-side line.
-        press(&mut app, &[KeyCode::Char('j'), KeyCode::Char('D')]);
+        // D on the file opens its diff; c takes the after side's line.
+        press(&mut app, &[KeyCode::Char('D')]);
         assert!(matches!(app.screen(), Screen::Diff(_)));
         draw(&mut term, &mut app);
         press(&mut app, &[KeyCode::Char('c')]);
@@ -262,8 +278,47 @@ mod tests {
         assert!(comment.line.is_some(), "{comment:?}");
     }
 
-    /// `o` is open, wherever one is: what to review. Opening something elsewhere — the file in
-    /// `$EDITOR` — is `ge`.
+    /// `Enter` on a use goes to the definition and `Ctrl-o` comes back; `J` lists where else
+    /// there is to go; a definition's `Enter` offers its usages.
+    #[test]
+    fn enter_goes_to_the_definition_and_j_lists_the_rest() {
+        let dir = scratch_repo();
+        std::fs::write(dir.path().join("b.rs"), "fn uses() {\n    a();\n}\n").unwrap();
+        let mut app = App::new(scratch_session(dir.path()), None);
+        app.session.refresh().unwrap();
+        until_indexed(&mut app);
+        app.switch_focus(Focus::Code);
+        app.jump_to_col("b.rs", 2, 4);
+        assert_eq!(app.viewer.as_ref().unwrap().column(), 4);
+        press(&mut app, &[KeyCode::Enter]);
+        let v = app.viewer.as_ref().unwrap();
+        assert_eq!((v.path.as_str(), v.current_line()), ("a.rs", Some(0)));
+        assert_eq!(app.trail_depth(), 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+        assert_eq!(app.viewer.as_ref().unwrap().path, "b.rs");
+
+        app.handle_key(key('J'));
+        let menu = app.jump_menu.as_ref().expect("the jump menu");
+        assert!(menu.here.group(crate::nav::Kind::Definition).is_some());
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let screen = draw(&mut term, &mut app);
+        assert!(
+            screen.contains("from a, used here in function uses"),
+            "{screen}"
+        );
+        assert!(screen.contains("Definition 1  (d)"), "{screen}");
+        assert!(screen.contains("a.rs:1"), "{screen}");
+        press(&mut app, &[KeyCode::Esc]);
+        assert!(app.jump_menu.is_none());
+
+        // From the definition, Enter offers the usages to choose from.
+        app.jump_to_col("a.rs", 1, 3);
+        press(&mut app, &[KeyCode::Enter]);
+        let menu = app.jump_menu.as_ref().expect("the usages, to pick from");
+        let row = menu.rows.current().copied().unwrap();
+        assert_eq!(menu.place(row).unwrap().path, "b.rs");
+    }
+
     /// Work a key asks for that takes a while is behind a bar in the middle of the screen,
     /// drawn before the work runs and gone once it has; work in the background shows its bar
     /// only when it has taken more than a moment.
@@ -306,7 +361,7 @@ mod tests {
         let dir = scratch_repo();
         let mut app = App::new(scratch_session(dir.path()), None);
         app.switch_focus(Focus::Code);
-        press(&mut app, &[KeyCode::Char('j'), KeyCode::Enter]);
+        app.jump_to("a.rs", 1);
         assert!(app.viewer.is_some(), "a.rs is open");
 
         app.handle_key(key('o'));
@@ -337,80 +392,103 @@ mod tests {
         );
     }
 
-    /// `\\` hides the side panel and gives the file its width; a key that gives the panel the
-    /// focus brings it back, and with no file open it is always there.
+    /// The code lists no files: it says how to get to one, and an open file has the whole
+    /// width, with nothing beside it.
     #[test]
-    fn backslash_hides_the_side_panel_and_gives_the_file_its_width() {
+    fn the_code_has_no_side_panel() {
         let dir = scratch_repo();
         let mut app = App::new(scratch_session(dir.path()), None);
         app.switch_focus(Focus::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
-        assert!(draw(&mut term, &mut app).contains(" files "));
-
-        // With nothing open there is nothing to give the width to.
-        app.handle_key(key('\\'));
-        assert!(draw(&mut term, &mut app).contains(" files "));
-
-        press(&mut app, &[KeyCode::Char('j'), KeyCode::Enter]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("/ searches for a file"), "{screen}");
+        assert!(!screen.contains("Makefile"), "{screen}");
+        app.jump_to("a.rs", 1);
         let screen = draw(&mut term, &mut app);
         assert!(
-            !screen.contains(" files ") && screen.contains("fn a() {}"),
+            screen.contains("│fn a() {}") || screen.contains("fn a() {}"),
             "{screen}"
         );
-        app.handle_key(key('\\'));
-        assert!(draw(&mut term, &mut app).contains(" files "));
-        app.handle_key(key('\\'));
-        assert!(!draw(&mut term, &mut app).contains(" files "));
+        assert!(
+            !screen.contains(" files ") && !screen.contains("outline"),
+            "{screen}"
+        );
+        // Tab is forward along the trail, which goes nowhere yet.
         press(&mut app, &[KeyCode::Tab]);
-        assert!(draw(&mut term, &mut app).contains(" files "));
-        assert!(app.focus_tree, "Tab gave the panel the focus and showed it");
+        assert!(
+            app.message
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("no later position")
+        );
         assert!(!app.quit);
     }
 
-    /// The outline sits where the tree does, follows the file's cursor, and goes where it
-    /// points; it hides the same way when told to.
+    /// `/` finds a file by a few of its letters and opens it; from a file, what it holds is
+    /// found first, and `Enter` goes to the line.
     #[test]
-    fn the_outline_follows_the_file_and_goes_where_it_points() {
+    fn slash_finds_a_file_then_a_line_in_it() {
         let dir = scratch_repo();
-        let mut app = App::new(scratch_session(dir.path()), None);
+        let mut session = scratch_session(dir.path());
+        session.refresh().unwrap();
+        let mut app = App::new(session, None);
+        until_indexed(&mut app);
         app.switch_focus(Focus::Code);
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
         draw(&mut term, &mut app);
-        app.handle_key(key('O'));
+        press(&mut app, &[KeyCode::Char('/')]);
+        for ch in "makf".chars() {
+            app.handle_key(key(ch));
+        }
         let screen = draw(&mut term, &mut app);
-        assert!(screen.contains("Open a file to see what"), "{screen}");
-
-        // `a.rs` defines a, b and c in the working tree.
-        press(
-            &mut app,
-            &[KeyCode::Char('O'), KeyCode::Char('j'), KeyCode::Enter],
-        );
-        app.handle_key(key('O'));
-        let screen = draw(&mut term, &mut app);
-        assert!(screen.contains(" outline 3 "), "{screen}");
         assert!(
-            screen.contains("fn a") && screen.contains("fn c"),
+            screen.contains("Files 1") && screen.contains("Makefile"),
             "{screen}"
         );
+        press(&mut app, &[KeyCode::Enter]);
+        assert!(app.finder.is_none());
+        assert_eq!(app.viewer.as_ref().unwrap().path, "Makefile");
 
-        // Enter goes to the definition and gives the file the focus.
-        press(
-            &mut app,
-            &[KeyCode::Char('j'), KeyCode::Char('j'), KeyCode::Enter],
+        press(&mut app, &[KeyCode::Char('/')]);
+        for ch in "echo".chars() {
+            app.handle_key(key(ch));
+        }
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("In this file 1"), "{screen}");
+        press(&mut app, &[KeyCode::Enter]);
+        let v = app.viewer.as_ref().unwrap();
+        assert_eq!(v.current_line(), Some(1));
+        assert_eq!(v.search.as_ref().map(|s| s.query.as_str()), Some("echo"));
+        // The text search comes once typing stops, on another thread, at the end of the list.
+        press(&mut app, &[KeyCode::Char('/')]);
+        for ch in "hi".chars() {
+            app.handle_key(key(ch));
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline
+            && !app
+                .finder
+                .as_ref()
+                .unwrap()
+                .groups
+                .iter()
+                .any(|(g, _)| *g == crate::search::Group::Text)
+        {
+            app.tick(true);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("Text "), "{screen}");
+        // Esc closes it where it was.
+        press(&mut app, &[KeyCode::Esc]);
+        assert!(app.finder.is_none());
+        assert_eq!(app.viewer.as_ref().unwrap().path, "Makefile");
+        assert_eq!(
+            app.trail_depth(),
+            1,
+            "the search from the file left it on the trail"
         );
-        assert!(!app.focus_tree);
-        assert_eq!(app.viewer.as_ref().unwrap().current_line(), Some(2));
-        // Moving in the file moves the outline with it.
-        press(&mut app, &[KeyCode::Char('k')]);
-        draw(&mut term, &mut app);
-        assert_eq!(app.outline.as_ref().unwrap().cursor, 1);
-        assert!(draw(&mut term, &mut app).contains("┌ outline"));
-
-        // Hidden, it is gone until it is given the focus again.
-        app.handle_key(key('\\'));
-        assert!(!draw(&mut term, &mut app).contains("┌ outline"));
-        press(&mut app, &[KeyCode::Tab]);
-        assert!(draw(&mut term, &mut app).contains("┌ outline"));
     }
 
     /// A picture is drawn where the terminal has a way to draw one, and described where it
@@ -460,12 +538,10 @@ mod tests {
         assert_eq!(app.focus, Focus::Code);
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("1 Tests"));
-        assert!(screen.contains("a.rs"));
-        assert!(screen.contains("Makefile"));
+        assert!(screen.contains("/ searches"));
 
         // Open a.rs, comment on line 2, then mark it done.
-        press(&mut app, &[KeyCode::Char('j'), KeyCode::Enter]);
-        assert!(!app.focus_tree);
+        app.jump_to("a.rs", 1);
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("fn a() {}"));
         press(&mut app, &[KeyCode::Char('j'), KeyCode::Char('c')]);
@@ -625,11 +701,9 @@ mod tests {
             "gr must open the locations screen"
         );
         press(&mut app, &[KeyCode::Char('q')]);
-        press(&mut app, &[KeyCode::Char('g'), KeyCode::Char('S')]);
-        assert!(matches!(
-            app.prompt.as_ref().map(|p| &p.kind),
-            Some(crate::tui::prompt::PromptKind::SymbolSearch)
-        ));
+        // `g/` is the search, from any screen.
+        press(&mut app, &[KeyCode::Char('g'), KeyCode::Char('/')]);
+        assert!(app.finder.is_some());
         press(&mut app, &[KeyCode::Esc]);
         // `*` lists every occurrence; Enter on the last one jumps there.
         press(&mut app, &[KeyCode::Char('*')]);
@@ -639,16 +713,6 @@ mod tests {
         press(&mut app, &[KeyCode::Char('G'), KeyCode::Enter]);
         let v = app.viewer.as_ref().unwrap();
         assert_eq!((v.current_line(), v.column()), (Some(2), 14));
-        // `@` lists the file's symbols.
-        press(&mut app, &[KeyCode::Char('@')]);
-        let screen = draw(&mut term, &mut app);
-        assert!(screen.contains("function c"));
-        press(&mut app, &[KeyCode::Char('q')]);
-        // `#` searches by name.
-        press(&mut app, &[KeyCode::Char('#')]);
-        app.handle_key(key('b'));
-        press(&mut app, &[KeyCode::Enter]);
-        assert!(matches!(app.screen(), Screen::Locations(l) if l.title.contains("matching")));
     }
 
     #[test]
@@ -1674,59 +1738,6 @@ mod tests {
                 .0
                 .contains("one repository")
         );
-    }
-
-    /// The tree's folds and filter belong to the user: a refresh must not undo them, and
-    /// cancelling the filter prompt must put back what was there before.
-    #[test]
-    fn the_tree_keeps_what_the_user_set_up() {
-        let dir = scratch_repo();
-        std::fs::create_dir_all(dir.path().join("src/deep")).unwrap();
-        std::fs::write(dir.path().join("src/deep/inner.rs"), "fn inner() {}\n").unwrap();
-        let session = scratch_session(dir.path());
-        let mut app = App::new(session, None);
-        app.switch_focus(Focus::Code);
-        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
-        draw(&mut term, &mut app);
-
-        // Fold everything, then filter: both are the user's doing.
-        press(&mut app, &[KeyCode::Char('z')]);
-        assert!(!app.tree.collapsed.is_empty(), "nothing folded");
-        let folded = app.tree.collapsed.clone();
-        press(&mut app, &[KeyCode::Char('/')]);
-        for ch in "inner".chars() {
-            app.handle_key(key(ch));
-        }
-        press(&mut app, &[KeyCode::Enter]);
-        assert_eq!(app.tree.filter, "inner");
-        let screen = draw(&mut term, &mut app);
-        assert!(screen.contains("inner.rs"), "{screen}");
-        assert!(
-            !screen.contains("Makefile"),
-            "the filter is not applied: {screen}"
-        );
-
-        // `r` re-reads the repository and keeps both.
-        press(&mut app, &[KeyCode::Char('r')]);
-        assert_eq!(app.tree.filter, "inner", "the refresh dropped the filter");
-        assert_eq!(
-            app.tree.collapsed, folded,
-            "the refresh unfolded everything"
-        );
-
-        // Typing in the filter prompt applies as you go; Esc puts back what was there.
-        press(&mut app, &[KeyCode::Char('/')]);
-        for ch in "zzz".chars() {
-            app.handle_key(key(ch));
-        }
-        assert_eq!(
-            app.tree.filter, "innerzzz",
-            "the filter applies as it is typed"
-        );
-        press(&mut app, &[KeyCode::Esc]);
-        assert_eq!(app.tree.filter, "inner", "Esc did not put the filter back");
-        let screen = draw(&mut term, &mut app);
-        assert!(screen.contains("inner.rs"), "{screen}");
     }
 
     /// A message says what just happened, and is cleared by the next key. An agent working

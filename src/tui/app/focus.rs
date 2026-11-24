@@ -1,11 +1,9 @@
 //! What the reader is looking at: the tests, the code, the documents or the data, picked at
 //! the top right. Each focus keeps a stack of screens of its own, its first screen at the
-//! bottom, and a file explorer of its own whose tree holds only what the focus is about, so
-//! switching away and back finds both where they were left.
+//! bottom, and a file explorer of its own — the documents or the datasets listed where no
+//! file is open, the file open — so switching away and back finds both where they were left.
 
-use super::{App, Picture, Screen, Sidebar};
-use crate::tui::outline::Outline;
-use crate::tui::tree::Tree;
+use super::{App, ListState, Picture, Screen};
 use crate::tui::viewer::Viewer;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +44,7 @@ impl Focus {
         Focus::ALL.get(at as usize).copied()
     }
 
-    /// Whether its file tree holds `path`.
+    /// Whether `path` is what it is about: anything for the tests and the code.
     pub fn holds(self, path: &str) -> bool {
         match self {
             Focus::Tests | Focus::Code => true,
@@ -55,30 +53,28 @@ impl Focus {
         }
     }
 
-    /// The files of `all` its tree holds.
+    /// The files of `all` it lists where none is open: the documents, the datasets, and
+    /// for the tests and the code none, which are too many to list.
     pub fn files(self, all: &[String]) -> Vec<String> {
-        all.iter().filter(|f| self.holds(f)).cloned().collect()
+        match self {
+            Focus::Tests | Focus::Code => Vec::new(),
+            Focus::Docs | Focus::Data => all.iter().filter(|f| self.holds(f)).cloned().collect(),
+        }
     }
 }
 
-/// One focus's file explorer: its tree, the file open in it, and how its side panel stands.
+/// One focus's file explorer: the files it lists, and the file open in it.
 pub struct Explorer {
-    pub tree: Tree,
+    pub files: ListState<String>,
     pub viewer: Option<Viewer>,
-    pub outline: Option<Outline>,
-    pub focus_tree: bool,
-    pub sidebar: Sidebar,
     pub picture: Option<Picture>,
 }
 
 impl Explorer {
     pub fn new(files: &[String]) -> Self {
         Self {
-            tree: Tree::new(files),
+            files: ListState::new(files.to_vec()),
             viewer: None,
-            outline: None,
-            focus_tree: true,
-            sidebar: Sidebar::Files,
             picture: None,
         }
     }
@@ -88,21 +84,15 @@ impl App {
     /// Takes the explorer on screen out of the app, leaving an empty one in its place.
     fn take_explorer(&mut self) -> Explorer {
         Explorer {
-            tree: std::mem::replace(&mut self.tree, Tree::new(&[])),
+            files: std::mem::replace(&mut self.files, ListState::new(Vec::new())),
             viewer: self.viewer.take(),
-            outline: self.outline.take(),
-            focus_tree: self.focus_tree,
-            sidebar: self.sidebar,
             picture: self.picture.take(),
         }
     }
 
     fn put_explorer(&mut self, e: Explorer) {
-        self.tree = e.tree;
+        self.files = e.files;
         self.viewer = e.viewer;
-        self.outline = e.outline;
-        self.focus_tree = e.focus_tree;
-        self.sidebar = e.sidebar;
         self.picture = e.picture;
     }
 
@@ -146,7 +136,7 @@ impl App {
     /// Re-reads what the top screen of a focus shows, on coming back to it.
     fn refresh_focus(&mut self) {
         let files = self.focus.files(&self.session.files);
-        self.tree.replace_files(&files);
+        relist(&mut self.files, files);
         match self.screen() {
             Screen::EndToEnd(_) => self.refresh_end_to_end(false),
             Screen::Review(_) => self.refresh_review(),
@@ -155,13 +145,13 @@ impl App {
         }
     }
 
-    /// Gives every focus's tree the files it holds now.
+    /// Gives every focus's list the files it holds now.
     pub(super) fn refresh_trees(&mut self) {
         let all = self.session.files.clone();
-        self.tree.replace_files(&self.focus.files(&all));
+        relist(&mut self.files, self.focus.files(&all));
         for focus in Focus::ALL {
             if let Some(e) = &mut self.parked_explorers[focus.index()] {
-                e.tree.replace_files(&focus.files(&all));
+                relist(&mut e.files, focus.files(&all));
             }
         }
     }
@@ -221,10 +211,13 @@ impl App {
             .iter_mut()
             .chain(self.parked.iter_mut().flatten())
     }
+}
 
-    /// Whether the side panel is drawn: always, unless `\` hid it, and always with no file
-    /// open, where there is nothing to give its width to.
-    pub fn sidebar_shown(&self) -> bool {
-        !self.sidebar_hidden || self.viewer.is_none()
+/// Puts `files` in `list`, the cursor staying on the file it was on while that is there.
+fn relist(list: &mut ListState<String>, files: Vec<String>) {
+    let was = list.current().cloned();
+    *list = ListState::new(files);
+    if let Some(at) = was.and_then(|w| list.items.iter().position(|f| *f == w)) {
+        list.cursor = at;
     }
 }
