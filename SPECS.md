@@ -942,8 +942,8 @@ serves an SVG under a policy that runs nothing. A comment left in a commit's dif
 with it. A comment on a whole file comes from the Comment button in the file header and is shown
 above the first line, or from its row in the list of documents or datasets. A range is chosen with
 shift-click, or with the comment form's Extend range button followed by the line number at the other
-end, which keeps the text typed so far. Editing a comment or a note, and commenting on a file or a
-directory, opens a text sheet of the page's own rather than the browser's prompt. `w`, and the same
+end, which keeps the text typed so far. Editing a comment or a note, and commenting on a whole
+file, opens a text sheet of the page's own rather than the browser's prompt. `w`, and the same
 menu's Wrap lines, wraps long lines where the screen ends instead of scrolling sideways, with each
 continuation indented past the start of the code so a wrapped line still reads as one; the choice is
 kept in that browser's own storage.
@@ -1116,7 +1116,7 @@ until the second line of the range is tapped, keeping the text typed so far. The
 the same with the keyboard. A comment row stays as wide as the panel and sticks to its left edge
 while the code scrolls sideways, so a comment's text and buttons are in view whatever the line
 length; this holds on every screen size, as does the comment form on a screen wide enough to keep
-it between the lines. On a screen that cannot hover, the directory `+` is always visible, tap
+it between the lines. On a screen that cannot hover, tap
 targets are larger, inputs are 16 pixels so iOS does not zoom into them, and what the page says
 about acting on something says tap rather than click and names no keys. The sign-in page, which
 shares none of this stylesheet, carries the same viewport declaration and the same 16-pixel

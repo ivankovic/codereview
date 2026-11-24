@@ -4,11 +4,16 @@
 
 - Terminal UI: Docs rendered rather than shown as source; CSV shown as a table; a forge's
   comments on the lines of a pull request's diff, not only in its list.
-- Terminal UI: the review's comments in the Code sidebar rather than a screen over the code.
-- Browser UI: Docs rendered rather than shown as source; CSV shown as a table; the comment list
-  in the Code side panel; a forge's comments on the lines of a range's diff.
+- Browser UI: Docs rendered rather than shown as source; CSV shown as a table; a forge's
+  comments on the lines of a range's diff.
 
-- Jump from a blame line to that commit's diff.
+## Navigation (SPECS.md, Navigation)
+
+- The search offering pull requests, branches and worktrees as ranges to open, so `/` answers
+  what `o` does too.
+- Browser UI: a search result in the open diff marks the query but does not scroll to its line.
+- Terminal UI: a list of the trail, to go back to any point of it rather than one step at a time.
+- The search and the jump menu in a diff and in omnidiff's view, not only in the file viewer.
 - Language-server backend for symbol navigation, for repositories that have one running.
 - Agent: turn a review the agent writes into REVIEW.md comments automatically when it answers
   in prose instead.
