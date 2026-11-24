@@ -78,6 +78,10 @@ impl Kind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Group {
     pub kind: Kind,
+    /// What a menu calls it, and the letter that moves to it there: sent with the group so
+    /// the page draws a group it has not heard of as well as the ones it has.
+    pub title: String,
+    pub key: char,
     pub places: Vec<Place>,
 }
 
@@ -203,7 +207,12 @@ pub fn here(session: &mut Session, path: &str, line: usize, column: usize) -> He
 
 fn push(groups: &mut Vec<Group>, kind: Kind, places: Vec<Place>) {
     if !places.is_empty() {
-        groups.push(Group { kind, places });
+        groups.push(Group {
+            kind,
+            title: kind.title().to_string(),
+            key: kind.key(),
+            places,
+        });
     }
 }
 
