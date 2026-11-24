@@ -223,6 +223,72 @@ pub struct Opening {
     pub kind: Option<String>,
     /// What the agent is asked when there are none.
     pub ask: String,
+    /// The rest of the tests: the unit and integration tests below the end-to-end ones.
+    #[serde(default)]
+    pub others: Others,
+}
+
+/// The tests that are not end to end, summed up under the end-to-end ones: how many there are
+/// and where, and what the last run of the test suite said, when a check leaves a report of it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Others {
+    pub total: usize,
+    /// Of those, the ones marked to skip.
+    pub ignored: usize,
+    /// How many files hold them.
+    pub files: usize,
+    /// The parts of the project they are in, most tests first: the area's name and its count.
+    pub areas: Vec<(String, usize)>,
+    /// The last run of a configured check that writes a JUnit report, if one is on disk. It
+    /// runs every test, the end-to-end ones too, so it is the suite's run, not theirs alone.
+    pub last_run: Option<LastRun>,
+}
+
+/// What a check's report says of the last run, and how far the code has moved since.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastRun {
+    /// The check's name, as the configuration gives it.
+    pub check: String,
+    pub figures: crate::analysis::Figures,
+    pub stale: Option<Staleness>,
+}
+
+/// [`Others`] for `tests`, the tests that are not end to end.
+fn others(session: &Session, tests: &[TestCase]) -> Others {
+    // Named as the specification names them, so `src/web.rs` is `web` there and here.
+    let names = crate::spec::AreaNames::new(session.files.iter().map(String::as_str));
+    let mut areas: BTreeMap<String, usize> = BTreeMap::new();
+    for t in tests {
+        *areas.entry(names.of(&t.path)).or_insert(0) += 1;
+    }
+    let mut areas: Vec<(String, usize)> = areas.into_iter().collect();
+    areas.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let files: HashSet<&str> = tests.iter().map(|t| t.path.as_str()).collect();
+    let root = session.root();
+    let last_run = session
+        .config
+        .analysis
+        .iter()
+        .filter(|c| c.kind == "junit" && crate::analysis::applies(c, root))
+        .find_map(|c| {
+            let figures = crate::analysis::figures(c, root)?;
+            let stale = figures
+                .as_of
+                .as_deref()
+                .and_then(|when| session.changed_since(when, c.reads.as_deref()).ok());
+            Some(LastRun {
+                check: c.name.clone(),
+                figures,
+                stale,
+            })
+        });
+    Others {
+        total: tests.len(),
+        ignored: tests.iter().filter(|t| t.ignored).count(),
+        files: files.len(),
+        areas,
+        last_run,
+    }
 }
 
 impl Opening {
@@ -253,16 +319,19 @@ pub fn of(session: &Session, tests: Vec<TestCase>) -> Opening {
     let mut drivers = Drivers::new(root);
     let mut matched = vec![false; recordings.len()];
     let mut out = Vec::new();
+    let mut rest = Vec::new();
     for test in tests {
         if runners
             .iter()
             .any(|(f, t)| *f == test.path && (*t == test.name || *t == test.label))
         {
+            rest.push(test);
             continue;
         }
         let at = recordings.iter().position(|r| names(r, &test));
         let security = crate::spec::security(&test).is_some();
         let Some(why) = drivers.why(&test, at.is_some()) else {
+            rest.push(test);
             continue;
         };
         let recording = at.map(|i| {
@@ -293,6 +362,7 @@ pub fn of(session: &Session, tests: Vec<TestCase>) -> Opening {
         .map(|(r, _)| r)
         .collect();
     let kind = kind(session);
+    let others = others(session, &rest);
     Opening {
         failed: out.iter().filter(|t| t.failed()).count(),
         unrecorded: out.iter().filter(|t| t.recording.is_none()).count(),
@@ -301,6 +371,7 @@ pub fn of(session: &Session, tests: Vec<TestCase>) -> Opening {
         total,
         ask: crate::prompts::first_end_to_end(kind.as_deref()),
         kind,
+        others,
     }
 }
 

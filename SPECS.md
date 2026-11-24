@@ -161,24 +161,23 @@ Every path on the command line names a repository (a directory inside one counts
 opens its repository at that file, or a directory that is not inside a repository, in which case
 every child directory with a `.git` entry (hidden names left out, sorted by name) is opened and a
 line on stderr says how many; a directory that is neither is an error. The same repository named
-twice is opened once, in first-seen order, and nothing named means the current directory (or
-`-C`), resolved the same way. The TUI keeps one full app per repository (tree, viewer, screens,
-agent) and shows one at a time; with more than one open, a strip on the top line names them with
-their number, a `?` while that repository's agent waits for permission, a spinner while it works,
-and the pending comment count. `gt` and `gT` cycle, `W` opens a picker (j/k, Enter, 1-9). Started
-on a directory of checkouts, the TUI opens on a "Select repository" screen instead of on the first
-repository: the same list, a row each with the number, name, branch, pending comment count, what
-its agent is doing and where it is, filling the terminal with nothing of any repository behind it.
-Enter or a number opens one, on what a repository opens on; `q` there, from its last screen, comes
-back to the list rather than quitting, and `q` on the list quits. Ctrl-C quits from anywhere. The
-branches are read when the list opens, not on every draw. Agents
-in the other repositories keep running and are polled every tick. A theme or diff layout saved in
-one app is adopted by the others without another write of the config file, so no app later saves
-a stale copy. The web server holds one session and one agent per repository; every `/api` call
-takes `?repo=N` (0-based, command-line order, default 0), `/api/repos` lists them with name,
-root, branch and pending count, and the page's header dropdown (shown only with several)
-switches, resetting the per-repository page state and rebuilding the agent transcript from that
-repository's events.
+twice is opened once, in first-seen order, and nothing named means the current directory (or `-C`),
+resolved the same way. The TUI keeps one full app per repository (tree, viewer, screens, agent) and
+shows one at a time; with more than one open, a strip on the top line names them with their number,
+a `?` while that repository's agent waits for permission, a spinner while it works, and the pending
+comment count. `gt` and `gT` cycle, `W` opens a picker (j/k, Enter, 1-9). Started on a directory of
+checkouts, the TUI opens on a "Select repository" screen instead of on the first repository: the
+same list, a row each with the number, name, branch, pending comment count, what its agent is doing
+and where it is, filling the terminal with nothing of any repository behind it. Enter or a number
+opens one, on what a repository opens on; `q` or `Esc` there, from its last screen, comes back to
+the list rather than quitting, and `q` on the list quits. Ctrl-C quits from anywhere. The branches
+are read when the list opens, not on every draw. Agents in the other repositories keep running and
+are polled every tick. A theme or diff layout saved in one app is adopted by the others without
+another write of the config file, so no app later saves a stale copy. The web server holds one
+session and one agent per repository; every `/api` call takes `?repo=N` (0-based, command-line
+order, default 0), `/api/repos` lists them with name, root, branch and pending count, and the page's
+header dropdown (shown only with several) switches, resetting the per-repository page state and
+rebuilding the agent transcript from that repository's events.
 
 ## Agent
 
@@ -389,6 +388,14 @@ working tree has changed since then outside the recordings' own directories, wor
 status and one log for all of them. Writing, replacing or removing a `test.json` moves the
 repository's fingerprint, though git ignores those directories, so a page that is open redraws
 when a test run finishes.
+
+Under the end-to-end tests the opening sums up the rest, the unit and integration tests: how many
+there are, in how many files, how many are marked to skip, and how many are in each part of the
+project, most first, the parts named as the specification names them. When a configured check for
+the repository writes a JUnit report and the report is on disk, the summary says what its last run
+found — how many tests, how many failed and were skipped, how long ago, and how many commits and
+changed files have come since. That run is of the whole suite, the end-to-end tests too; without
+one the summary says no run is on record.
 
 A test's own view is where a reviewer goes into the code from. Beside its recording are its
 steps, each with the line of the test that took it, read from the test's file. Then the code its
@@ -725,20 +732,22 @@ bottom — the end-to-end tests, or the explorer — and has an explorer of its 
 kept apart from the others'. Where no file is open, the documents and the data list their files, to
 open one or comment on it as a whole; the code lists none, and says what the repository holds and
 how to get to a file. A focus left keeps its stack and its explorer and is read again when it is
-come back to; asked for the focus already on screen, the digit goes back to its first screen. `q` or
-`Esc` pops one screen; on a focus's first screen it goes to the tests, and on the tests it quits
-(or, started on a directory of checkouts, goes back to the repository list). `E` goes to the tests
-like `1`. Every test by its kind, `P`, is opened over the end-to-end tests, or brought back where it
-was there; in the log, `P` opens every test as the commit under the cursor left them, over the log.
-The review, `R`, is opened over the code. The agent panel, `A` or `Ctrl-a`, opens over whatever is
-on screen, and in it `C` clears the conversation and, while it asks for permission, a digit is an
-answer. The status line starts with where in the focus the screen is: its first screen and what was
-opened over it, the last two when there are more than three. Anything that opens a file — a test's
-source, the code a test ran, a comment in the review, a symbol — opens the explorer over the screen
-it was opened from, so `q` goes back there; where the focus already has the explorer, it is that
-one, and what was opened over it is closed. A list of places to go, once one is picked, is closed
-with it. `a` and `i`, which ask the agent something, open its panel over the screen they were
-pressed on, and `q` there comes back to it.
+come back to; asked for the focus already on screen, the digit goes back to its first screen, which
+for the tests is their overview. `q` or `Esc` pops one screen; on a focus's first screen it goes to
+the tests. On the tests' overview `q` quits (or, started on a directory of checkouts, goes back to
+the repository list), and `Esc` stays where it is and says that `q` quits: `Esc` only ever goes
+back, and only `q` and Ctrl-C leave the program. `E` goes to the tests like `1`. Every test by its
+kind, `P`, is opened over the end-to-end tests, or brought back where it was there; in the log, `P`
+opens every test as the commit under the cursor left them, over the log. The review, `R`, is opened
+over the code. The agent panel, `A` or `Ctrl-a`, opens over whatever is on screen, and in it `C`
+clears the conversation and, while it asks for permission, a digit is an answer. The status line
+starts with where in the focus the screen is: its first screen and what was opened over it, the last
+two when there are more than three. Anything that opens a file — a test's source, the code a test
+ran, a comment in the review, a symbol — opens the explorer over the screen it was opened from, so
+`q` goes back there; where the focus already has the explorer, it is that one, and what was opened
+over it is closed. A list of places to go, once one is picked, is closed with it. `a` and `i`, which
+ask the agent something, open its panel over the screen they were pressed on, and `q` there comes
+back to it.
 
 `o`, open, from any screen but the agent's (or `gp`), opens the range picker over the screen,
 in two steps. First, what to review: the forge's
@@ -785,29 +794,31 @@ pull request as `#` and its number, a comparison as its head against its base.
 A repository opens on its end-to-end tests, the first screen of the first focus, with nothing under
 them, unless a file was named on the command line, which opens in the code; this goes for a
 repository that appears later in a directory of checkouts too. `E` or `1` brings them back from any
-screen, where they were left; the tests that name the open file, which `E` used to show, are on `U`.
+screen, on their overview; the tests that name the open file, which `E` used to show, are on `U`.
 Until the symbol index is built the tests are those `OVERVIEW.md` lists, and with no such file the
 screen says it is reading them; either way it reads them again once the index is in, and again on
 `r`, staying on the same test. There is no side panel: one thing is shown at a time, across the
-whole width. The tests open on the overview, what the stretch did, described below. `q`, `Esc`,
-`Tab`, `h` or `←` from it is the list of every test: the overview first, then each test file as a
-heading with its tests under it, each marked passed, failed or without a recording, and a security
-mark where it has one; recordings whose test is gone follow under a heading of their own. The title
-counts the end-to-end tests against all the tests, the failed and those without a recording.
-`Enter`, `Tab`, `l` or `→` on a row of the list opens it on its own: the overview; a test, as the
-test's own view; a recording whose test is gone, as its label, file and line, how its last run went,
-and its recording with its steps. The same keys that left the overview come back from it to the
-list, on the row that was opened. A range that is opened lands on the overview too. A terminal
-recording is played into frames when its test is first selected, shown paused at its first frame in
-a box titled with the position, the length and whether it plays, and cropped to the box with a note
-when it is bigger; `z` gives it the whole of the tests' screen. `Space` or `p` plays and pauses,
-from the start again once it has ended; `]` and `[` go to the next and previous step; `0` goes back
-to the start; `Space`, `p`, `]`, `[` and `0` on a test in the list open it and do the same; while it
-plays the screen is drawn every 40 ms. A video cannot be drawn, so it is named, and `ge` hands it to
-the system's opener (`xdg-open`, or `open` on macOS). `s` in the panel opens the test's source at
-its line. A repository with no end-to-end tests opens on that finding instead: what one would look
-like for the kind of software it seems to be, how many tests of other kinds it has, and `a`, which
-sends the agent the request for the first ones, each leaving a recording.
+whole width. The tests open on the overview, what the stretch did, described below, with a box under
+it that sums up the unit and integration tests as the opening does, and says that `P` lists every
+test by its kind. The overview is the tests' first screen: `Tab` from it is the list of every test,
+and `q` or `Esc` from the list comes back to it. The list has the overview first, then each test
+file as a heading with its tests under it, each marked passed, failed or without a recording, and a
+security mark where it has one; recordings whose test is gone follow under a heading of their own.
+The title counts the end-to-end tests against all the tests, the failed and those without a
+recording. `Enter`, `Tab`, `l` or `→` on a row of the list opens it on its own: the overview; a
+test, as the test's own view; a recording whose test is gone, as its label, file and line, how its
+last run went, and its recording with its steps. `q`, `Esc`, `Tab`, `h` or `←` come back from a test
+or a recording to the list, on the row that was opened. A range that is opened lands on the overview
+too. A terminal recording is played into frames when its test is first selected, shown paused at its
+first frame in a box titled with the position, the length and whether it plays, and cropped to the
+box with a note when it is bigger; `z` gives it the whole of the tests' screen. `Space` or `p` plays
+and pauses, from the start again once it has ended; `]` and `[` go to the next and previous step;
+`0` goes back to the start; `Space`, `p`, `]`, `[` and `0` on a test in the list open it and do the
+same; while it plays the screen is drawn every 40 ms. A video cannot be drawn, so it is named, and
+`ge` hands it to the system's opener (`xdg-open`, or `open` on macOS). `s` in the panel opens the
+test's source at its line. A repository with no end-to-end tests opens on that finding instead: what
+one would look like for the kind of software it seems to be, how many tests of other kinds it has,
+and `a`, which sends the agent the request for the first ones, each leaving a recording.
 
 A test's own view, beside the panel: where it is and why it counts, how its last run went and when,
 how long it took, how many commits and changed files the tree has moved on since, and what any
@@ -861,22 +872,23 @@ goes back along the trail and `Tab` forward. `gd` and `Ctrl-]` still go to a def
 `*` still list the occurrences. `/` opens the search over the screen: what is typed at the top, the
 groups under it, `Tab` and `Shift-Tab` to the next and previous group, the arrows to move, `Enter`
 to go, `Esc` to close; in the file, `>` and `<` then step through the matches. Where `/` is a
-screen's own — a diff's, the tests' — `g/` opens the search. No part of the screen hides. `,`
-opens the options panel — the diff layout and the colour scheme — where `Space` changes a setting,
-saves it at once, and the setting under the cursor is explained. `c` in the viewer comments on the
-line or the selection. Other screens: repository log and per-file history (commit list, details,
-files of the selected commit, paging in 200s), working tree and staged change lists, a diff view
-(auto, side by side or unified, hunk navigation, next and previous file of the same commit, comments
-on after-side lines), the review list (jump to, complete, edit, delete, re-anchor), the notes list,
-a locations list (definitions, occurrences; Enter jumps, as `Ctrl-o` comes back from), and the agent
-panel (transcript with roles, tool calls and plans; a permission bar answered by number or `y`/`n`;
-the running turn cancelled with Esc; the transcript kept while other screens are shown). The viewer
-has a column cursor moved by character and word, drawn in reverse video, from which the identifier
-for navigation is taken. A single-line prompt at the bottom takes comment and note text, a diff's
-search, line numbers and agent prompts. The agent starts on another thread so the interface never
-waits for it. `ge`, open elsewhere, suspends the UI and runs `$VISUAL` or `$EDITOR` at the current
-line, in the file or on a diff's after side; on every screen `ge` is what opens outside the tool.
-The mouse wheel scrolls.
+screen's own — a diff's, the tests' — `g/` opens the search. No part of the screen hides. `,` opens
+the options panel — the diff layout and the colour scheme — where `Space` changes a setting, saves
+it at once, and the setting under the cursor is explained. `c` in the viewer comments on the line or
+the selection. Other screens: repository log and per-file history (commit list, details, files of
+the selected commit, paging in 200s), working tree and staged change lists, a diff view (auto, side
+by side or unified, hunk navigation, next and previous file of the same commit, comments on
+after-side lines, and `Enter` for the file as it is in the working tree at the after-side line, in
+the code, which says so when the file is not there any more), the review list (jump to, complete,
+edit, delete, re-anchor), the notes list, a locations list (definitions, occurrences; Enter jumps,
+as `Ctrl-o` comes back from), and the agent panel (transcript with roles, tool calls and plans; a
+permission bar answered by number or `y`/`n`; the running turn cancelled with Esc; the transcript
+kept while other screens are shown). The viewer has a column cursor moved by character and word,
+drawn in reverse video, from which the identifier for navigation is taken. A single-line prompt at
+the bottom takes comment and note text, a diff's search, line numbers and agent prompts. The agent
+starts on another thread so the interface never waits for it. `ge`, open elsewhere, suspends the UI
+and runs `$VISUAL` or `$EDITOR` at the current line, in the file or on a diff's after side; on every
+screen `ge` is what opens outside the tool. The mouse wheel scrolls.
 
 ## Browser UI
 
@@ -992,23 +1004,25 @@ here. A click on a row, or `Enter` on it, opens it on its own: the overview at t
 `test`, a recording on its own; a test and a recording have `‹ tests` in their header, and the
 browser's back returns to the list as well. The overview has the counts — the end-to-end tests
 against all the tests, the failed and the ones without a recording — the stretch buttons of the
-specification, and a card saying what the chosen stretch did; each test in the list carries what the
-stretch has to do with it: `Δ` and the changed lines it ran, and how it went before against now,
-with the whole of it said when it is pointed at. A file opened from the changed code no test ran
-marks those lines in another colour, under a line saying so. Recording the base shows the command's
-progress and the end of its output, and the card is worked out again when it is done. A test opened
-is its own view, at `test` with its file and name: its file and line (which open it), why it counts,
-when it ran and against which commit; its recording and its failures beside the steps, each step's
-line of the test under it, which opens the test there, and tapping a step goes to its moment; then
-the code it ran, each file with a bar of what ran and what only it ran, the documentation marked as
-named or as a guess with the words it shares, and the smaller tests. A video is fetched with the API
-token and played from memory by the browser's own player; a terminal recording is fetched as the
-server's frames and drawn as text on a dark terminal, sized to fit, opening on the first frame with
-anything on it, with a play button, a scrubber and the time; the step at the current moment is lit
-as it plays. A recording whose test is gone, opened, is that recording with its steps. A file opened
-from the code a test ran marks those lines in its gutter, under a line naming the test that leads
-back to it; another file opened later is not marked. A repository without any end-to-end test has no
-list: its overview is the finding, with the button that asks the agent and one to the tests it has.
+specification, a card saying what the chosen stretch did, and under it a card summing up the unit
+and integration tests as the opening does, which opens every test by its kind; each test in the list
+carries what the stretch has to do with it: `Δ` and the changed lines it ran, and how it went before
+against now, with the whole of it said when it is pointed at. A file opened from the changed code no
+test ran marks those lines in another colour, under a line saying so. Recording the base shows the
+command's progress and the end of its output, and the card is worked out again when it is done. A
+test opened is its own view, at `test` with its file and name: its file and line (which open it),
+why it counts, when it ran and against which commit; its recording and its failures beside the
+steps, each step's line of the test under it, which opens the test there, and tapping a step goes to
+its moment; then the code it ran, each file with a bar of what ran and what only it ran, the
+documentation marked as named or as a guess with the words it shares, and the smaller tests. A video
+is fetched with the API token and played from memory by the browser's own player; a terminal
+recording is fetched as the server's frames and drawn as text on a dark terminal, sized to fit,
+opening on the first frame with anything on it, with a play button, a scrubber and the time; the
+step at the current moment is lit as it plays. A recording whose test is gone, opened, is that
+recording with its steps. A file opened from the code a test ran marks those lines in its gutter,
+under a line naming the test that leads back to it; another file opened later is not marked. A
+repository without any end-to-end test has no list: its overview is the finding, with the button
+that asks the agent and one to the tests it has.
 
 The breadcrumb's range is a button that opens the range picker under it, in the terminal UI's two
 steps and with its choices: what to review — the pull requests, which it says it is asking for

@@ -110,14 +110,15 @@ takes `--port N` and `--no-open`; `add` takes `--author NAME` and `--no-timestam
 It opens on the end-to-end tests. The top row is a breadcrumb on the left — the repository's
 address, the branch, the review range, the commit — and on the right the focus: **Tests**,
 **Code**, **Docs** (the Markdown documents) or **Data** (CSV, JSON and other datasets). Each keeps
-its own stack of screens and its own open file; `q` steps back, from a focus's first screen to the
-tests, and from the tests out. There is no file tree: `/` searches for somewhere new, and from a
-file, `Enter` and `J` go where the name under the cursor leads. `?` shows every key. The
-essentials:
+its own stack of screens and its own open file; `q` and `Esc` step back, from a focus's first
+screen to the tests, whose first screen is their overview: what the stretch did, and under it the
+unit and integration tests summed up. From there `q` quits; `Esc` never does. There is no file
+tree: `/` searches for somewhere new, and from a file, `Enter` and `J` go where the name under the
+cursor leads. `?` shows every key. The essentials:
 
 | Key | What |
 | --- | --- |
-| `1` or `E` | Tests: the overview; `q` lists every test, `Enter` opens one on its own |
+| `1` or `E` | Tests: the overview; `Tab` lists every test, `Enter` opens one on its own |
 | `Space` `s` | play the selected test's recording; open its source |
 | `2` `3` `4` | Code, Docs, Data: the open file; Docs and Data list their files to open |
 | `/` | search: the open file, definitions, paths, tests, headings, comments, then all text |
@@ -129,7 +130,7 @@ essentials:
 | `A` or `Ctrl-a` | the agent panel, over the screen (`A` in the review: address every comment) |
 | `w` `b` | on the tests: the stretch marked; record the tests at its base to compare |
 | `o` | open: a pull request, a worktree, a branch or a tag, then its base; `/` filters |
-| `q` `Esc` | back; on a focus's first screen, the tests; on the tests, quit |
+| `q` `Esc` | back; on a focus's first screen, the tests; on their overview, `q` quits |
 | `U` | the tests that name the open file |
 | `,` | options: diff layout, colour scheme |
 | `c` | comment on the line, or on the `V` selection; in a list of documents, on a whole one |
@@ -151,7 +152,8 @@ essentials:
 | `ge` | open elsewhere: the line in `$EDITOR`, a video in its player, a pull request on the forge |
 
 In a diff: `n`/`p` step through hunks, `]`/`[` through the files of the same commit, `v` cycles
-between automatic, side-by-side and unified layout, `c` comments on the after-side line. A range's
+between automatic, side-by-side and unified layout, `c` comments on the after-side line, and
+`Enter` opens the file itself, as it is in the working tree, at that line. A range's
 file opens in omnidiff's own view; `s` switches it between the diff and the code as it is at the
 head or at the base, which is how an added or deleted file opens.
 

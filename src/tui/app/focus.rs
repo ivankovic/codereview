@@ -101,6 +101,10 @@ impl App {
     pub fn switch_focus(&mut self, to: Focus) {
         if to == self.focus {
             self.screens.truncate(1);
+            // The tests' first screen is their overview, under the list.
+            if let Some(Screen::EndToEnd(state)) = self.screens.last_mut() {
+                state.to_overview();
+            }
             return;
         }
         let left = std::mem::take(&mut self.screens);

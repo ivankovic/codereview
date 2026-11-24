@@ -134,7 +134,7 @@ fn rows_of(
     coverage_target: bool,
 ) -> Vec<TestRow> {
     let Some(d) = detail else {
-        return vec![TestRow::Text("reading the tests…".into())];
+        return vec![TestRow::Text("Reading the tests…".into())];
     };
     let mut rows = vec![TestRow::Heading("Steps".into())];
     if let Some(c) = comparison {

@@ -160,6 +160,28 @@ test('the tests open on a full-width overview, and Every test is the full-width 
   await page.screenshot({ path: `${t.dir}/list.png` });
 }, { docs: ['SPECS.md#Browser UI'] });
 
+test('the tests overview sums up the unit and integration tests below the end-to-end ones', async t => {
+  const page = t.page;
+  await t.open();
+  await page.waitForSelector('.e2e .others-card h3');
+  t.ok('it comes after what the stretch did', await page.evaluate(() => {
+    const stretch = document.querySelector('.e2e .stretch-card');
+    const others = document.querySelector('.e2e .others-card');
+    return stretch.compareDocumentPosition(others) & Node.DOCUMENT_POSITION_FOLLOWING ? true : 'before it';
+  }));
+  t.ok('and says how many there are, where, and that no run is on record', await page.evaluate(() => {
+    const text = document.querySelector('.e2e .others-card').textContent.replace(/\s+/g, ' ').trim();
+    return /^\d+ unit and integration tests? in \d+ files?/.test(text) && text.includes('No run on record')
+      && document.querySelectorAll('.e2e .others-card .area').length > 0 ? true : text;
+  }));
+  t.step('tap it');
+  await t.inView('.e2e .others-card h3');
+  await page.screenshot({ path: `${t.dir}/others.png` });
+  await page.click('.e2e .others-card h3');
+  await page.waitForSelector('.spec');
+  t.ok('it opens every test, by kind', await page.evaluate(() => location.hash.startsWith('#/spec')), await page.evaluate(() => location.hash));
+}, { docs: ['SPECS.md#What a repository opens on'] });
+
 test('a test opens on its own from the list and back returns to the list', async t => {
   const page = t.page;
   await page.setViewport({ width: 1280, height: 800, isMobile: false, hasTouch: false });
@@ -277,7 +299,7 @@ test('the summary says what a repository is, where to start and how it is doing'
   t.step('wait for the symbols to be read');
   await page.waitForFunction(() => {
     const el = document.querySelector('.overview .leaning');
-    return el && !el.textContent.includes('reading the symbols');
+    return el && !el.textContent.includes('Reading the symbols');
   }, { timeout: 30000 });
   t.ok('what the tree leans on, once the symbols are read', await t.inView('.overview .leaning .item'));
   // The overview leads with a summary: a card a question, each a way to the view behind it.
@@ -300,7 +322,7 @@ test('a test command is found, and one tap runs it', async t => {
   // aimed before then lands on whatever moved under the finger — once, the next check's Run.
   await page.waitForFunction(() => {
     const el = document.querySelector('.overview .leaning');
-    return el && !el.textContent.includes('reading the symbols')
+    return el && !el.textContent.includes('Reading the symbols')
       && document.querySelector('.overview .suite .item') && !document.querySelector('.overview .suite .asof');
   }, { timeout: 30000 });
   t.ok('and its Run button can be tapped', await t.inView('.overview .checks .check [data-act=run]'));
@@ -605,7 +627,7 @@ test('a request that takes a while puts up a loading bar, and takes it down', as
   t.ok('then in the middle of the screen, saying what it does', await page.evaluate(() => {
     const r = document.querySelector('#loading').getBoundingClientRect();
     const middle = Math.abs((r.left + r.right) / 2 - innerWidth / 2) < 4;
-    return middle && document.querySelector('#loading .label').textContent === 'fetching the pull request…' ? true
+    return middle && document.querySelector('#loading .label').textContent === 'Fetching the pull request…' ? true
       : document.querySelector('#loading .label').textContent;
   }));
   t.step('the answer comes');

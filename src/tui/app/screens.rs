@@ -1093,6 +1093,17 @@ impl App {
                 let path = v.file.path.clone();
                 self.push_log(Some(path));
             }
+            // The file as it is in the working tree, at the after side's line, in the code.
+            KeyCode::Enter => {
+                let path = v.file.path.clone();
+                let line = v.after_line().unwrap_or(0) + 1;
+                if self.session.files.contains(&path) {
+                    self.push_jump();
+                    self.jump_to(&path, line);
+                } else {
+                    self.info(format!("{path} is not in the working tree"));
+                }
+            }
             // `ge`: the after side's line in `$EDITOR`, as everywhere else.
             KeyCode::Char('o') => {
                 let line = v.after_line().unwrap_or(0) + 1;

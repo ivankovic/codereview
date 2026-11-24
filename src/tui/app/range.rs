@@ -325,9 +325,9 @@ impl App {
                         self.range_picker = None;
                         let label = match &head {
                             Head::Worktree { name, .. } => {
-                                format!("taking worktree {name} as it is on disk…")
+                                format!("Taking worktree {name} as it is on disk…")
                             }
-                            other => format!("comparing {} with {}…", other.label(), base.label),
+                            other => format!("Comparing {} with {}…", other.label(), base.label),
                         };
                         self.later(label, move |app| {
                             match crate::targets::range(&app.session.repo, &head, &base.rev) {
@@ -355,7 +355,7 @@ impl App {
     fn fetch_pull(&mut self, pr: PullRequest) {
         let (tx, rx) = channel();
         let root = self.session.root().to_path_buf();
-        self.show_loading(format!("fetching pull request #{}…", pr.number));
+        self.show_loading(format!("Fetching pull request #{}…", pr.number));
         std::thread::spawn(move || {
             let fetched = Repo::open(&root)
                 .and_then(|repo| {
@@ -391,7 +391,7 @@ impl App {
             self.done_loading();
             match fetched {
                 Ok((pr, stretch, comments)) => self.later(
-                    format!("reading pull request #{}…", pr.number),
+                    format!("Reading pull request #{}…", pr.number),
                     move |app| app.open_range(stretch, Some(pr), comments),
                 ),
                 Err(e) => self.error(e),

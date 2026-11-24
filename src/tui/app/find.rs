@@ -93,7 +93,7 @@ impl App {
             text: None,
         });
         if !self.session.has_index() {
-            self.later("reading the symbols…", |_| {});
+            self.later("Reading the symbols…", |_| {});
         }
     }
 

@@ -97,7 +97,7 @@ impl App {
         if self.session.has_index() {
             work(self);
         } else {
-            self.later("reading the symbols…", work);
+            self.later("Reading the symbols…", work);
         }
     }
 

@@ -122,7 +122,7 @@ pub(super) fn draw_finder(frame: &mut Frame, app: &mut App, area: Rect) {
     let status = if f.input.text.trim().is_empty() {
         "a name, a path, a test, a heading, or any text".to_string()
     } else if f.searching_text() {
-        "searching the text…".to_string()
+        "Searching the text…".to_string()
     } else {
         let n: usize = f.groups.iter().map(|(_, h)| h.len()).sum();
         format!("{n} found")

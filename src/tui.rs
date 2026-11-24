@@ -345,15 +345,15 @@ mod tests {
         let screen = draw(&mut term, &mut app);
         assert!(!screen.contains("working out each file's size"), "{screen}");
 
-        app.show_loading_unless_quick("reading the symbols…");
+        app.show_loading_unless_quick("Reading the symbols…");
         let screen = draw(&mut term, &mut app);
         assert!(
-            !screen.contains("reading the symbols"),
+            !screen.contains("Reading the symbols"),
             "not in its first moment: {screen}"
         );
         std::thread::sleep(std::time::Duration::from_millis(450));
         let screen = draw(&mut term, &mut app);
-        assert!(screen.contains("reading the symbols"), "{screen}");
+        assert!(screen.contains("Reading the symbols"), "{screen}");
     }
 
     #[test]
@@ -896,9 +896,14 @@ mod tests {
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("In the last 7 days"), "{screen}");
         assert!(!screen.contains("○ a comment is saved"), "{screen}");
-        // `q` is the list of every test, the overview its first row.
-        press(&mut app, &[KeyCode::Char('q')]);
+        // Esc on it stays, since the overview is the first screen; `Tab` is the list of every
+        // test, the overview its first row.
+        press(&mut app, &[KeyCode::Esc]);
         assert!(!app.quit);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("In the last 7 days"), "{screen}");
+        assert!(screen.contains("q quits"), "{screen}");
+        press(&mut app, &[KeyCode::Tab]);
         let screen = draw(&mut term, &mut app);
         assert!(screen.contains("2 end-to-end tests of"), "{screen}");
         assert!(screen.contains("1 without a recording"), "{screen}");
@@ -909,8 +914,16 @@ mod tests {
         assert!(screen.contains("✓ a file opens"), "{screen}");
         assert!(screen.contains("○ a comment is saved"), "{screen}");
         assert!(!screen.contains("In the last 7 days"), "{screen}");
+        // Esc from the list is the overview it was opened over.
+        press(&mut app, &[KeyCode::Esc]);
+        let screen = draw(&mut term, &mut app);
+        assert!(screen.contains("In the last 7 days"), "{screen}");
+        assert!(!app.quit);
         // Enter opens the test under the cursor, on its own.
-        press(&mut app, &[KeyCode::Char('j'), KeyCode::Enter]);
+        press(
+            &mut app,
+            &[KeyCode::Tab, KeyCode::Char('j'), KeyCode::Enter],
+        );
         let screen = draw(&mut term, &mut app);
         assert!(
             screen.contains("tests/cli.rs:3 · it drives a terminal"),
@@ -1074,8 +1087,8 @@ mod tests {
             screen.contains(&format!("Before {short}: recorded, 1 test")),
             "{screen}"
         );
-        // The list, `q` from the overview, says what each test did.
-        press(&mut app, &[KeyCode::Char('q')]);
+        // The list, `Tab` from the overview, says what each test did.
+        press(&mut app, &[KeyCode::Tab]);
         let screen = draw(&mut term, &mut app);
         assert!(
             screen.contains("✓ a review is saved Δ") && screen.contains("✗→✓ screen changed"),
@@ -1211,10 +1224,10 @@ mod tests {
         press(&mut app, &[KeyCode::Char('E')]);
         until_indexed(&mut app);
 
-        // From the overview, `q` is the list; Enter opens the test under the cursor.
+        // From the overview, `Tab` is the list; Enter opens the test under the cursor.
         press(
             &mut app,
-            &[KeyCode::Char('q'), KeyCode::Char('j'), KeyCode::Enter],
+            &[KeyCode::Tab, KeyCode::Char('j'), KeyCode::Enter],
         );
         let state = test_view(&app);
         let rows = state.rows.items.clone();
@@ -1277,7 +1290,7 @@ mod tests {
         assert!(screen.contains("ran by “a review is saved”"), "{screen}");
 
         // The documentation opens at its heading.
-        press(&mut app, &[KeyCode::Char('E')]);
+        press(&mut app, &[KeyCode::Char('q')]);
         let doc = test_view(&app)
             .rows
             .items
@@ -1294,9 +1307,15 @@ mod tests {
             "a file opened otherwise is not marked"
         );
 
-        // E comes back to the test beside the list, and q gives the list the keys again.
-        press(&mut app, &[KeyCode::Char('E'), KeyCode::Char('q')]);
+        // q comes back to the test, and q again to the list; E is the tests' overview.
+        press(&mut app, &[KeyCode::Char('q'), KeyCode::Char('q')]);
         assert!(matches!(app.screen(), Screen::EndToEnd(state) if !state.main));
+        press(&mut app, &[KeyCode::Char('E')]);
+        assert!(matches!(
+            app.screen(),
+            Screen::EndToEnd(state)
+                if state.main && state.rows.current() == Some(&super::app::E2eRow::Overview)
+        ));
         assert!(!app.quit);
     }
 

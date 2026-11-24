@@ -302,6 +302,8 @@ pub struct App {
     pub theme_picker: Option<(usize, Theme)>,
     pub layout: DiffLayout,
     pub quit: bool,
+    /// A list of repositories is behind this one, which leaving it goes back to, `Esc` too.
+    pub list_behind: bool,
     pub measured: Measured,
     pub last_search: String,
     /// Set when the user asked for `$EDITOR`; the run loop suspends the terminal for it.
@@ -358,6 +360,7 @@ impl App {
             asking: Default::default(),
             layout,
             quit: false,
+            list_behind: false,
             measured: Measured::default(),
             last_search: String::new(),
             editor_request: None,
@@ -403,7 +406,7 @@ impl App {
         if self.session.has_index() || self.warming.is_some() {
             return;
         }
-        self.show_loading_unless_quick("reading the symbols…");
+        self.show_loading_unless_quick("Reading the symbols…");
         let (tx, rx) = std::sync::mpsc::channel();
         let root = self.session.root().to_path_buf();
         let files = self.session.files.clone();
@@ -783,7 +786,7 @@ impl App {
             if self
                 .loading
                 .as_ref()
-                .is_some_and(|l| l.label == "reading the symbols…")
+                .is_some_and(|l| l.label == "Reading the symbols…")
             {
                 self.done_loading();
             }
@@ -1019,7 +1022,19 @@ impl App {
     /// A key press, from the outermost layer inwards: whatever is over the screen, then the
     /// chord, then the keys that work everywhere, then the screen on top of the stack. Each
     /// layer that acts says so, and the ones below it do not see the key.
+    ///
+    /// `Esc` goes back one screen and never further: on the tests' first screen, where `q`
+    /// quits, it stays, unless a list of repositories is behind it to go back to.
     pub fn handle_key(&mut self, key: KeyEvent) {
+        let was_quitting = self.quit;
+        self.dispatch_key(key);
+        if key.code == KeyCode::Esc && self.quit && !was_quitting && !self.list_behind {
+            self.quit = false;
+            self.info("q quits");
+        }
+    }
+
+    fn dispatch_key(&mut self, key: KeyEvent) {
         self.message = None;
         if self.handle_overlay_key(key) {
             return;

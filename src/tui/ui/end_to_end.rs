@@ -55,7 +55,7 @@ pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
     let Some(opening) = &state.opening else {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " reading the tests…",
+                " Reading the tests…",
                 style::dim(&theme),
             ))),
             inner,
@@ -83,8 +83,7 @@ pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let height = match (state.rows.current(), &mut state.test) {
         (Some(E2eRow::Overview), _) => {
-            draw_overview(frame, &theme, state, base_status.as_deref(), inner);
-            inner.height
+            draw_overview(frame, &theme, state, base_status.as_deref(), inner)
         }
         (Some(E2eRow::Test(_)), Some(test)) => draw_test_view(frame, &theme, test, inner, true),
         _ => {
@@ -95,15 +94,25 @@ pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
     app.measured.list_height = height as usize;
 }
 
-/// The overview, opened from the list: what the stretch did to the tests and the code, each
-/// row leading to it, and what the one under the cursor means.
+/// The overview, the first screen of the tests: what the stretch did to the tests and the
+/// code, each row leading to it, and what the one under the cursor means; below it, the rest
+/// of the tests summed up. Returns the height of its rows, which is what a page key moves by.
 fn draw_overview(
     frame: &mut Frame,
     theme: &Theme,
     state: &mut EndToEndState,
     base_status: Option<&str>,
     area: Rect,
-) {
+) -> u16 {
+    let others = state
+        .opening
+        .as_ref()
+        .map(|o| others_lines(theme, &o.others, area.width.saturating_sub(2) as usize))
+        .unwrap_or_default();
+    // The summary's lines and its box, never more than half the screen.
+    let below = (others.len() as u16 + 2).min(area.height / 2);
+    let [top, bottom] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(below)]).areas(area);
     let explained = matches!(
         state.overview.current(),
         Some(E2eRow::Change(_) | E2eRow::Unran(_) | E2eRow::Base)
@@ -113,12 +122,103 @@ fn draw_overview(
         Constraint::Length(u16::from(explained)),
         Constraint::Fill(if explained { 2 } else { 0 }),
     ])
-    .areas(area);
+    .areas(top);
     let _ = gap;
     draw_list(frame, theme, state, base_status, rows, true);
     if explained {
         draw_stretch_detail(frame, theme, state, detail);
     }
+    if below > 2
+        && let Some(opening) = &state.opening
+    {
+        let o = &opening.others;
+        let mut title: Vec<Span> = vec![" unit and integration tests ".into()];
+        if o.total > 0 {
+            let mut said = format!(
+                "{} in {} ",
+                plural(o.total, "test", "tests"),
+                plural(o.files, "file", "files")
+            );
+            if o.ignored > 0 {
+                said.push_str(&format!("· {} marked to skip ", o.ignored));
+            }
+            title.push(said.dim());
+        }
+        let block = title_block(theme, title.into(), false);
+        let inner = block.inner(bottom);
+        frame.render_widget(block, bottom);
+        frame.render_widget(Paragraph::new(others), inner);
+    }
+    rows.height
+}
+
+/// The tests below the end-to-end ones, in lines for the overview's panel: the last run of
+/// the suite, the parts of the project they are in, and the way to every one of them.
+fn others_lines(theme: &Theme, o: &crate::e2e::Others, width: usize) -> Vec<Line<'static>> {
+    let dim = style::dim(theme);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if o.total == 0 {
+        lines.push(Line::from(Span::styled(
+            clip("None: every test here is end to end.", width),
+            dim,
+        )));
+        return lines;
+    }
+    match &o.last_run {
+        Some(run) => {
+            let f = &run.figures;
+            let failed = f.failed.unwrap_or(0);
+            let mut spans: Vec<Span<'static>> = vec![
+                format!("Last run, {}: ", run.check).into(),
+                match f.tests {
+                    Some(n) => plural(n as usize, "test", "tests").into(),
+                    None => "no count".into(),
+                },
+                ", ".into(),
+                if failed > 0 {
+                    Span::styled(format!("{failed} failed"), style::fg(theme.delete_fg).bold())
+                } else {
+                    Span::styled("none failed", style::fg(theme.insert_fg))
+                },
+            ];
+            if let Some(skipped) = f.skipped.filter(|n| *n > 0) {
+                spans.push(format!(", {skipped} skipped").into());
+            }
+            let mut after: Vec<String> = f.as_of.as_deref().and_then(age).into_iter().collect();
+            match run.stale {
+                Some(s) if s.commits > 0 || s.files > 0 => after.push(format!(
+                    "{} and {} changed since",
+                    plural(s.commits, "commit", "commits"),
+                    plural(s.files, "file", "files")
+                )),
+                Some(_) => after.push("about the code on disk".into()),
+                None => {}
+            }
+            if !after.is_empty() {
+                spans.push(Span::styled(format!(" · {}", after.join(" · ")), dim));
+            }
+            lines.push(Line::from(spans));
+        }
+        None => lines.extend(
+            wrap_text(
+                "No run on record: a check that writes a JUnit report would say how the last one went.",
+                width,
+            )
+            .into_iter()
+            .map(|l| Line::from(Span::styled(l, dim))),
+        ),
+    }
+    let areas: Vec<String> = o.areas.iter().map(|(a, n)| format!("{a} {n}")).collect();
+    lines.extend(
+        wrap_text(&format!("By area: {}", areas.join(" · ")), width)
+            .into_iter()
+            .map(Line::from),
+    );
+    lines.push(Line::from(Span::styled(
+        clip("P every test, by kind: what each checks, and how", width),
+        dim,
+    )));
+    lines
 }
 
 /// The repository has none: the first finding, what one would look like, and the offer.

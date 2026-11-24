@@ -19,7 +19,7 @@ mod harness;
 
 use std::path::Path;
 
-use harness::{DOWN, ENTER, ESC};
+use harness::{DOWN, ENTER, ESC, TAB};
 
 #[test]
 fn a_repository_opens_on_its_end_to_end_tests_and_plays_a_recording() {
@@ -49,7 +49,7 @@ fn a_repository_opens_on_its_end_to_end_tests_and_plays_a_recording() {
     t.wait_for("1 end-to-end test of 2 tests");
     t.wait_for("In the last 7 days");
     t.step("go to the list of tests, and open the one under the overview");
-    t.keys("q");
+    t.keys(TAB);
     t.wait_for("✓ a review survives a restart");
     t.keys(DOWN);
     t.keys(ENTER);
@@ -66,7 +66,7 @@ fn a_repository_opens_on_its_end_to_end_tests_and_plays_a_recording() {
 }
 
 #[test]
-fn the_tests_open_on_the_overview_and_q_lists_every_test() {
+fn the_tests_open_on_the_overview_and_tab_lists_every_test() {
     let mut t = term!();
     t.documents("SPECS.md#Terminal UI");
     t.wait_for("In the last 7 days");
@@ -78,7 +78,7 @@ fn the_tests_open_on_the_overview_and_q_lists_every_test() {
         || screen.clone(),
     );
     t.step("go to the list of every test");
-    t.keys("q");
+    t.keys(TAB);
     t.wait_for("○ a review survives a restart");
     let screen = t.screen();
     let first = screen.lines().nth(2).unwrap_or_default().to_string();
@@ -94,7 +94,7 @@ fn q_from_a_test_goes_back_to_the_list() {
     t.documents("SPECS.md#Terminal UI");
     t.wait_for("In the last 7 days");
     t.step("go to the list, and open the test");
-    t.keys("q");
+    t.keys(TAB);
     t.wait_for("○ a review survives a restart");
     t.keys(DOWN);
     t.keys(ENTER);
@@ -143,7 +143,7 @@ fn a_test_leads_to_the_code_it_ran_and_what_documents_it() {
     t.documents("SPECS.md#Terminal UI");
     t.wait_for("In the last 7 days");
     t.step("go to the list, and open the test");
-    t.keys("q");
+    t.keys(TAB);
     t.wait_for("✓ a review survives a restart");
     t.keys(DOWN);
     t.keys(ENTER);
@@ -740,7 +740,7 @@ fn a_test_s_source_opens_over_the_tests_and_q_goes_back_to_them() {
     t.documents("SPECS.md#Terminal UI");
     t.wait_for("In the last 7 days");
     t.step("go to the list, select the test and open its source");
-    t.keys("q");
+    t.keys(TAB);
     t.wait_for("○ a review survives a restart");
     t.keys(DOWN);
     t.keys("s");
@@ -847,6 +847,28 @@ fn uncommitted_changes_are_listed_and_open_as_a_diff() {
 }
 
 #[test]
+fn enter_in_a_diff_opens_the_file_at_the_line_under_the_cursor() {
+    let mut t = term!();
+    t.documents("SPECS.md#Diffs");
+    t.on_the_tests();
+    t.step("open the changed file's diff from the working tree changes");
+    t.keys("S");
+    t.wait_for("M src/main.rs");
+    t.keys(DOWN);
+    t.keys(ENTER);
+    t.wait_for("-0 +1 hunk 1/1");
+    t.step("open the file itself, from the hunk");
+    t.keys(ENTER);
+    t.wait_for(" explore ");
+    let screen = t.screen();
+    t.check(
+        "the file is open in the code, not the diff",
+        screen.contains("src/main.rs") && !screen.contains("hunk 1/1"),
+        || screen.clone(),
+    );
+}
+
+#[test]
 fn the_tests_read_as_a_specification_grouped_by_how_they_interact() {
     let mut t = term!();
     t.documents("SPECS.md#What kind of test each one is");
@@ -907,15 +929,54 @@ fn q_steps_back_and_then_gives_the_terminal_back() {
     t.wait_for("log main 2 commits");
     t.keys("q");
     t.wait_for("In the last 7 days");
-    t.step("go to the list of tests, then leave");
-    t.keys("q");
+    t.step("go to the list of tests, back to the overview, then leave");
+    t.keys(TAB);
     t.wait_for("Enter/Tab open");
+    t.keys("q");
+    t.wait_for("In the last 7 days");
     t.keys("q");
     t.exits();
     let alternate = t.alternate_screen();
     t.check("the terminal is back on its own screen", !alternate, || {
         "still on the alternate screen".into()
     });
+}
+
+#[test]
+fn esc_steps_back_to_the_tests_overview_and_never_quits() {
+    let mut t = term!();
+    t.documents("SPECS.md#Terminal UI");
+    t.on_the_tests();
+    t.step("open the list of tests, and the test in it");
+    t.keys(TAB);
+    t.wait_for("○ a review survives a restart");
+    t.keys(DOWN);
+    t.keys(ENTER);
+    t.wait_for("q/Tab the list");
+    t.step("Esc back to the list, then to the overview");
+    t.keys(ESC);
+    t.wait_for("Enter/Tab open");
+    t.keys(ESC);
+    t.wait_for("In the last 7 days");
+    t.step("Esc on the overview, the first screen of the tests, stays there");
+    t.keys(ESC);
+    t.wait_for("q quits");
+    let still_there = t.alternate_screen();
+    t.check("Esc did not quit", still_there, || {
+        "the program left the screen".into()
+    });
+}
+
+#[test]
+fn the_tests_overview_sums_up_the_unit_and_integration_tests_below_the_end_to_end_ones() {
+    let mut t = term!();
+    t.documents("SPECS.md#What a repository opens on");
+    t.on_the_tests();
+    t.step("read the panel under what the stretch did");
+    t.wait_for("unit and integration tests 1 test in 1 file");
+    t.wait_for("By area: ");
+    t.wait_for("No run on record");
+    t.wait_for("P every test, by kind");
 }
 
 /// Turns the scratch directory into a directory of checkouts: no repository of its own, and

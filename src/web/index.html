@@ -263,6 +263,10 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .e2e-test .head a.label:hover { color: var(--accent); }
 table.code tr.ran td.n { box-shadow: inset 3px 0 var(--ins-fg); }
 table.code tr.unran td.n { box-shadow: inset 3px 0 var(--moved); }
+.e2e .others-card { margin: 10px 0 4px; }
+.e2e .others-card h3 { margin: 0 0 2px; }
+.e2e .others-card .run { margin-top: 6px; }
+.e2e .others-card .areas { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 13px; }
 .e2e .stretch-card { cursor: default; margin: 10px 0 4px; }
 .e2e .stretch-card:hover { border-color: var(--border); }
 .e2e .stretch-card h3 { margin: 0 0 6px; }
@@ -597,12 +601,12 @@ footer .msg.error { color: var(--del-fg); }
 </header>
 <nav id="subnav" hidden></nav>
 <main>
-  <section id="content"><div class="center">reading the repository…</div></section>
+  <section id="content"><div class="center">Reading the repository…</div></section>
 </main>
 <div id="places" hidden></div>
 <div id="finder" hidden></div>
 <div id="ranges" hidden></div>
-<div id="loading" hidden role="status" aria-live="polite"><div class="label">loading…</div><div class="track"><div class="bar"></div></div></div>
+<div id="loading" hidden role="status" aria-live="polite"><div class="label">Loading…</div><div class="track"><div class="bar"></div></div></div>
 <div id="editor" hidden><div class="sheet"><div class="title"></div><div class="note" hidden></div><textarea></textarea>
   <div class="form"><div class="row"><button class="primary" data-act="ok">Save</button><button data-act="cancel">Cancel</button></div></div></div></div>
 <footer><span id="hint" class="dim"></span><span id="msg" class="msg"></span></footer>
@@ -658,19 +662,19 @@ function qs(params) {
 
 // What a request is doing, as the loading bar says it.
 const LOADING = [
-  ['/pulls', 'asking the forge for its pull requests…'], ['/pull', 'fetching the pull request…'],
-  ['/range/pick', 'taking what to review…'], ['/range', 'working out what it changed…'],
-  ['/e2e/test', 'reading the test…'], ['/e2e', 'reading the tests…'],
-  ['/stretch', 'working out what the stretch did…'], ['/spec', 'reading every test…'],
-  ['/diff', 'diffing…'], ['/file', 'reading the file…'], ['/log', 'reading the history…'],
-  ['/overview', 'reading the repository…'], ['/leans_on', 'reading the symbols…'],
+  ['/pulls', 'Asking the forge for its pull requests…'], ['/pull', 'Fetching the pull request…'],
+  ['/range/pick', 'Taking what to review…'], ['/range', 'Working out what it changed…'],
+  ['/e2e/test', 'Reading the test…'], ['/e2e', 'Reading the tests…'],
+  ['/stretch', 'Working out what the stretch did…'], ['/spec', 'Reading every test…'],
+  ['/diff', 'Diffing…'], ['/file', 'Reading the file…'], ['/log', 'Reading the history…'],
+  ['/overview', 'Reading the repository…'], ['/leans_on', 'Reading the symbols…'],
 ];
 
 // The bar in the middle of the page while requests take longer than a moment: drawn only past
 // 300 ms, so a quick answer never flashes it, and gone when the last of them is in.
 const loading = { running: 0, labels: [] };
 function startLoading(path) {
-  const label = (LOADING.find(([p]) => path.startsWith(p)) || [, 'loading…'])[1];
+  const label = (LOADING.find(([p]) => path.startsWith(p)) || [, 'Loading…'])[1];
   const entry = { label, shown: false };
   entry.timer = setTimeout(() => { entry.shown = true; drawLoading(); }, 300);
   loading.labels.push(entry);
@@ -1106,7 +1110,7 @@ async function openFile(path, line) {
   try {
     // A big file is a moment to fetch and draw; a tap that shows nothing meanwhile reads as
     // a tap that did nothing. A refresh of the file already open keeps it on screen.
-    if (!state.file || state.file.path !== path) $('#content').innerHTML = '<div class="center">reading the file…</div>';
+    if (!state.file || state.file.path !== path) $('#content').innerHTML = '<div class="center">Reading the file…</div>';
     // The lines a test ran are marked in the file it was opened on from that test, and only
     // there: another file is another question.
     if (state.ran && state.ran.path !== path) state.ran = null;
@@ -1514,7 +1518,7 @@ function drawStatus() {
   if (!el) return;
   const n = finder.groups.reduce((a, g) => a + g.hits.length, 0);
   el.dataset.found = n;
-  el.textContent = finder.searching ? 'searching the text…'
+  el.textContent = finder.searching ? 'Searching the text…'
     : finder.q.trim() ? `${n} found · Tab next group, Enter goes, Esc closes`
     : 'f: files · s: symbols · t: tests · d: docs · c: comments · "…" exact · /…/ regex · Tab next group';
 }
@@ -1800,7 +1804,7 @@ async function showOverview() {
   navigate(routes.overview());
   document.body.classList.remove('showfile');
   const content = $('#content');
-  content.innerHTML = '<div class="center">reading the repository…</div>';
+  content.innerHTML = '<div class="center">Reading the repository…</div>';
   try {
     const o = await api('/overview');
     const repo = state.repos[state.repo];
@@ -1813,9 +1817,9 @@ async function showOverview() {
       <button data-act="explain" title="have the agent write an orientation into OVERVIEW.md, under About">Explain this repository</button></div>
       <div class="overview">
         <section class="summary">
-          <div class="card" data-card="changes"><h3>Tests this week</h3><div class="dim">reading the history…</div></div>
-          <div class="card" data-card="run"><h3>Last test run</h3><div class="dim">reading the checks…</div></div>
-          <div class="card" data-card="areas"><h3>Tests by area</h3><div class="dim">reading the tests…</div></div>
+          <div class="card" data-card="changes"><h3>Tests this week</h3><div class="dim">Reading the history…</div></div>
+          <div class="card" data-card="run"><h3>Last test run</h3><div class="dim">Reading the checks…</div></div>
+          <div class="card" data-card="areas"><h3>Tests by area</h3><div class="dim">Reading the tests…</div></div>
         </section>
         <section class="state">
           <div class="figures">
@@ -1831,10 +1835,10 @@ async function showOverview() {
         </section>
         ${o.readme ? `<section><h3>${esc(o.readme.path)}</h3><pre class="readme">${esc(o.readme.opening)}</pre></section>` : ''}
         <section><h3>Start here</h3><div class="entries"></div></section>
-        <section><h3>What the rest of it leans on</h3><div class="leaning dim">reading the symbols…</div></section>
+        <section><h3>What the rest of it leans on</h3><div class="leaning dim">Reading the symbols…</div></section>
         <section class="testing"><h3>Tests</h3>
-          <div class="checks dim">reading the checks…</div>
-          <div class="suite dim">reading the tests…</div>
+          <div class="checks dim">Reading the checks…</div>
+          <div class="suite dim">Reading the tests…</div>
         </section>
         ${o.docs.length ? '<section><h3>Also written down</h3><div class="docs"></div></section>' : ''}
         ${st.biggest.length ? '<section><h3>Biggest files</h3><div class="biggest"></div></section>' : ''}
@@ -2094,7 +2098,7 @@ async function showEndToEnd({ main = true } = {}) {
   document.body.classList.remove('showfile');
   document.body.classList.toggle('showmain', main);
   const content = $('#content');
-  if (!content.querySelector(main ? '.e2e' : '#tests')) content.innerHTML = '<div class="center">reading the tests…</div>';
+  if (!content.querySelector(main ? '.e2e' : '#tests')) content.innerHTML = '<div class="center">Reading the tests…</div>';
   try {
     const o = await loadTests();
     if (state.view !== 'e2e' || currentRoute !== route) return;
@@ -2224,11 +2228,42 @@ function renderEndToEnd(content, o, alone = false) {
         <span class="dim">of ${num(o.total, 'test')}</span>${bits.length ? ' · ' + bits.join(' · ') : ''}
         <a href="${routes.spec({})}" class="more">all tests ›</a></div>`;
     if (o.as_of) root.appendChild(asOfNote(o.as_of));
-    root.insertAdjacentHTML('beforeend', `<section class="card stretch-card">${stretchChips(stretch)}<div class="dim">working out what ${esc(stretchName(stretch))} did…</div></section>`);
+    root.insertAdjacentHTML('beforeend', `<section class="card stretch-card">${stretchChips(stretch)}<div class="dim">Working out what ${esc(stretchName(stretch))} did…</div></section>`);
     bindStretchChips(root);
+    root.appendChild(othersCard(o.others));
     loadStretch(root, stretch);
   }
   root.scrollTop = keep;
+}
+
+// The tests below the end-to-end ones, summed up under them: how many, where, and how the last
+// run of the suite went when a check leaves a report of it. It leads to every test, by kind.
+function othersCard(others) {
+  const o = others || { total: 0, ignored: 0, files: 0, areas: [], last_run: null };
+  const card = document.createElement('section');
+  card.className = 'card others-card';
+  const num = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
+  let run = '';
+  if (o.last_run) {
+    const f = o.last_run.figures;
+    const failed = f.failed || 0;
+    const bits = [];
+    if (f.skipped) bits.push(`${f.skipped} skipped`);
+    if (f.as_of) bits.push(ago(f.as_of));
+    run = `<div class="run">Last run, <span class="mono">${esc(o.last_run.check)}</span>: ${f.tests === null || f.tests === undefined ? 'no count' : num(f.tests, 'test')},
+      ${failed ? `<span class="bad">${failed} failed</span>` : '<span class="fresh">none failed</span>'}
+      <span class="dim">${esc(bits.join(' · '))}</span> ${staleness(o.last_run.stale)}</div>`;
+  } else if (o.total) {
+    run = '<div class="dim run">No run on record: a check that writes a JUnit report would say how the last one went.</div>';
+  }
+  const areas = o.areas.map(([a, n]) => `<span class="area">${esc(a)} <b>${n}</b></span>`).join('');
+  card.innerHTML = o.total
+    ? `<h3>${num(o.total, 'unit and integration test')}</h3>
+      <div class="dim">in ${num(o.files, 'file')}${o.ignored ? ` · ${o.ignored} marked to skip` : ''}</div>
+      ${run}<div class="areas">${areas}</div><div class="more">Every test, by kind ›</div>`
+    : '<h3>No unit or integration tests</h3><div class="dim">Every test here is end to end.</div>';
+  card.onclick = () => showSpec({});
+  return card;
 }
 
 // One end-to-end test on a page of its own: where a reviewer goes into the code from. Its
@@ -2245,7 +2280,7 @@ async function showTestView(file, name) {
   document.body.classList.add('showmain');
   if (!state.e2e) loadTests().catch(fail);
   const content = $('#content');
-  content.innerHTML = '<div class="center">reading the test…</div>';
+  content.innerHTML = '<div class="center">Reading the test…</div>';
   let d;
   try {
     d = await api('/e2e/test?' + qs({ file, name }));
@@ -2738,7 +2773,7 @@ async function showSpec(params = {}) {
   const route = routes.spec(p);
   navigate(route);
   const content = $('#content');
-  if (!content.querySelector('.spec')) content.innerHTML = '<div class="center">reading the tests…</div>';
+  if (!content.querySelector('.spec')) content.innerHTML = '<div class="center">Reading the tests…</div>';
   try {
     const spec = await api('/spec?' + qs({ ...(p.commit ? {} : stretchParams(p.stretch)), commit: p.commit, by: p.by }));
     if (state.view !== 'spec' || currentRoute !== route) return;
@@ -3015,7 +3050,7 @@ function isImage(path) {
 async function showPicture(into, path) {
   const box = document.createElement('div');
   box.className = 'picture';
-  box.innerHTML = '<div class="dim">loading the picture…</div>';
+  box.innerHTML = '<div class="dim">Loading the picture…</div>';
   into.appendChild(box);
   try {
     const res = await fetch('/api/image?path=' + encodeURIComponent(path) + '&repo=' + state.repo,
@@ -3501,7 +3536,7 @@ async function openRanges() {
   if (!box.hidden) { box.hidden = true; return; }
   const now = state.specStretch || 'week';
   box.innerHTML = `<input class="find" placeholder="filter: a branch, a worktree, a pull request…">
-    <div class="steps"><div class="note">reading what there is to review…</div></div>`;
+    <div class="steps"><div class="note">Reading what there is to review…</div></div>`;
   box.hidden = false;
   const find = box.querySelector('input.find');
   const list = box.querySelector('.steps');
@@ -3633,7 +3668,7 @@ async function showRange(params, { focus = 'code' } = {}) {
   state.focus = ['docs', 'data'].includes(focus) ? focus : 'code';
   setTabs('range');
   const content = $('#content');
-  content.innerHTML = '<div class="center">reading the range…</div>';
+  content.innerHTML = '<div class="center">Reading the range…</div>';
   try {
     const d = await loadRange(params);
     const { pull, comments, commentsError } = d;

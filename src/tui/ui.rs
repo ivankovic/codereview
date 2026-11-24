@@ -555,7 +555,9 @@ fn hint_for(screen: &Screen) -> &'static str {
         Screen::Changes(_) => {
             "Enter diff  s staged/working  H history  ge the file  o open  q back"
         }
-        Screen::Diff(_) => "n/p hunks  ]/[ files  c comment  v layout  ge $EDITOR  o open  q back",
+        Screen::Diff(_) => {
+            "Enter the file  n/p hunks  ]/[ files  c comment  v layout  ge $EDITOR  o open  q back"
+        }
         Screen::Review(_) => {
             "Enter go to  x done  e edit  d delete  a/A ask agent  s completed  Z re-anchor  q back"
         }
@@ -572,10 +574,10 @@ fn hint_for(screen: &Screen) -> &'static str {
             "Enter go there  Space play  ] [ steps  0 start  z whole  w stretch  s source  q/Tab the list"
         }
         Screen::EndToEnd(state) if state.main => {
-            "Enter go there  b record before  w stretch  q/Tab the list"
+            "Enter go there  Tab every test  P by kind  b record before  w stretch  1-4 focus  q quit"
         }
         Screen::EndToEnd(_) => {
-            "Enter/Tab open  Space play  ] [ steps  w stretch  b record before  s source  ge video  o open  1-4 focus  q quit"
+            "Enter/Tab open  Space play  ] [ steps  w stretch  b record before  s source  ge video  o open  q the overview"
         }
         Screen::Agent => {
             "i ask  A address all pending  Esc cancel  1-9/y/n answer  t thoughts  l log  C clear  R restart  q back"
@@ -603,7 +605,7 @@ const HELP: &[(&str, &str)] = &[
     ),
     (
         "q / Esc",
-        "back; on a focus's first screen, to the tests; on the tests, quit",
+        "back; on a focus's first screen, to the tests; on the tests' overview, q quits and Esc stays",
     ),
     ("", ""),
     ("Everywhere", ""),
@@ -647,6 +649,10 @@ const HELP: &[(&str, &str)] = &[
     ("W", "repository picker"),
     ("", ""),
     ("End to end", ""),
+    (
+        "Tab",
+        "on the overview: the list of every end-to-end test; q from the list comes back",
+    ),
     ("Space  p", "play or pause the selected test's recording"),
     (
         "] [",
@@ -678,7 +684,7 @@ const HELP: &[(&str, &str)] = &[
     ),
     (
         "q",
-        "quit, or the repository list on a directory of checkouts",
+        "in the list, the overview; on the overview, quit, or the repository list on a directory of checkouts",
     ),
     ("", ""),
     ("One end-to-end test", ""),
@@ -756,6 +762,10 @@ const HELP: &[(&str, &str)] = &[
     ("H", "history of the selected file"),
     ("", ""),
     ("Diff", ""),
+    (
+        "Enter",
+        "the file as it is in the working tree, at the after line; a range's file: s, the code",
+    ),
     ("n / p", "next / previous hunk"),
     ("] [", "next / previous file of the same commit"),
     ("v", "layout: auto, side by side, unified"),

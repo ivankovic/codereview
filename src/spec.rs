@@ -513,10 +513,10 @@ pub fn area_of(path: &str) -> String {
 /// Area names as they are in this project: [`area_of`], except that a file directly in a
 /// source root and named after an area is that area's, the way Rust keeps a module's root
 /// file beside its directory (`src/web.rs` is `web`, with `src/web/`).
-struct AreaNames(BTreeSet<String>);
+pub(crate) struct AreaNames(BTreeSet<String>);
 
 impl AreaNames {
-    fn new<'a>(paths: impl Iterator<Item = &'a str>) -> Self {
+    pub(crate) fn new<'a>(paths: impl Iterator<Item = &'a str>) -> Self {
         Self(
             paths
                 .filter(|p| {
@@ -529,7 +529,7 @@ impl AreaNames {
         )
     }
 
-    fn of(&self, path: &str) -> String {
+    pub(crate) fn of(&self, path: &str) -> String {
         let (dir, file) = path.rsplit_once('/').unwrap_or(("", path));
         let stem = file.split('.').next().unwrap_or(file);
         let in_root = dir.is_empty() || dir.split('/').all(|d| SOURCE_ROOTS.contains(&d));

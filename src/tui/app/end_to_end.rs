@@ -221,10 +221,25 @@ impl EndToEndState {
             main: false,
         };
         // On the overview, the first row, opened: what a repository opens on is what the
-        // stretch did, and `q` from it is the list of every test.
+        // stretch did, and the tests' first screen; `Tab` from it is the list of every test.
         state.settle(1);
         state.main = matches!(state.rows.current(), Some(E2eRow::Overview));
         state
+    }
+
+    /// Opens the overview, the first row, when the list has one. False when it has none: a
+    /// repository with no end-to-end tests has neither.
+    pub fn to_overview(&mut self) -> bool {
+        match self.rows.items.iter().position(|r| *r == E2eRow::Overview) {
+            Some(at) => {
+                self.rows.cursor = at;
+                self.test = None;
+                self.full = false;
+                self.main = true;
+                true
+            }
+            None => false,
+        }
     }
 
     /// The report, when there is one to show.
@@ -681,7 +696,15 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc | KeyCode::Tab | KeyCode::Char('h') | KeyCode::Left
         );
         match (state.main, state.rows.current()) {
-            (true, Some(E2eRow::Overview)) if back => state.main = false,
+            // The overview is the tests' first screen: the list is opened over it, and going
+            // back from it is leaving the tests.
+            (true, Some(E2eRow::Overview)) if key.code == KeyCode::Tab => state.main = false,
+            (true, Some(E2eRow::Overview))
+                if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) =>
+            {
+                self.pop_screen()
+            }
+            (true, Some(E2eRow::Overview)) if back => {}
             (true, Some(E2eRow::Overview)) => self.handle_overview_key(key),
             (true, Some(E2eRow::Test(_)))
                 if back && state.test.as_ref().is_some_and(|t| t.full) =>
@@ -761,6 +784,8 @@ impl App {
             }
             KeyCode::Char('z' | 'o') if on_test => self.handle_end_to_end_test_key(key),
             KeyCode::Char('q') | KeyCode::Esc if state.full => state.full = false,
+            // Back from the list is the overview it was opened from.
+            KeyCode::Char('q') | KeyCode::Esc if state.to_overview() => {}
             KeyCode::Char('q') | KeyCode::Esc => self.pop_screen(),
             KeyCode::Char(' ') | KeyCode::Char('p') => {
                 if let Some(said) = play(&mut state.player, now) {
@@ -1060,6 +1085,7 @@ mod tests {
             unrecorded: 0,
             kind: None,
             ask: String::new(),
+            others: Default::default(),
         };
         let unran = |i: usize| Unran {
             path: format!("src/{i}.rs"),

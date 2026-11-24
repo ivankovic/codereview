@@ -169,6 +169,8 @@ impl Workspace {
         }
         let ctrl_c =
             key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+        let home = self.home;
+        self.app_mut().list_behind = home;
         self.app_mut().handle_key(key);
         if self.home && self.app().quit && !ctrl_c {
             self.app_mut().quit = false;

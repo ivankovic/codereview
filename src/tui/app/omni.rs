@@ -89,7 +89,7 @@ impl App {
         let Some(path) = files.get(index).map(|f| f.path.clone()) else {
             return;
         };
-        self.later(format!("diffing {path}…"), move |app| {
+        self.later(format!("Diffing {path}…"), move |app| {
             app.push_omni_now(target, files, sizes, index);
             if let (Some(row), Some(Screen::Omni(o))) = (row, app.screens.last_mut()) {
                 if o.shown == Shown::Diff {
