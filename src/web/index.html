@@ -77,7 +77,6 @@ header .focus { display: flex; border: 1px solid var(--border); border-radius: 6
 header .focus button { border: none; border-radius: 0; background: none; padding: 3px 12px; }
 header .focus button + button { border-left: 1px solid var(--border); }
 header .focus button.active { background: var(--cursor); color: var(--accent); }
-/* The side panel, hidden by its button or by \\. */
 #pending:empty { display: none; }
 .spacer { flex: 1; }
 #back { font-size: 18px; line-height: 1; padding: 2px 10px; }
@@ -197,22 +196,20 @@ tr.form td { background: var(--panel); padding: 6px 12px; white-space: normal; }
 .e2e .bad, .e2e-test.failed .mark { color: var(--del-fg); }
 .e2e .fresh, .e2e-test.passed .mark { color: var(--ins-fg); }
 .e2e .stale { color: var(--moved); }
-/* The tests' side panel: the overview, then each test under its file, and beside it what is
-   selected. Shown with the tests only. */
-aside#tests { width: 300px; min-width: 200px; max-width: 45vw; overflow: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 6px 0; resize: horizontal; }
-body:not([data-view=e2e]) aside#tests, body.nosidebar aside#tests { display: none; }
-aside#tests .row { padding: 3px 10px; cursor: pointer; display: flex; gap: 6px; align-items: baseline; }
-aside#tests .row:hover { background: var(--cursor); }
-aside#tests .row.selected { background: var(--visual); }
-aside#tests .row.overview { font-weight: 600; }
-aside#tests .file { padding: 8px 10px 2px; color: var(--accent); font-size: 12px; font-family: ui-monospace, monospace; }
-aside#tests .heading { padding: 8px 10px 2px; color: var(--moved); font-size: 12px; }
-aside#tests .row .label { flex: 1; min-width: 0; }
-aside#tests .row .mark { font-weight: bold; flex: none; }
-aside#tests .row.passed .mark { color: var(--ins-fg); }
-aside#tests .row.failed .mark { color: var(--del-fg); }
-aside#tests .row.norec .mark, aside#tests .row.ignored .label { color: var(--dim); }
-aside#tests .badges { display: flex; gap: 4px; flex-wrap: wrap; }
+/* The tests: the overview, then each test under its file, across the whole width. */
+#tests { padding: 6px 0; }
+#tests .row { padding: 3px 10px; cursor: pointer; display: flex; gap: 6px; align-items: baseline; }
+#tests .row:hover { background: var(--cursor); }
+#tests .row.selected { background: var(--visual); }
+#tests .row.overview { font-weight: 600; }
+#tests .file { padding: 8px 10px 2px; color: var(--accent); font-size: 12px; font-family: ui-monospace, monospace; }
+#tests .heading { padding: 8px 10px 2px; color: var(--moved); font-size: 12px; }
+#tests .row .label { flex: 1; min-width: 0; }
+#tests .row .mark { font-weight: bold; flex: none; }
+#tests .row.passed .mark { color: var(--ins-fg); }
+#tests .row.failed .mark { color: var(--del-fg); }
+#tests .row.norec .mark, #tests .row.ignored .label { color: var(--dim); }
+#tests .badges { display: flex; gap: 4px; flex-wrap: wrap; }
 .e2e-test { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel); min-width: 0; }
 .e2e-test.failed { border-color: var(--del-fg); }
 .e2e-test .head { display: flex; gap: 8px; align-items: baseline; font-size: 14px; }
@@ -428,7 +425,6 @@ footer .msg.error { color: var(--del-fg); }
   /* The focus picker is a row of its own under the breadcrumb, a quarter of the width each. */
   header .focus { order: 10; flex-basis: 100%; }
   header .focus button { flex: 1; padding: 4px 8px; }
-  #sidebarbtn { display: none; }
   header #more { padding: 4px 10px; font-size: 16px; line-height: 1; }
   header .tools { display: none; }
   header.open .tools { display: flex; flex-direction: column; gap: 8px; position: absolute; top: 100%; left: 0; right: 0; padding: 10px 12px 12px; background: var(--panel); border-bottom: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
@@ -494,10 +490,7 @@ footer .msg.error { color: var(--del-fg); }
   .wide { display: none; }
   .list .item { min-height: 44px; padding: 10px 8px; }
   /* The tests are the list, or what is selected in it, never both. */
-  aside#tests { width: auto; min-width: 0; max-width: none; flex: 1; border-right: none; resize: none; }
-  aside#tests .row { min-height: 44px; align-items: center; }
-  body[data-view=e2e]:not(.showmain) #content { display: none; }
-  body[data-view=e2e].showmain #tests { display: none; }
+  #tests .row { min-height: 44px; align-items: center; }
   .overview .item .why { flex-basis: 100%; text-align: left; }
   /* A change is a card: what happened and the test on top, where it is underneath. */
   .spec .item { flex-wrap: wrap; row-gap: 2px; }
@@ -593,7 +586,6 @@ footer .msg.error { color: var(--del-fg); }
     <button data-focus="docs" title="the repository's Markdown documents">Docs</button>
     <button data-focus="data" title="its datasets: CSV, JSON and the like">Data</button>
   </nav>
-  <button id="sidebarbtn" title="hide or show the side panel (\\)">☰</button>
   <button id="more" class="phone" title="search, colour scheme, and more">⋯</button>
   <div class="tools">
     <button id="searchbtn" title="search: a file, a definition, a test, a heading or any text (/)">Search</button>
@@ -605,7 +597,6 @@ footer .msg.error { color: var(--del-fg); }
 </header>
 <nav id="subnav" hidden></nav>
 <main>
-  <aside id="tests" aria-label="the end-to-end tests"></aside>
   <section id="content"><div class="center">reading the repository…</div></section>
 </main>
 <div id="places" hidden></div>
@@ -796,7 +787,7 @@ document.addEventListener('click', e => { if (!e.target.closest('header') || e.t
 document.addEventListener('click', e => { if (!e.target.closest('.panelhead')) $('#content .acts')?.classList.remove('open'); });
 
 // Comment rows are as wide as the panel that scrolls the code, not as wide as the code; the
-// width is measured, since the tests' side panel changes it.
+// width is measured, since a scrollbar changes it.
 const panelWatcher = window.ResizeObserver && new ResizeObserver(entries => {
   for (const en of entries) en.target.style.setProperty('--panel-w', Math.max(0, en.target.clientWidth - 24) + 'px');
 });
@@ -1152,12 +1143,6 @@ function setWrap(on) {
   try { localStorage.setItem('wrap', on ? '1' : ''); } catch (e) { /* private window */ }
   if (state.view === 'explore' && state.file) renderFile();
   else if (state.view === 'diff' && state.diff && state.diff.data) renderDiff();
-}
-
-// The side panel, hidden or shown: by its button in the header, or by \\. It is how this browser
-// is set up to read rather than where it is, so it has no address.
-function setSidebar(hidden) {
-  document.body.classList.toggle('nosidebar', hidden);
 }
 
 // What the focus lists, with no file on screen: the documents, the data, or, for the code, how
@@ -2096,24 +2081,30 @@ function showRangeName() {
 
 // ----- end to end ---------------------------------------------------------------------------
 
-// The tests' side panel and, beside it, their overview: what a repository opens on. On a phone
-// the panel comes first, and the overview is a tap away on it, at an address of its own.
-async function showEndToEnd({ main = false } = {}) {
+// What a repository, and a range, opens on: the overview of its end-to-end tests, across the
+// whole page, what the stretch did first. Every test opens the list, `main` false: the overview
+// first, then each test; a row opens on its own, at an address of its own, so the browser's back,
+// or the view's ‹ tests, comes back to the list.
+async function showEndToEnd({ main = true } = {}) {
   setTabs('e2e');
   state.testView = null;
   state.orphan = null;
-  const route = main ? routes.testsOverview() : routes.e2e();
+  const route = main ? routes.e2e() : routes.testsList();
   navigate(route);
   document.body.classList.remove('showfile');
   document.body.classList.toggle('showmain', main);
   const content = $('#content');
-  if (!content.querySelector('.e2e')) content.innerHTML = '<div class="center">reading the tests…</div>';
+  if (!content.querySelector(main ? '.e2e' : '#tests')) content.innerHTML = '<div class="center">reading the tests…</div>';
   try {
     const o = await loadTests();
     if (state.view !== 'e2e' || currentRoute !== route) return;
     // With no test to list, the list has nothing to offer: the finding is what there is.
-    if (!o.tests.length && !o.orphans.length) document.body.classList.add('showmain');
-    renderEndToEnd(content, o);
+    if (!main && (o.tests.length || o.orphans.length)) {
+      renderTestList(content);
+      if (o.as_of) setTimeout(() => { if (state.view === 'e2e' && currentRoute === route) showEndToEnd({ main }); }, 2000);
+      return;
+    }
+    renderEndToEnd(content, o, !o.tests.length && !o.orphans.length);
     // The tests came from OVERVIEW.md while the index is built; ask again until they have not.
     if (o.as_of) setTimeout(() => { if (state.view === 'e2e' && currentRoute === route) showEndToEnd({ main }); }, 2000);
   } catch (e) {
@@ -2122,28 +2113,34 @@ async function showEndToEnd({ main = false } = {}) {
   }
 }
 
-// The end-to-end tests, read again, and the side panel drawn from them.
+// The end-to-end tests, read again.
 async function loadTests() {
   state.e2e = await api('/e2e');
-  renderTestList();
   return state.e2e;
 }
 
-// The side panel: the overview first, then each test under its file, marked passed, failed or
+// The list: the overview first, then each test under its file, marked passed, failed or
 // without a recording, and the recordings of tests no longer here. What the stretch has to do
-// with each test is added beside it once it is known.
-function renderTestList() {
-  const aside = $('#tests');
+// with each test is added beside it once it is known, asked for here when the overview has not.
+function renderTestList(content) {
   const o = state.e2e;
-  if (!o) { aside.innerHTML = '<div class="center">reading the tests…</div>'; return; }
-  const sel = state.testView, orphan = state.orphan;
-  const parts = [`<div class="row overview${!sel && orphan === null ? ' selected' : ''}" data-overview>Overview</div>`];
+  const repo = state.repos[state.repo];
+  const n = o.tests.length;
+  content.innerHTML = `<div class="panelhead"><span class="path">${esc(repo ? repo.name : 'repository')}</span>
+      <span class="dim">${n} end-to-end test${n === 1 ? '' : 's'}${o.failed ? `, <span class="bad">${o.failed} failed</span>` : ''}</span>
+      <span class="spacer"></span>
+      <button data-act="summary">Summary</button>
+      <button data-act="search" title="search: a file, a definition, a test or any text (/)">Search</button></div>
+    <div id="tests" aria-label="the end-to-end tests"></div>`;
+  on(content, 'summary', showOverview);
+  on(content, 'search', () => openFinder());
+  const aside = $('#tests');
+  const parts = [`<div class="row overview" data-overview>Overview</div>`];
   for (const [path, tests] of groupBy(o.tests, t => t.path)) {
     parts.push(`<div class="file">${esc(path)} <span class="dim">${tests.length}</span></div>`);
     for (const t of tests) {
       const status = !t.recording ? 'norec' : t.recording.passed ? 'passed' : 'failed';
-      const here = sel && sel.file === t.path && sel.name === t.name;
-      parts.push(`<div class="row ${status}${t.ignored ? ' ignored' : ''}${here ? ' selected' : ''}" data-test="${esc(t.path + ' › ' + t.name)}" data-file="${esc(t.path)}" data-name="${esc(t.name)}">
+      parts.push(`<div class="row ${status}${t.ignored ? ' ignored' : ''}" data-test="${esc(t.path + ' › ' + t.name)}" data-file="${esc(t.path)}" data-name="${esc(t.name)}">
         <span class="mark">${{ passed: '✓', failed: '✗', norec: '○' }[status]}</span>
         <span class="label">${t.security ? '⚿ ' : ''}${esc(t.label)}${t.ignored ? ' <span class="dim">(skipped)</span>' : ''}</span>
         <span class="badges"></span></div>`);
@@ -2151,16 +2148,23 @@ function renderTestList() {
   }
   if (o.orphans.length) {
     parts.push(`<div class="heading">Recordings of tests no longer here</div>`);
-    o.orphans.forEach((r, i) => parts.push(`<div class="row norec${orphan === i ? ' selected' : ''}" data-orphan="${i}"><span class="mark">?</span><span class="label">${esc(r.test)}</span></div>`));
+    o.orphans.forEach((r, i) => parts.push(`<div class="row norec" data-orphan="${i}"><span class="mark">?</span><span class="label">${esc(r.test)}</span></div>`));
   }
   aside.innerHTML = parts.join('');
-  aside.querySelector('[data-overview]').onclick = () => showEndToEnd({ main: phone() });
+  // Rows are reached by keyboard as well: Tab to one, Enter opens it.
+  aside.querySelectorAll('.row').forEach(el => { el.tabIndex = 0; el.onkeydown = e => { if (e.key === 'Enter') el.click(); }; });
+  aside.querySelector('[data-overview]').onclick = () => showEndToEnd({ main: true });
   aside.querySelectorAll('[data-name]').forEach(el => el.onclick = () => showTestView(el.dataset.file, el.dataset.name));
   aside.querySelectorAll('[data-orphan]').forEach(el => el.onclick = () => showOrphan(Number(el.dataset.orphan)));
+  const stretch = state.specStretch || 'week';
   if (state.stretchReport) markTests(state.stretchReport);
+  else api('/stretch?' + qs(stretchParams(stretch)), { quiet: true })
+    .then(r => { if (aside.isConnected && (state.specStretch || 'week') === stretch) { state.stretchReport = r; markTests(r); } })
+    .catch(() => { /* the list stands without the marks; the overview says why */ });
+  hint('Click a test, or the overview, to open it. ? shows the keys.', 'Tap a test to open it.');
 }
 
-// A recording whose test is gone: it, beside the list, with nothing more to lead to.
+// A recording whose test is gone: it, on its own, with nothing more to lead to.
 function showOrphan(i) {
   const r = state.e2e && state.e2e.orphans[i];
   if (!r) return;
@@ -2168,15 +2172,14 @@ function showOrphan(i) {
   state.testView = null;
   state.orphan = i;
   document.body.classList.add('showmain');
-  renderTestList();
   const content = $('#content');
   content.innerHTML = `<div class="panelhead">${backToTests()}<span class="path">${esc(r.test)}</span></div><div class="e2e"></div>`;
-  on(content, 'tests', () => showEndToEnd());
+  on(content, 'tests', () => showEndToEnd({ main: false }));
   content.querySelector('.e2e').appendChild(e2eCard(null, r));
 }
 
-// The way back to the list, on a phone, where the list and what is selected in it take turns.
-const backToTests = () => '<button class="phone" data-act="tests" title="the list of tests">‹ tests</button>';
+// The way back to the list, from the overview, a test or a recording, each of which has the page.
+const backToTests = () => '<button data-act="tests" title="back to the list of tests">‹ tests</button>';
 
 // What an end-to-end test of each kind of software does, for a repository that has none.
 const E2E_LOOKS_LIKE = {
@@ -2185,7 +2188,9 @@ const E2E_LOOKS_LIKE = {
   'a command': 'For a command, that is the built program run with the arguments and input a person would give it, checking what it prints and what it leaves behind.',
 };
 
-function renderEndToEnd(content, o) {
+// The overview of the tests, with the way to the list of every one; with `alone`, what there is
+// when no test is there to list, and so no list to go to.
+function renderEndToEnd(content, o, alone = false) {
   const repo = state.repos[state.repo];
   const num = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
   const keep = content.querySelector('.e2e') ? content.querySelector('.e2e').scrollTop : 0;
@@ -2193,12 +2198,12 @@ function renderEndToEnd(content, o) {
   if (o.failed) bits.push(`<span class="bad">${o.failed} failed</span>`);
   if (o.unrecorded) bits.push(`${o.unrecorded} without a recording`);
   const stretch = state.specStretch || 'week';
-  content.innerHTML = `<div class="panelhead">${backToTests()}<span class="path">${esc(repo ? repo.name : 'repository')}</span>
+  content.innerHTML = `<div class="panelhead">${alone ? '' : '<button data-act="list" title="the list of every end-to-end test">Every test</button>'}<span class="path">${esc(repo ? repo.name : 'repository')}</span>
       <span class="spacer"></span>
       <button data-act="summary">Summary</button>
       <button data-act="search" title="search: a file, a definition, a test or any text (/)">Search</button></div>
     <div class="e2e"></div>`;
-  on(content, 'tests', () => showEndToEnd());
+  on(content, 'list', () => showEndToEnd({ main: false }));
   on(content, 'summary', showOverview);
   on(content, 'search', () => openFinder());
 
@@ -2238,8 +2243,7 @@ async function showTestView(file, name) {
   navigate(route);
   document.body.classList.remove('showfile');
   document.body.classList.add('showmain');
-  if (state.e2e) renderTestList();
-  else loadTests().catch(fail);
+  if (!state.e2e) loadTests().catch(fail);
   const content = $('#content');
   content.innerHTML = '<div class="center">reading the test…</div>';
   let d;
@@ -2268,7 +2272,7 @@ async function showTestView(file, name) {
       <section><h3>Smaller tests that reach the same code</h3><div class="smaller"></div></section>
     </div>`;
   content.querySelectorAll('[data-act=source]').forEach(b => b.onclick = () => openFile(d.path, d.line || undefined));
-  on(content, 'tests', () => showEndToEnd());
+  on(content, 'tests', () => showEndToEnd({ main: false }));
   const view = content.querySelector('.testview');
   const media = view.querySelector('.media');
   const steps = view.querySelector('ol.steps');
@@ -2359,7 +2363,7 @@ function bindStretchChips(root) {
 
 // What a stretch of history did, through the end-to-end tests: what happened to the tests,
 // the changed code none of them ran, and how each test went before and after. Drawn into the
-// overview's card for it, and beside each test in the side panel, once the server has worked
+// overview's card for it, and beside each test in the list, once the server has worked
 // it out.
 async function loadStretch(root, stretch) {
   const card = root.querySelector('.stretch-card');
@@ -2414,10 +2418,11 @@ async function loadStretch(root, stretch) {
   markTests(r);
 }
 
-// Each test in the side panel says what the stretch has to do with it, afresh each time it is
+// Each test in the list says what the stretch has to do with it, afresh each time it is
 // said: the changed lines it ran, and how it went before against now.
 function markTests(r) {
   const root = $('#tests');
+  if (!root) return;
   root.querySelectorAll('[data-test] .badges').forEach(b => { b.innerHTML = ''; });
   for (const t of r.touched) {
     const el = root.querySelector(`[data-test="${CSS.escape(t.path + ' › ' + t.name)}"] .badges`);
@@ -3775,7 +3780,6 @@ function renderSubnav(group, view) {
 
 document.querySelectorAll('header .focus button').forEach(b => b.onclick = () => openFocus(b.dataset.focus));
 $('#agentbtn').onclick = () => openView('agent');
-$('#sidebarbtn').onclick = () => setSidebar(!document.body.classList.contains('nosidebar'));
 
 // Goes to a focus where it was left: the view it was last on, or the file last open in it.
 // The focus already lit goes to its first view, as a way home.
@@ -3893,7 +3897,6 @@ const HELP = `
 <tr><td><kbd>Ask the agent to write the first ones</kbd></td><td>where there are none: the agent writes them, each leaving a recording</td></tr></table>
 <h3>The frame</h3><table>
 <tr><td><kbd>Tests</kbd> <kbd>Code</kbd> <kbd>Docs</kbd> <kbd>Data</kbd></td><td>what to look at: the tests, the code, the Markdown documents, the datasets</td></tr>
-<tr><td><kbd>☰</kbd> or <kbd>\\</kbd></td><td>hide or show the tests' side panel</td></tr>
 <tr><td><kbd>/</kbd> or <kbd>Search</kbd></td><td>one search: the open file, definitions, paths, tests, headings, comments, then every file's text; <kbd>f:</kbd> <kbd>s:</kbd> <kbd>t:</kbd> <kbd>d:</kbd> <kbd>c:</kbd> narrow it, "…" is exact, /…/ a regular expression; Tab goes to the next group</td></tr>
 <tr><td><kbd>Agent</kbd></td><td>the coding agent, over what is on screen</td></tr>
 <tr><td><kbd>o</kbd> or the range in the breadcrumb</td><td>open: a pull request, a worktree as it is on disk, a branch or a tag to review, then what to compare it with; or a stretch</td></tr></table>
@@ -3949,7 +3952,6 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key === '?') { $('#help').hidden = !$('#help').hidden; return; }
-  if (e.key === '\\') { setSidebar(!document.body.classList.contains('nosidebar')); return; }
   if (e.key === 'w' && !e.ctrlKey && !e.metaKey) { setWrap(!state.wrap); return; }
   if (e.key === '/') { e.preventDefault(); openFinder(); return; }
   // Where next from the name last clicked, again.
@@ -3992,8 +3994,8 @@ $('#theme').onchange = async e => {
 const routes = {
   prefix: () => state.repo ? `#/r${state.repo}` : '#',
   e2e: () => routes.prefix() + '/',
-  // The overview on its own, which is how a phone, showing one pane, gets to it from the list.
-  testsOverview: () => routes.prefix() + '/tests',
+  // The list of every end-to-end test, the overview first.
+  testsList: () => routes.prefix() + '/tests',
   test: (file, name) => routes.prefix() + '/test?' + qs({ file, name }),
   overview: () => routes.prefix() + '/summary',
   // What a focus lists with nothing open; a file opened in the documents or the data says so.
@@ -4059,7 +4061,7 @@ async function route() {
   if (path === '/agent') return showAgent();
   if (path === '/spec') return showSpec(params);
   if (path === '/summary') return showOverview();
-  if (path === '/tests') return showEndToEnd({ main: true });
+  if (path === '/tests') return showEndToEnd({ main: false });
   if (path === '/range' && (params.pull || (params.base && params.head))) return showRange(params, { focus: params.in || 'code' });
   if (path === '/test' && params.file && params.name) return showTestView(params.file, params.name);
   // What is left is the repository itself, which opens on what it demonstrably does: its

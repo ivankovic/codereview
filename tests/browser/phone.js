@@ -79,23 +79,22 @@ test('a phone gets the phone layout', async t => {
 test('a repository opens on its end-to-end tests, each with its recording', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('#tests [data-test]');
-  t.ok('it opens on the end-to-end tests', await page.evaluate(() =>
+  await page.waitForSelector('.e2e .e2e-head');
+  t.ok('it opens on the end-to-end tests\' overview', await page.evaluate(() =>
     document.querySelector('header .focus [data-focus=tests]').classList.contains('active') && location.hash === '#/'), await page.evaluate(() => location.hash));
+  t.ok('which says how many there are, and how many failed', await page.evaluate(() => {
+    const head = document.querySelector('.e2e .e2e-head').textContent.replace(/\s+/g, ' ').trim();
+    return /^2 end-to-end tests of \d+ tests · 1 failed/.test(head) ? true : head;
+  }));
+  t.step('tap Every test');
+  await page.click('#content .panelhead [data-act=list]');
+  await page.waitForSelector('#tests [data-test]');
   t.ok('the list starts with the overview, then each test, marked', await page.evaluate(() => {
     const rows = [...document.querySelectorAll('#tests .row')].map(r => r.textContent.replace(/\s+/g, ' ').trim());
     return rows[0] === 'Overview' && rows.some(r => r.startsWith('✓')) && rows.some(r => r.startsWith('✗')) ? true : rows.join(' | ');
   }));
   t.ok('each a row a finger can reach', await t.inView('#tests .row.passed'));
-  t.step('tap the overview');
-  await page.click('#tests .row.overview');
-  await page.waitForSelector('.e2e .e2e-head');
-  t.ok('which says how many there are, and how many failed', await page.evaluate(() => {
-    const head = document.querySelector('.e2e .e2e-head').textContent.replace(/\s+/g, ' ').trim();
-    return /^2 end-to-end tests of \d+ tests · 1 failed/.test(head) ? true : head;
-  }));
-  t.step('back to the list, and tap the test that passed');
-  await page.click('#content [data-act=tests]');
+  t.step('tap the test that passed');
   await page.click('#tests .row.passed');
   // The terminal recording, played as text: its first screen worth seeing.
   await page.waitForFunction(() => /reviews/.test(document.querySelector('.testview pre.term')?.textContent || ''), { timeout: 10000 });
@@ -132,29 +131,63 @@ test('a repository opens on its end-to-end tests, each with its recording', asyn
   t.ok('the test opens at its line', await page.evaluate(() => location.hash.includes('/file/tests/cli.rs')), await page.evaluate(() => location.hash));
 }, { docs: ['SPECS.md#What a repository opens on'] });
 
-test('on a wide screen the tests sit beside what is selected in them', async t => {
+test('the tests open on a full-width overview, and Every test is the full-width list', async t => {
   const page = t.page;
-  // A desk, not a phone: the side panel and what is selected in it are both on screen.
+  // A desk, not a phone: where a side panel would have room, there is none.
   await page.setViewport({ width: 1280, height: 800, isMobile: false, hasTouch: false });
   await t.open();
-  await page.waitForSelector('#tests [data-test]');
   await page.waitForSelector('.stretch-card h3');
-  t.ok('the list is beside the overview', await page.evaluate(() => {
-    const list = document.querySelector('#tests').getBoundingClientRect(), main = document.querySelector('#content').getBoundingClientRect();
-    return list.width > 0 && main.width > 0 && list.right <= main.left + 1 ? true : `list ${list.left}-${list.right}, main ${main.left}-${main.right}`;
-  }));
-  t.ok('with the overview selected', await page.evaluate(() => document.querySelector('#tests .row.overview').classList.contains('selected')));
+  // Whether both edges of the page, at the height of `sel`, are in what `within` names.
+  const edges = (sel, within) => page.evaluate((sel, within) => {
+    const r = document.querySelector(sel).getBoundingClientRect();
+    const y = r.top + r.height / 2;
+    const missed = [20, innerWidth - 30].filter(x => !document.elementFromPoint(x, y)?.closest(within));
+    return missed.length ? `not ${within} at x ${missed.join(', ')}` : true;
+  }, sel, within);
+  t.ok('the overview is all there is, across the page', await edges('.e2e .e2e-head', '#content'));
+  t.ok('no list beside it, and no button to hide one', await page.evaluate(() =>
+    !document.querySelector('aside, #sidebarbtn, #tests')));
   await page.screenshot({ path: `${t.dir}/overview.png` });
-  t.step('tap the test that failed');
+  t.step('click Every test');
+  await page.click('#content .panelhead [data-act=list]');
+  await page.waitForSelector('#tests [data-test]');
+  t.ok('the list is at an address of its own', await page.evaluate(() => location.hash === '#/tests'), await page.evaluate(() => location.hash));
+  t.ok('and is all there is, across the page', await edges('#tests .row.overview', '#tests .row.overview'));
+  t.ok('with the overview gone from beside it', await page.evaluate(() => !document.querySelector('.stretch-card')));
+  t.step('press \\');
+  await page.keyboard.press('Backslash');
+  t.ok('which hides nothing', await page.evaluate(hittable, '#tests .row.failed'));
+  await page.screenshot({ path: `${t.dir}/list.png` });
+}, { docs: ['SPECS.md#Browser UI'] });
+
+test('a test opens on its own from the list and back returns to the list', async t => {
+  const page = t.page;
+  await page.setViewport({ width: 1280, height: 800, isMobile: false, hasTouch: false });
+  await t.open('#/tests');
+  await page.waitForSelector('#tests .row.failed');
+  t.step('click the test that failed');
   await page.click('#tests .row.failed');
   await page.waitForSelector('.testview .ran');
-  t.ok('the test is beside the list, which stays', await page.evaluate(() =>
-    document.querySelector('#tests .row.failed').classList.contains('selected') && document.querySelector('#tests').getBoundingClientRect().width > 0));
+  t.ok('the test has the page to itself', await page.evaluate(() => {
+    const view = document.querySelector('.testview').getBoundingClientRect();
+    const at = document.elementFromPoint(20, view.top + 10)?.closest('#content');
+    return !document.querySelector('#tests') && at ? true : 'the list is still there, or the view is not at the left edge';
+  }));
+  t.ok('at an address of its own', await page.evaluate(() => location.hash.startsWith('#/test?')), await page.evaluate(() => location.hash));
+  t.ok('with a way back to the list', await page.evaluate(hittable, '#content .panelhead [data-act=tests]'));
   await page.screenshot({ path: `${t.dir}/test.png` });
-  t.step('press \\\\');
-  await page.keyboard.press('Backslash');
-  t.ok('the list hides, and the test takes the width', await page.evaluate(() =>
-    document.querySelector('#tests').getBoundingClientRect().width === 0 && document.querySelector('#content').getBoundingClientRect().left < 2));
+  t.step('go back');
+  await page.goBack();
+  await page.waitForSelector('#tests .row.failed');
+  t.ok('back is the list', await page.evaluate(() => location.hash === '#/tests'), await page.evaluate(() => location.hash));
+  t.step('press Enter on the test that passed');
+  await page.focus('#tests .row.passed');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.testview');
+  t.step('click ‹ tests');
+  await page.click('#content .panelhead [data-act=tests]');
+  await page.waitForSelector('#tests .row.overview');
+  t.ok('and ‹ tests comes back to the list', await page.evaluate(() => location.hash === '#/tests'), await page.evaluate(() => location.hash));
 }, { docs: ['SPECS.md#Browser UI'] });
 
 test('a repository without end-to-end tests opens on saying so', async t => {
@@ -356,7 +389,7 @@ test('the tests read as sentences, folded by how they interact and by file', asy
 test('the focuses are Tests, Code, Docs and Data, and the page opens on Tests', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('#tests [data-test]');
+  await page.waitForSelector('.e2e .e2e-head');
   t.ok('the focus picker is in that order', await page.evaluate(() => {
     const names = [...document.querySelectorAll('header .focus button')].map(b => b.textContent.trim()).join(', ');
     return names === 'Tests, Code, Docs, Data' ? true : names;
@@ -386,7 +419,7 @@ test('the focuses are Tests, Code, Docs and Data, and the page opens on Tests', 
 test('the breadcrumb names the branch and the range the tests are seen through', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('.e2e');
+  await page.waitForSelector('.e2e .e2e-head');
   t.ok('the branch is in the header', await page.evaluate(hittable, '#branch'));
   t.ok('and so is the range', await page.evaluate(() => document.querySelector('#range').textContent.trim() === 'last 7 days' ? true : document.querySelector('#range').textContent));
   t.ok('the header is two rows: the breadcrumb, Agent and the menu, then the focus picker', await page.evaluate(() => {
@@ -404,7 +437,7 @@ test('the breadcrumb names the branch and the range the tests are seen through',
 test('the review range is picked from the breadcrumb', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('#tests [data-test]');
+  await page.waitForSelector('.e2e .e2e-head');
   t.step('tap the range in the breadcrumb');
   await page.click('#range');
   await page.waitForSelector('#ranges .choice');
@@ -420,7 +453,7 @@ test('the review range is picked from the breadcrumb', async t => {
 test('o opens what to review, as the range in the breadcrumb does', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('#tests [data-test]');
+  await page.waitForSelector('.e2e .e2e-head');
   t.step('press o');
   await page.keyboard.press('o');
   await page.waitForSelector('#ranges [data-head]');
@@ -431,7 +464,8 @@ test('o opens what to review, as the range in the breadcrumb does', async t => {
 /// code's, a tap away.
 async function landsOnTestsThenCode(t) {
   const page = t.page;
-  await page.waitForFunction(() => location.hash.endsWith('/tests'));
+  // The tests' overview, at the root: what a range did to them is what it opens on.
+  await page.waitForFunction(() => /#\/$/.test(location.hash) && document.querySelector('.stretch-card'));
   t.ok('it opens on what it did to the tests', await page.evaluate(() =>
     document.querySelector('header .focus [data-focus=tests]').classList.contains('active')));
   t.step('go to its code');
@@ -446,7 +480,7 @@ const filesOfRange = () => [...document.querySelectorAll('.range .files .item')]
 test('a pull request from the forge opens with its files and comments', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('#tests [data-test]');
+  await page.waitForSelector('.e2e .e2e-head');
   t.step('open the range picker, which asks the forge for its pull requests');
   await page.click('#range');
   await page.waitForSelector('#ranges .pulls .choice');
@@ -477,7 +511,7 @@ test('a pull request from the forge opens with its files and comments', async t 
 test('a branch is compared with the one checked out as a pull request would be', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('#tests [data-test]');
+  await page.waitForSelector('.e2e .e2e-head');
   t.step('open the range picker and find the feature branch');
   await page.click('#range');
   await page.waitForSelector('#ranges [data-head="feature"]');
@@ -500,7 +534,7 @@ test('a branch is compared with the one checked out as a pull request would be',
 test('a worktree is reviewed as it is on disk, against its own last commit', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('#tests [data-test]');
+  await page.waitForSelector('.e2e .e2e-head');
   t.step('open the range picker and pick the agent\'s worktree');
   await page.click('#range');
   await page.waitForSelector('#ranges [data-head="worktree agent"]');
@@ -525,7 +559,7 @@ test('a worktree is reviewed as it is on disk, against its own last commit', asy
 test('an added file reads as code, with a way to its diff', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('#tests [data-test]');
+  await page.waitForSelector('.e2e .e2e-head');
   t.step('review the agent\'s worktree against its last commit, and open the file it added');
   await page.click('#range');
   await page.waitForSelector('#ranges [data-head="worktree agent"]');
@@ -556,14 +590,14 @@ test('the breadcrumb names the file on screen, and nothing where there is none',
   t.ok('and not a row of its own', await page.evaluate(() => !document.querySelector('#content .panelhead .path')));
   t.step('go to the tests');
   await page.click('header .focus [data-focus=tests]');
-  await page.waitForSelector('#tests [data-test]');
+  await page.waitForSelector('.e2e .e2e-head');
   t.ok('the file has gone from it', await page.evaluate(() => document.querySelector('#crumbfile').hidden));
 }, { docs: ['SPECS.md#Browser UI'] });
 
 test('a request that takes a while puts up a loading bar, and takes it down', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('#tests [data-test]');
+  await page.waitForSelector('.e2e .e2e-head');
   t.step('a request still running after a moment');
   await page.evaluate(() => { window.__done = startLoading('/pull'); });
   t.ok('not at once', await page.evaluate(() => document.querySelector('#loading').hidden));
@@ -582,7 +616,7 @@ test('a request that takes a while puts up a loading bar, and takes it down', as
 test('the Docs and Data focuses list the documents and the datasets', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('.e2e');
+  await page.waitForSelector('.e2e .e2e-head');
   t.step('tap Docs');
   await page.click('header .focus [data-focus=docs]');
   await page.waitForSelector('#content .files [data-file]');
@@ -610,7 +644,7 @@ test('the Docs and Data focuses list the documents and the datasets', async t =>
 test('the Code focus lands on the summary, with the file, changes, log and review beside it', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('.e2e');
+  await page.waitForSelector('.e2e .e2e-head');
   t.step('tap Code');
   await page.click('header .focus [data-focus=code]');
   await page.waitForSelector('.overview .summary');
@@ -626,7 +660,7 @@ test('the Code focus lands on the summary, with the file, changes, log and revie
   t.ok('File with nothing open says how to get to one', await page.evaluate(() => location.hash.endsWith('/code')), await page.evaluate(() => location.hash));
   t.step('tap Tests, then Code again');
   await page.click('header .focus [data-focus=tests]');
-  await page.waitForSelector('.e2e');
+  await page.waitForSelector('.e2e .e2e-head');
   await page.click('header .focus [data-focus=code]');
   await page.waitForSelector('#content .landing');
   t.ok('Code goes back to the view it was last on', await page.evaluate(() => location.hash.endsWith('/code')), await page.evaluate(() => location.hash));
@@ -635,7 +669,7 @@ test('the Code focus lands on the summary, with the file, changes, log and revie
 test('the agent opens from the header, over what was on screen', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('.e2e');
+  await page.waitForSelector('.e2e .e2e-head');
   t.step('tap Agent');
   await page.click('#agentbtn');
   await page.waitForSelector('#agent');
@@ -725,20 +759,6 @@ test('writing a comment takes over the screen', async t => {
   await pause(200);
 }, { docs: ['SPECS.md#Browser UI'] });
 
-test('a backslash hides the tests\' side panel and brings it back', async t => {
-  const page = t.page;
-  await page.setViewport({ width: 1280, height: 800, isMobile: false, hasTouch: false });
-  await t.open();
-  await page.waitForSelector('#tests .row');
-  t.ok('the list of tests is there', await page.evaluate(hittable, '#tests .row'));
-  t.step('press \\');
-  await page.keyboard.press('Backslash');
-  t.ok('the side panel is gone', await page.evaluate(() => document.querySelector('#tests').getBoundingClientRect().width === 0));
-  t.step('press \\ again');
-  await page.keyboard.press('Backslash');
-  t.ok('and back', await page.evaluate(hittable, '#tests .row'));
-}, { docs: ['SPECS.md#Browser UI'] });
-
 test('the code lists no files and says to search', async t => {
   const page = t.page;
   await t.open('#/code');
@@ -823,7 +843,7 @@ test('long lines wrap where the screen ends', async t => {
 
 test('a test opens on its own, with the code it ran and what documents it', async t => {
   const page = t.page;
-  await t.open();
+  await t.open('#/tests');
   await page.waitForSelector('#tests .row.failed');
   t.step('tap the failed test');
   await page.click('#tests .row.failed');
@@ -864,9 +884,7 @@ test('a test opens on its own, with the code it ran and what documents it', asyn
 test('a stretch says what no end-to-end test ran, and how each test ran before it', async t => {
   const page = t.page;
   await t.open();
-  await page.waitForSelector('#tests .row.failed');
-  t.step('open the overview, and look at the uncommitted work');
-  await page.click('#tests .row.overview');
+  t.step('on the overview, look at the uncommitted work');
   await page.waitForSelector('.stretch-card h3');
   await page.click('.stretch-card [data-stretch=uncommitted]');
   // The card of the last 7 days is redrawn as the uncommitted work's: wait for that one.
@@ -877,21 +895,23 @@ test('a stretch says what no end-to-end test ran, and how each test ran before i
     const row = document.querySelector('.stretch-card .unran .item').textContent.replace(/\s+/g, ' ').trim();
     return /^1 of 2 changed lines no end-to-end test ran/.test(head) && /src\/core\.rs\s*1 of 2 lines/.test(row) ? true : head + ' | ' + row;
   }));
-  t.ok('and which test ran the rest', await page.evaluate(() =>
-    /Δ1/.test(document.querySelector('#tests .row.failed .badges').textContent)));
   t.ok('recording the tests before it is a tap', await t.inView('.stretch-card .base [data-act=record]'));
   t.ok('which says what it will run', await page.evaluate(() =>
     /runs make e2e in a worktree of [0-9a-f]{7}/.test(document.querySelector('.stretch-card .base').textContent.replace(/\s+/g, ' '))));
   t.step('record the tests at the base');
   await page.click('.stretch-card .base [data-act=record]');
   await page.waitForFunction(() => /Before: the tests as they ran at/.test(document.querySelector('.stretch-card .base')?.textContent || ''), { timeout: 30000 });
-  t.ok('each test says how it ran before and how it runs now', await page.evaluate(() => {
+  t.step('to the list of every test');
+  await page.click('#content .panelhead [data-act=list]');
+  await page.waitForSelector('#tests .row.failed .badges');
+  t.ok('the list says which test ran the rest of the change', await page.evaluate(() =>
+    /Δ1/.test(document.querySelector('#tests .row.failed .badges').textContent)));
+  t.ok('and how each test ran before and how it runs now', await page.evaluate(() => {
     const badges = sel => document.querySelector(sel + ' .badges').textContent.replace(/\s+/g, ' ');
     const listed = badges('#tests .row.passed'), saved = badges('#tests .row.failed');
     return /✓→✓ screen/.test(listed) && /✓→✗/.test(saved) ? true : listed + ' | ' + saved;
   }));
-  t.step('back to the list, and open the test whose screen changed');
-  await page.click('#content [data-act=tests]');
+  t.step('open the test whose screen changed');
   await page.click('#tests .row.passed');
   await page.waitForSelector('.testview .compare ol.pairs li');
   t.ok('its steps pair up, before and now', await page.evaluate(() => {

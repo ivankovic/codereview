@@ -188,7 +188,8 @@ and another line number, on a phone); the Comment button in the file header comm
 file, as does the Comment on a document's row in Docs. The frame is the terminal UI's: a
 breadcrumb across the top, and the focus at the right — Tests (end to end, and every test), Code
 (the summary, the file, changes, log, comments and notes), Docs and Data — with the agent a button
-beside it and the tests' side panel hidden by ☰ or `\`. There is no file tree: Search, or `/`,
+beside it. There is no side panel anywhere: the tests open on their overview, Every test lists
+them, and a test opens on its own, with `‹ tests` and the browser's back to return. There is no file tree: Search, or `/`,
 finds a file, a definition, a test, a heading or any text, and a click on a name in the code shows
 where it leads — its definition, its usages, the tests that ran it, the documents that mention it.
 Everything else the terminal UI does is a button. Every view has an

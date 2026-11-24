@@ -921,10 +921,9 @@ several served, the selector that switches between them), the branch, the review
 commit and, in a file or a diff, the file's path, which the file's own header no longer repeats —
 and at the right the focus picker, Tests, Code, Docs and Data, in that order, the one on
 screen lit; beside it a button for the agent, which opens it over whatever focus was on screen and
-carries the mark that it is working or waiting for an answer, and the pending comments counted. The
-tests' side panel hides and shows again with the header's ☰ or `\`, which is how this browser reads
-rather than where it is, so it has no address; it is the only part of the page that hides, and the
-code has none. Otherwise the page has the same views: the file, changes, log and history, diff,
+carries the mark that it is working or waiting for an answer, and the pending comments counted.
+There is no side panel in any view, and nothing on the page hides: each view has the whole width.
+Otherwise the page has the same views: the file, changes, log and history, diff,
 review, notes and the agent, and an overview the terminal UI has not. A click on a name in the code
 opens the menu of where it leads (see Navigation) beside it: each group a heading with its count and
 its letter, the obvious step under the cursor, a letter moving to its group, the arrows moving,
@@ -978,40 +977,40 @@ keeps the scroll where it was, says nothing in the footer, and leaves the agent'
 agent's own poll. A write of the page's own moves the version too, so the next reading after one
 becomes the baseline instead of redrawing what the page has just drawn.
 
-A repository opens on its end-to-end tests, in the Tests focus, at the root address, with nothing
-of the code drawn first. The views a focus holds are a row under the header: the tests hold the
+A repository opens on its end-to-end tests, in the Tests focus, at the root address, with nothing of
+the code drawn first. The views a focus holds are a row under the header: the tests hold the
 end-to-end ones, with a test's own view, and All tests, the specification; the code holds Summary
 (the overview, at `summary`), File, Changes, Log, Comments and Notes; File with nothing open, at
 `code`, says what the repository holds and how to get to a file, and lists none. Docs and Data each
 list their files, the documents and the datasets as the terminal UI has them, at `docs` and `data`,
-each with its change letter and pending comments, and
-a file opened from one says so in its address, so a reload keeps the focus; each remembers the
-file last open in it. A focus lands on the view or file it was last on in this page, the first of
-them to begin with, and the focus already lit goes to its first view. The end-to-end tests are a
-side panel beside what is selected in it, as in the terminal UI: the overview first, selected when
-they open, then each test under its file, with a mark for how its last run went, its sentence, and
-a security or skipped mark, then the recordings of tests no longer here. Beside the overview are
-the counts — the end-to-end tests against all the tests, the failed and the ones without a
-recording — the stretch buttons of the specification, and a card saying what the chosen stretch
-did; each test in the panel carries what the stretch has to do with it: `Δ` and the changed lines
-it ran, and how it went before against now, with the whole of it said when it is pointed at. A
-file opened from the changed code no test ran marks those lines in another colour, under a line
-saying so. Recording the base shows the command's progress and the end of its output, and the card
-is worked out again when it is done. A test selected is its own view, at `test` with its file and
-name: its file and line (which open it), why it counts, when it ran and against which commit; its
-recording and its failures beside the steps, each step's line of the test under it, which opens
-the test there, and tapping a step goes to its moment; then the code it ran, each file with a bar
-of what ran and what only it ran, the documentation marked as named or as a guess with the words
-it shares, and the smaller tests. A video is fetched with the API token and played from memory by
-the browser's own player; a terminal recording is fetched as the server's frames and drawn as text
-on a dark terminal, sized to fit, opening on the first frame with anything on it, with a play
-button, a scrubber and the time; the step at the current moment is lit as it plays. A recording
-whose test is gone, selected, is that recording with its steps. A file opened from the code a test
-ran marks those lines in its gutter, under a line naming the test that leads back to it; another
-file opened later is not marked. A repository without any end-to-end test has the finding beside
-the panel, with the button that asks the agent and one to the tests it has. On a phone the panel
-and what is selected in it take turns: the panel first, the overview at `tests`, and a button on
-what is selected goes back to the panel.
+each with its change letter and pending comments, and a file opened from one says so in its address,
+so a reload keeps the focus; each remembers the file last open in it. A focus lands on the view or
+file it was last on in this page, the first of them to begin with, and the focus already lit goes to
+its first view. The end-to-end tests open on their overview, across the page, as a range opens on it
+too: what the chosen stretch did first. Every test, in its header, opens the list of them at
+`tests`, across the page: the overview first, then each test under its file, with a mark for how its
+last run went, its sentence, and a security or skipped mark, then the recordings of tests no longer
+here. A click on a row, or `Enter` on it, opens it on its own: the overview at the root, a test at
+`test`, a recording on its own; a test and a recording have `‹ tests` in their header, and the
+browser's back returns to the list as well. The overview has the counts — the end-to-end tests
+against all the tests, the failed and the ones without a recording — the stretch buttons of the
+specification, and a card saying what the chosen stretch did; each test in the list carries what the
+stretch has to do with it: `Δ` and the changed lines it ran, and how it went before against now,
+with the whole of it said when it is pointed at. A file opened from the changed code no test ran
+marks those lines in another colour, under a line saying so. Recording the base shows the command's
+progress and the end of its output, and the card is worked out again when it is done. A test opened
+is its own view, at `test` with its file and name: its file and line (which open it), why it counts,
+when it ran and against which commit; its recording and its failures beside the steps, each step's
+line of the test under it, which opens the test there, and tapping a step goes to its moment; then
+the code it ran, each file with a bar of what ran and what only it ran, the documentation marked as
+named or as a guess with the words it shares, and the smaller tests. A video is fetched with the API
+token and played from memory by the browser's own player; a terminal recording is fetched as the
+server's frames and drawn as text on a dark terminal, sized to fit, opening on the first frame with
+anything on it, with a play button, a scrubber and the time; the step at the current moment is lit
+as it plays. A recording whose test is gone, opened, is that recording with its steps. A file opened
+from the code a test ran marks those lines in its gutter, under a line naming the test that leads
+back to it; another file opened later is not marked. A repository without any end-to-end test has no
+list: its overview is the finding, with the button that asks the agent and one to the tests it has.
 
 The breadcrumb's range is a button that opens the range picker under it, in the terminal UI's two
 steps and with its choices: what to review — the pull requests, which it says it is asking for
@@ -1102,7 +1101,7 @@ of the width each and none cut short. It gets out of the way as the content scro
 back as it scrolls up, except while its own menu is open. Nothing runs along the bottom edge. The
 views a focus holds are the row under the header, which sticks; the log is also a button in the
 changes view's header and the notes in the review's, each keeps its own address. Views
-show one pane at a time: the list or the file, the commits or one commit, each with a back button;
+show one pane at a time, as every width does: the commits or one commit, each with a back button;
 the menu of where a name leads is a sheet over the lower half, and the search the whole screen.
 Everything the file's header can do except
 Comment is behind one button, as a menu under it: seven buttons are three rows of a small screen,
