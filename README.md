@@ -62,7 +62,7 @@ cargo install codereview                  # terminal UI
 cargo install codereview --features web   # terminal and browser UI
 ```
 
-You need a Rust toolchain (edition 2024, rustc 1.90 or later), a C compiler for the tree-sitter
+You need a Rust toolchain (edition 2024, rustc 1.92 or later), a C compiler for the tree-sitter
 grammars, and `git` on `PATH`.
 
 ## License

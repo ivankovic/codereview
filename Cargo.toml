@@ -2,7 +2,7 @@
 name = "codereview"
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.92"
 description = "Explore and review fast-changing codebases: comments in REVIEW.md, notes in NOTES.md, syntax-aware diffs, file and repository history"
 license = "AGPL-3.0-only"
 repository = "https://github.com/ivankovic/codereview"
@@ -21,7 +21,7 @@ clap = { version = "4.5", features = ["derive"] }
 # Syntax-aware diffing: the library API (`omnidiff::Diff`, its line operations and sizes) and,
 # under this crate's `tui` feature, omnidiff's own per-file diff view, hosted in the terminal UI
 # (`omnidiff::tui::embed`). Without `tui`, `default-features = false` leaves its viewer out.
-omnidiff = { git = "https://github.com/ivankovic/omnidiff", branch = "library-api-embed", default-features = false }
+omnidiff = { git = "https://github.com/ivankovic/omnidiff", branch = "main", default-features = false }
 regex = "1.10"
 # Same major as omnidiff's, so its grammars (reached through `omnidiff::code::language`) are
 # usable here for symbol extraction without a second copy of tree-sitter.
