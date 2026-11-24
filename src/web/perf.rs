@@ -121,20 +121,12 @@ fn operations(file: &str) -> Vec<Op> {
         get("open the largest file", f("/api/file?path={file}")),
         get("blame", f("/api/blame?path={file}")),
         get("version poll", f("/api/version?path={file}")),
-        get("symbols of the file", f("/api/symbols?path={file}")),
         get(
-            "definitions of a name",
-            "/api/definitions?name=Session".into(),
+            "where next from the file's first line",
+            f("/api/nav/here?path={file}&line=0&column=4"),
         ),
-        get(
-            "references to a name",
-            "/api/references?name=Session".into(),
-        ),
-        get("symbol search", "/api/symbol_search?q=sess".into()),
-        get(
-            "identifier under the cursor",
-            f("/api/identifier?path={file}&line=0&col=4"),
-        ),
+        get("search, as typed", f("/api/search?q=sess&path={file}")),
+        get("search the text", "/api/search/text?q=Session".into()),
         get("working tree changes", "/api/changes".into()),
         get(
             "diff of the changed file",

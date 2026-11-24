@@ -31,7 +31,6 @@ use crate::notes::Note;
 use crate::repo::{BlameLine, ChangedFile, Commit, FileStatus};
 use crate::review::Comment;
 use crate::session::{DiffTarget, FileView, Session};
-use crate::symbols::{Location, Symbol};
 use crate::transcript::{Entry, Transcript};
 
 mod agent;
@@ -744,11 +743,9 @@ fn router(state: AppState) -> Router {
         .route("/reanchor", post(api::post_reanchor))
         .route("/config", post(api::post_config))
         .route("/themes", get(api::get_themes))
-        .route("/symbols", get(api::get_symbols))
-        .route("/definitions", get(api::get_definitions))
-        .route("/references", get(api::get_references))
-        .route("/symbol_search", get(api::get_symbol_search))
-        .route("/identifier", get(api::get_identifier))
+        .route("/nav/here", get(api::get_nav_here))
+        .route("/search", get(api::get_search))
+        .route("/search/text", get(api::get_search_text))
         .route("/agent/start", post(agent::post_agent_start))
         .route("/agent/events", get(agent::get_agent_events))
         .route("/agent/prompt", post(agent::post_agent_prompt))

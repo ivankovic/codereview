@@ -656,18 +656,23 @@ the core and show the same answers.
 
 **Where next.** From a line and a column of a file, the core works out what is there — the name
 under the cursor, whether the line defines it or uses it, and the innermost definition the line is
-in — and the places to go from there, in groups, each place a file, a line, the line's text and
-what it is to the place the reader is at. The groups, in this order, each left out when empty:
-the definitions of the name, other than the one the cursor is on; its usages, each with the
-definition it is in, other than in documents and at a definition; the tests, first every
-end-to-end test whose recorded coverage ran the line, then every test whose code names the
-definition the line is in; and the documents, every line of a Markdown document that has the name,
-or else the enclosing definition's name, as a whole word, with the heading it is under. Names are
-not resolved: a name defined twice has two definitions, and the usages of a common name include
-another thing's. A group lists at most two hundred places. The obvious step is, on a use, its
-definition, straight there when there is one, the one sharing the longest leading path with the
-file open first among several, which are then offered to pick from; and on a definition, its
-usages, to pick from.
+in — and the places to go from there, in groups, each place a file, a line, the line's text and what
+it is to the place the reader is at. The groups, in this order, each left out when empty, each with
+the letter a menu moves to it by: the definitions of the name, other than the one the cursor is on;
+its usages, each with the definition it is in, other than in documents and at a definition; the
+tests, first every end-to-end test whose recorded coverage ran the line, then every test whose code
+names the definition the line is in; what the definition around the line uses: every name in its
+body, in the order they first come, that the repository defines, at that definition, the one in the
+same file first; the documents, every line of a Markdown document that has the name, or else the
+enclosing definition's name, as a whole word, with the heading it is under; with a review range
+open, the name's definitions and usages among the files it changed; the commit that last changed the
+line, by git's blame, which opens as the file's change in that commit (nothing for a line not
+committed yet); and the review's comments on the definition around the line, or on the line when it
+is in none, and those on the whole file. Names are not resolved: a name defined twice has two
+definitions, and the usages of a common name include another thing's. A group lists at most two
+hundred places. The obvious step is, on a use, its definition, straight there when there is one, the
+one sharing the longest leading path with the file open first among several, which are then offered
+to pick from; and on a definition, its usages, to pick from.
 
 **The trail.** Every jump — the obvious step, a place picked from the groups, a search result —
 leaves where the cursor was on a trail. Back goes along it to where each jump was made from, and
@@ -898,8 +903,10 @@ with highlighting and change markers, a picture's bytes with its media type (not
 picture), blame, log, commit files, changes, a repository's overview, what it leans on and its
 tests, diff with highlighting on both sides and anchored comments, comments and notes (list, add,
 toggle, edit, delete), commit, the checks configured and found and starting one, refresh and
-re-anchor, the theme list and config, a version, symbols (file symbols, definitions, occurrences,
-search, identifier at a position), and the agent (start, poll for events since a sequence number,
+re-anchor, the theme list and config, a version, where next from a place in a file and the search
+(see Navigation; the text search apart, and without the session, so nothing waits for it; both take
+the review range on the page, whose files they rank near), and the agent (start, poll for events
+since a sequence number,
 prompt with text or a preset, answer a permission, cancel, stop, clear). The version is a
 fingerprint of everything a front end draws: the status of every path, the branch, and the size and
 modification time of both Markdown files and of one named file, hashed into a number that means
@@ -915,16 +922,25 @@ commit and, in a file or a diff, the file's path, which the file's own header no
 and at the right the focus picker, Tests, Code, Docs and Data, in that order, the one on
 screen lit; beside it a button for the agent, which opens it over whatever focus was on screen and
 carries the mark that it is working or waiting for an answer, and the pending comments counted. The
-side panel hides and shows again with the header's ☰ or `\`, which is how this browser reads rather
-than where it is, so it has no address. Otherwise the page has the same views: explorer with tree
-and file, changes, log and history, diff, review, notes and the agent, and an overview the terminal
-UI has not; clicking a name in code offers its definition and usages in a side drawer. A picture in
+tests' side panel hides and shows again with the header's ☰ or `\`, which is how this browser reads
+rather than where it is, so it has no address; it is the only part of the page that hides, and the
+code has none. Otherwise the page has the same views: the file, changes, log and history, diff,
+review, notes and the agent, and an overview the terminal UI has not. A click on a name in the code
+opens the menu of where it leads (see Navigation) beside it: each group a heading with its count and
+its letter, the obvious step under the cursor, a letter moving to its group, the arrows moving,
+`Enter` or a click going and `Esc` closing; `J` opens it again for the name last clicked. Going to a
+place opens it as any file is opened, so the browser's back is the way back; a place in the history
+group opens that commit's change to the file. The file header's Tests lists the tests that name
+what the file defines in the same menu. The header's Search, or `/`, opens the search over the page:
+what is typed at the top, the groups under it, the arrows to move, `Tab` and `Shift-Tab` to the
+next and previous group, `Enter` to go, `Esc` to close; a result in the open file marks the query
+there and puts the line in view, and `Esc` on the page lets go of the marks. A picture in
 the working tree is shown in the file view, fitted to it on a checkerboard, with its size in pixels
 and bytes under it; an SVG has its source below it. The page fetches the bytes with the API token
 and shows them from memory, which the content security policy allows as `blob:` images; the endpoint
 serves an SVG under a policy that runs nothing. A comment left in a commit's diff sends that commit
 with it. A comment on a whole file comes from the Comment button in the file header and is shown
-above the first line; one on a directory from the `+` on its row in the tree. A range is chosen with
+above the first line, or from its row in the list of documents or datasets. A range is chosen with
 shift-click, or with the comment form's Extend range button followed by the line number at the other
 end, which keeps the text typed so far. Editing a comment or a note, and commenting on a file or a
 directory, opens a text sheet of the page's own rather than the browser's prompt. `w`, and the same
@@ -965,8 +981,10 @@ becomes the baseline instead of redrawing what the page has just drawn.
 A repository opens on its end-to-end tests, in the Tests focus, at the root address, with nothing
 of the code drawn first. The views a focus holds are a row under the header: the tests hold the
 end-to-end ones, with a test's own view, and All tests, the specification; the code holds Summary
-(the overview, at `summary`), Files, Changes, Log, Comments and Notes. Docs and Data are a file tree
-each, of the documents and of the datasets as the terminal UI has them, at `docs` and `data`, and
+(the overview, at `summary`), File, Changes, Log, Comments and Notes; File with nothing open, at
+`code`, says what the repository holds and how to get to a file, and lists none. Docs and Data each
+list their files, the documents and the datasets as the terminal UI has them, at `docs` and `data`,
+each with its change letter and pending comments, and
 a file opened from one says so in its address, so a reload keeps the focus; each remembers the
 file last open in it. A focus lands on the view or file it was last on in this page, the first of
 them to begin with, and the focus already lit goes to its first view. The end-to-end tests are a
@@ -1013,15 +1031,14 @@ the range, and its comments on them, read and never written, each on a line open
 at the line. The forge is asked without holding the repository's lock, so nothing else waits for
 it.
 
-The overview is not on the file tree either. It is what the project says it is —
+The overview is not a list of files either. It is what the project says it is —
 the prose its README opens with, as plain text, up to the first heading after it — then where to
 start reading, what the rest of the tree leans on, the
 other documents beside the code, and the biggest files. Above all of it: the branch, how many
 files and how many are changed, how many comments are pending and how many of those have lost
 the lines they were left on, the commits of the last week with who made them, and the count of
 `TODO`, `FIXME`, `HACK` and `XXX` in tracked files.
-Every count is a way in, and every path opens. The tree is one button away, at its own address;
-Files, under Code, with no file open is the tree as well.
+Every count is a way in, and every path opens. The search is one button away.
 
 What a README opens with is often not prose, so none of this is kept: titles, which are the
 project's name and already on the page; lines that are only images, links or markup once those
@@ -1069,7 +1086,7 @@ a URL or a command line never names it, which is the way it is most often wrong.
 about one repository; the header's selector switches to another.
 
 Every view has an address in the URL fragment, which never reaches the server: the end-to-end
-tests at the root, the overview, the specification, the tree, a file
+tests at the root, the overview, the specification, the code with nothing open, a file
 with an optional line, the working tree or staged changes, the log with an optional path and
 commit, a diff with its parameters, a pull request or a comparison, the documents and the data,
 and the review, notes and agent,
@@ -1079,14 +1096,15 @@ reload keeps the place, and a diff's back button goes to whatever opened it. Pag
 files of one change replaces the address instead of adding to the history.
 
 **On a phone.** Below 700 pixels of width, or 500 of height, the header is two rows: the
-breadcrumb, cut to the branch and the range, with the agent and the tools (symbol and file search,
-colour scheme, refresh, sign out, help) behind one button; and under it the focus picker, a quarter
+breadcrumb, cut to the branch and the range, with the agent and the tools (the search, colour
+scheme, refresh, sign out, help) behind one button; and under it the focus picker, a quarter
 of the width each and none cut short. It gets out of the way as the content scrolls down and comes
 back as it scrolls up, except while its own menu is open. Nothing runs along the bottom edge. The
 views a focus holds are the row under the header, which sticks; the log is also a button in the
 changes view's header and the notes in the review's, each keeps its own address. Views
-show one pane at a time: the tree or the file, the commits or one commit, each with a back button,
-and the symbol drawer as a sheet over the lower half. Everything the file's header can do except
+show one pane at a time: the list or the file, the commits or one commit, each with a back button;
+the menu of where a name leads is a sheet over the lower half, and the search the whole screen.
+Everything the file's header can do except
 Comment is behind one button, as a menu under it: seven buttons are three rows of a small screen,
 more than the header and the footer together. The footer is there while it has something
 to say and gone otherwise, since a permanent row of instructions is a row a phone does not have.

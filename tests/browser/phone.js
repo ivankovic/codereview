@@ -579,33 +579,35 @@ test('a request that takes a while puts up a loading bar, and takes it down', as
   t.ok('and the bar goes', await page.evaluate(() => document.querySelector('#loading').hidden));
 }, { docs: ['SPECS.md#Browser UI'] });
 
-test('the Docs and Data focuses hold the documents and the datasets', async t => {
+test('the Docs and Data focuses list the documents and the datasets', async t => {
   const page = t.page;
   await t.open();
   await page.waitForSelector('.e2e');
   t.step('tap Docs');
   await page.click('header .focus [data-focus=docs]');
-  await page.waitForSelector('#tree .row');
-  t.ok('Docs is a tree of the Markdown documents', await page.evaluate(() => {
-    const files = [...document.querySelectorAll('#tree [data-file]')].map(r => r.dataset.file).join(' ');
+  await page.waitForSelector('#content .files [data-file]');
+  t.ok('Docs lists the Markdown documents', await page.evaluate(() => {
+    const files = [...document.querySelectorAll('#content .files [data-file]')].map(r => r.dataset.file).join(' ');
     return files === 'README.md' ? true : files;
   }));
+  t.ok('each can be commented on as a whole', await page.evaluate(hittable, '#content .files [data-file="README.md"] [data-act=comment]'));
   t.ok('at an address of its own', await page.evaluate(() => location.hash.endsWith('/docs')), await page.evaluate(() => location.hash));
   t.step('tap Data');
   await page.click('header .focus [data-focus=data]');
   await page.waitForFunction(() => location.hash.endsWith('/data'));
-  t.ok('Data is a tree of the datasets', await page.evaluate(() => {
-    const files = [...document.querySelectorAll('#tree [data-file]')].map(r => r.dataset.file).join(' ');
+  await page.waitForSelector('#content .files [data-file="data/scores.csv"]');
+  t.ok('Data lists the datasets', await page.evaluate(() => {
+    const files = [...document.querySelectorAll('#content .files [data-file]')].map(r => r.dataset.file).join(' ');
     return files === 'data/scores.csv' ? true : files;
   }));
   t.step('open the dataset');
-  await page.click('#tree [data-file="data/scores.csv"]');
+  await page.click('#content .files [data-file="data/scores.csv"] .grow');
   await page.waitForSelector('table.code td.n');
   t.ok('it opens in the Data focus', await page.evaluate(() => location.hash.includes('in=data')
     && document.querySelector('header .focus [data-focus=data]').classList.contains('active')), await page.evaluate(() => location.hash));
 }, { docs: ['SPECS.md#Browser UI'] });
 
-test('the Code focus lands on the summary, with the files, changes, log and review beside it', async t => {
+test('the Code focus lands on the summary, with the file, changes, log and review beside it', async t => {
   const page = t.page;
   await t.open();
   await page.waitForSelector('.e2e');
@@ -613,21 +615,21 @@ test('the Code focus lands on the summary, with the files, changes, log and revi
   await page.click('header .focus [data-focus=code]');
   await page.waitForSelector('.overview .summary');
   t.ok('Code opens on the summary', await page.evaluate(() => location.hash === '#/summary'), await page.evaluate(() => location.hash));
-  t.ok('Code holds the summary, the files, the changes, the log, the comments and the notes', await page.evaluate(() => {
+  t.ok('Code holds the summary, the file, the changes, the log, the comments and the notes', await page.evaluate(() => {
     const subs = [...document.querySelectorAll('#subnav button')].map(b => b.dataset.sub).join(' ');
     return subs === 'overview explore changes log review notes' ? true : subs;
   }));
   t.ok('and each can be tapped', await page.evaluate(hittable, '#subnav [data-sub=log]'));
-  t.step('tap Files');
+  t.step('tap File');
   await page.click('#subnav [data-sub=explore]');
-  await page.waitForSelector('#tree .row');
-  t.ok('Files with nothing open is the tree', await page.evaluate(() => location.hash.endsWith('/tree')), await page.evaluate(() => location.hash));
+  await page.waitForSelector('#content .landing');
+  t.ok('File with nothing open says how to get to one', await page.evaluate(() => location.hash.endsWith('/code')), await page.evaluate(() => location.hash));
   t.step('tap Tests, then Code again');
   await page.click('header .focus [data-focus=tests]');
   await page.waitForSelector('.e2e');
   await page.click('header .focus [data-focus=code]');
-  await page.waitForSelector('#tree .row');
-  t.ok('Code goes back to the view it was last on', await page.evaluate(() => location.hash.endsWith('/tree')), await page.evaluate(() => location.hash));
+  await page.waitForSelector('#content .landing');
+  t.ok('Code goes back to the view it was last on', await page.evaluate(() => location.hash.endsWith('/code')), await page.evaluate(() => location.hash));
 }, { docs: ['SPECS.md#Browser UI'] });
 
 test('the agent opens from the header, over what was on screen', async t => {
@@ -642,7 +644,7 @@ test('the agent opens from the header, over what was on screen', async t => {
     document.querySelector('header .focus [data-focus=tests]').classList.contains('active')));
 }, { docs: ['SPECS.md#Browser UI'] });
 
-test('the header menu refreshes, and Files opens the tree', async t => {
+test('the header menu refreshes, and Search on the summary opens the search', async t => {
   const page = t.page;
   await t.open('#/summary');
   // The header's own menu: search, colour scheme, refresh, sign out, help. It hangs below the
@@ -655,12 +657,12 @@ test('the header menu refreshes, and Files opens the tree', async t => {
   // Refreshing redraws the overview, and a tap aimed at the one being replaced lands on
   // nothing: wait for the redraw to start, then for the new one.
   await page.waitForFunction(() => document.querySelector('#msg').textContent.includes('refreshed'));
-  await page.waitForSelector('#content .panelhead [data-act=files]');
-  // Files is one tap from the overview, and the tree is what it opens.
-  t.step('tap Files');
-  await page.click('#content .panelhead [data-act=files]');
-  await page.waitForSelector('#tree .row');
-  t.ok('Files opens the tree', await page.evaluate(() => location.hash.endsWith('/tree')), await page.evaluate(() => location.hash));
+  await page.waitForSelector('#content .panelhead [data-act=search]');
+  // Search is one tap from the overview: it is how the code is got to.
+  t.step('tap Search');
+  await page.click('#content .panelhead [data-act=search]');
+  await page.waitForSelector('#finder input');
+  t.ok('Search opens the search', await page.evaluate(hittable, '#finder input'));
 });
 
 test('a picture is shown, fitted to the phone', async t => {
@@ -723,18 +725,89 @@ test('writing a comment takes over the screen', async t => {
   await pause(200);
 }, { docs: ['SPECS.md#Browser UI'] });
 
-test('a backslash hides the side panel and brings it back', async t => {
+test('a backslash hides the tests\' side panel and brings it back', async t => {
   const page = t.page;
-  await t.open('#/tree');
-  await page.waitForSelector('#tree .row');
-  t.ok('the tree is there', await page.evaluate(hittable, '#tree .row'));
+  await page.setViewport({ width: 1280, height: 800, isMobile: false, hasTouch: false });
+  await t.open();
+  await page.waitForSelector('#tests .row');
+  t.ok('the list of tests is there', await page.evaluate(hittable, '#tests .row'));
   t.step('press \\');
   await page.keyboard.press('Backslash');
-  t.ok('the side panel is gone', await page.evaluate(() => document.querySelector('#tree').getBoundingClientRect().width === 0));
+  t.ok('the side panel is gone', await page.evaluate(() => document.querySelector('#tests').getBoundingClientRect().width === 0));
   t.step('press \\ again');
   await page.keyboard.press('Backslash');
-  t.ok('and back', await page.evaluate(hittable, '#tree .row'));
+  t.ok('and back', await page.evaluate(hittable, '#tests .row'));
 }, { docs: ['SPECS.md#Browser UI'] });
+
+test('the code lists no files and says to search', async t => {
+  const page = t.page;
+  await t.open('#/code');
+  await page.waitForSelector('#content .landing');
+  t.ok('it says how to get to a file', await page.evaluate(() =>
+    document.querySelector('#content .landing').textContent.includes('/ searches for a file, a definition, a test, a heading or any text')));
+  t.ok('and lists no file', await page.evaluate(() => !document.querySelector('#content [data-file], #tree')));
+  t.ok('its Search button can be tapped', await page.evaluate(hittable, '#content .landing [data-act=search]'));
+}, { docs: ['SPECS.md#Navigation', 'SPECS.md#Browser UI'] });
+
+test('slash finds a file by a few letters and opens it', async t => {
+  const page = t.page;
+  await t.open('#/code');
+  await page.waitForSelector('#content .landing');
+  t.step('press /');
+  await page.keyboard.press('/');
+  await page.waitForSelector('#finder input');
+  t.ok('the search takes the whole phone', await page.evaluate(() => {
+    const at = (x, y) => document.elementFromPoint(x, y)?.closest('#finder') ? null : `${x},${y}`;
+    const missed = [at(4, 4), at(innerWidth - 4, innerHeight / 2), at(innerWidth / 2, innerHeight - 4)].filter(Boolean);
+    return missed.length ? 'not the search at ' + missed.join(' ') : true;
+  }));
+  t.step('type “scocsv”, a few letters of the dataset\'s path');
+  await page.type('#finder input', 'scocsv');
+  await page.waitForFunction(() => [...document.querySelectorAll('#finder h4')].some(h => h.textContent.startsWith('Files')));
+  t.ok('the file is found among the files', await page.evaluate(() =>
+    document.querySelector('#finder .place.on .text')?.textContent === 'data/scores.csv' ? true : document.querySelector('#finder .list').textContent));
+  t.step('press Enter');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => location.hash.includes('/file/data/scores.csv'));
+  await page.waitForSelector('table.code td.n');
+  t.ok('the file is open, and the search closed', await page.evaluate(() => document.querySelector('#finder').hidden));
+  t.ok('with its path in the breadcrumb', await page.evaluate(() => document.querySelector('#crumbfile').textContent === 'data/scores.csv'));
+}, { docs: ['SPECS.md#Navigation', 'SPECS.md#Browser UI'] });
+
+test('a click on a name shows where it leads, and its definition goes there', async t => {
+  const page = t.page;
+  await t.open('#/file/src/main.rs');
+  await page.waitForSelector('table.code td.n');
+  t.step('tap parse_review, where main uses it');
+  const box = await page.evaluate(() => {
+    const span = [...document.querySelectorAll('table.code td.c span[data-off]')].find(s => s.textContent.includes('parse_review'));
+    const r = span.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.mouse.click(box.x, box.y);
+  await page.waitForSelector('#places .place');
+  t.ok('the menu says what is under the finger', await page.evaluate(() =>
+    document.querySelector('#places .head').textContent.includes('parse_review, used here') ? true : document.querySelector('#places .head').textContent));
+  t.ok('with the definition among its groups, and its letter', await page.evaluate(() =>
+    [...document.querySelectorAll('#places h4')].some(h => /^Definition1\(d\)/.test(h.textContent.replace(/\s+/g, '')))
+      ? true : [...document.querySelectorAll('#places h4')].map(h => h.textContent).join(' | ')));
+  t.ok('the definition is under the cursor', await page.evaluate(() =>
+    document.querySelector('#places .place.on .loc').textContent === 'src/core.rs:1' ? true : document.querySelector('#places .place.on').textContent));
+  t.ok('it is a sheet over the lower half, the code above it', await page.evaluate(() => {
+    const low = document.elementFromPoint(innerWidth / 2, innerHeight * 0.8)?.closest('#places');
+    const high = document.elementFromPoint(innerWidth / 2, innerHeight * 0.3)?.closest('#places');
+    return low && !high ? true : `low ${!!low}, high ${!!high}`;
+  }));
+  t.step('tap the definition');
+  await page.click('#places .place.on');
+  await page.waitForFunction(() => location.hash.includes('/file/src/core.rs'));
+  await page.waitForSelector('table.code tr[data-line="1"]');
+  t.ok('the definition is open, the menu gone', await page.evaluate(() => document.querySelector('#places').hidden));
+  t.step('go back');
+  await page.goBack();
+  await page.waitForFunction(() => location.hash.includes('/file/src/main.rs'));
+  t.ok('back is where the jump was made from', true);
+}, { docs: ['SPECS.md#Navigation', 'SPECS.md#Browser UI'] });
 
 test('long lines wrap where the screen ends', async t => {
   const page = t.page;

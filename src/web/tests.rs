@@ -620,29 +620,43 @@ fn api_round_trip() {
     let (status, _) = request(addr, "POST", "/api/config", t, Some(r#"{"theme":"Nope"}"#));
     assert_eq!(status, 400);
 
-    let (status, body) = request(addr, "GET", "/api/symbols?path=a.rs", t, None);
-    assert_eq!(status, 200, "{body}");
-    let syms: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
-    assert_eq!(syms.len(), 3);
-    let (_, body) = request(addr, "GET", "/api/definitions?name=b", t, None);
-    let defs: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
-    assert_eq!(defs[0]["line"], 2);
-    let (_, body) = request(addr, "GET", "/api/references?name=b", t, None);
-    let refs: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
-    assert_eq!(refs.len(), 1);
-    let (_, body) = request(
+    // Where next from `b` on its own line, which defines it: nowhere else defines it.
+    let (status, body) = request(
         addr,
         "GET",
-        "/api/identifier?path=a.rs&line=1&col=4",
+        "/api/nav/here?path=a.rs&line=1&column=4",
         t,
         None,
     );
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&body).unwrap()["name"],
-        "b"
+    assert_eq!(status, 200, "{body}");
+    let here: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(here["name"], "b");
+    assert_eq!(here["defines"], true);
+    // One search: the definition by name, the file by its letters, in groups the page names.
+    let (status, body) = request(addr, "GET", "/api/search?q=c&path=a.rs", t, None);
+    assert_eq!(status, 200, "{body}");
+    let groups: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+    let titled = |title: &str| groups.iter().find(|g| g["title"] == title).cloned();
+    let symbols = titled("Symbols").expect("the definition of c");
+    assert_eq!(symbols["group"], "symbols");
+    assert_eq!(symbols["hits"][0]["text"], "c");
+    assert_eq!(symbols["hits"][0]["path"], "a.rs");
+    assert!(titled("In this file").is_some(), "{body}");
+    let (_, body) = request(addr, "GET", "/api/search?q=ar&path=a.rs", t, None);
+    assert!(
+        body.contains("\"Files\"") && body.contains("a.rs"),
+        "{body}"
     );
-    let (_, body) = request(addr, "GET", "/api/symbol_search?q=c", t, None);
-    assert!(body.contains("\"c\""));
+    // The text, apart and off the lock: every line that has it.
+    let (status, body) = request(addr, "GET", "/api/search/text?q=fn%20b", t, None);
+    assert_eq!(status, 200, "{body}");
+    let hits: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+    // REVIEW.md quotes the line it comments on, so it has it too.
+    assert!(
+        hits.iter()
+            .any(|h| h["path"] == "a.rs" && h["line"] == 2 && h["text"] == "fn b() {}"),
+        "{body}"
+    );
 }
 
 /// What a repository answers when it is opened, and the ranking behind "what does the rest of

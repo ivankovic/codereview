@@ -185,11 +185,13 @@ all of that, and nothing turns it off.
 
 Click a line number to comment, shift-click to extend the range (or the form's Extend range button
 and another line number, on a phone); the Comment button in the file header comments on the whole
-file, and the `+` on a directory in the tree on the directory. The frame is the terminal UI's: a
+file, as does the Comment on a document's row in Docs. The frame is the terminal UI's: a
 breadcrumb across the top, and the focus at the right — Tests (end to end, and every test), Code
-(the summary, files, changes, log, comments and notes), Docs and Data — with the agent a button
-beside it and the side panel hidden by ☰ or `\`; everything else the terminal UI does is a
-button. Every view has an
+(the summary, the file, changes, log, comments and notes), Docs and Data — with the agent a button
+beside it and the tests' side panel hidden by ☰ or `\`. There is no file tree: Search, or `/`,
+finds a file, a definition, a test, a heading or any text, and a click on a name in the code shows
+where it leads — its definition, its usages, the tests that ran it, the documents that mention it.
+Everything else the terminal UI does is a button. Every view has an
 address, so the browser's back returns to the previous view and a file, a diff or a commit can be
 linked to. The page keeps itself current: when the agent, another window or a git command changes
 the repository, it notices within a couple of seconds and redraws where you are, without moving the

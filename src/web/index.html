@@ -25,7 +25,7 @@
   --ins-fg: #3fb950; --del-fg: #f85149; --upd-fg: #e3b341; --mov-fg: #9aa0ab;
 }
 * { box-sizing: border-box; }
-/* Elements with their own `display` (the popover, the drawer) must still honour `hidden`. */
+/* Elements with their own `display` (the menus, the search) must still honour `hidden`. */
 [hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 /* The dynamic viewport unit follows a phone browser's collapsing toolbars; plain 100% does not. */
@@ -78,7 +78,6 @@ header .focus button { border: none; border-radius: 0; background: none; padding
 header .focus button + button { border-left: 1px solid var(--border); }
 header .focus button.active { background: var(--cursor); color: var(--accent); }
 /* The side panel, hidden by its button or by \\. */
-body.nosidebar aside#tree { display: none !important; }
 #pending:empty { display: none; }
 .spacer { flex: 1; }
 #back { font-size: 18px; line-height: 1; padding: 2px 10px; }
@@ -142,24 +141,6 @@ button.more-rows[hidden] { display: none; }
 .spec .card-test.ignored .label { color: var(--dim); }
 .dim { color: var(--dim); }
 main { flex: 1; display: flex; min-height: 0; }
-aside#tree { width: 280px; min-width: 180px; max-width: 50vw; overflow: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 6px 0; resize: horizontal; }
-/* The tree is the explorer's, and beside the overview on a wide screen, a click from a file. */
-body:not([data-view=explore]):not([data-view=overview]) #tree { display: none; }
-aside#tree .row { padding: 1px 8px; cursor: pointer; white-space: nowrap; display: flex; gap: 4px; align-items: center; }
-aside#tree .row:hover { background: var(--cursor); }
-aside#tree .row.selected { background: var(--visual); }
-aside#tree .row .st { width: 1em; text-align: center; font-family: ui-monospace, monospace; }
-aside#tree .row .st.M, aside#tree .name.M { color: var(--upd-fg); }
-aside#tree .row .st.A, aside#tree .name.A { color: var(--ins-fg); }
-aside#tree .row .st.D { color: var(--del-fg); }
-aside#tree .row .st.q, aside#tree .name.q { color: var(--dim); }
-aside#tree .dir { font-weight: 600; }
-aside#tree .row.more { color: var(--dim); }
-aside#tree .cnt { color: var(--exact); font-size: 11px; margin-left: auto; }
-aside#tree .add { visibility: hidden; margin-left: 6px; padding: 0 4px; color: var(--dim); }
-aside#tree .row.dir:hover .add { visibility: visible; }
-aside#tree .add:hover { color: var(--fg); }
-aside#tree input { width: calc(100% - 16px); margin: 0 8px 6px; }
 section#content { flex: 1; overflow: auto; min-width: 0; }
 .panelhead { position: sticky; top: 0; z-index: 2; display: flex; gap: 8px; align-items: center; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .panelhead .path { font-weight: 600; font-family: ui-monospace, monospace; }
@@ -400,16 +381,6 @@ footer .msg.error { color: var(--del-fg); }
 #editor .note { color: var(--dim); font-size: 12px; white-space: pre-wrap; margin-bottom: 8px; max-height: 30vh; overflow: auto; }
 #editor textarea { min-height: 5em; }
 .hunknav { display: contents; }
-#popover { position: fixed; z-index: 20; max-width: 90vw; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
-#popover .word { font-family: ui-monospace, monospace; font-weight: 600; margin-right: 4px; }
-#drawer { width: 380px; min-width: 200px; max-width: 60vw; border-left: 1px solid var(--border); background: var(--panel); overflow: auto; display: flex; flex-direction: column; }
-#drawer .panelhead { position: static; }
-/* The list scrolls, not the drawer, so the close button in its header stays put. */
-#drawer .list { flex: 1; overflow: auto; }
-#drawer .list .item { flex-direction: column; align-items: stretch; gap: 2px; }
-#drawer .list .item .loc { color: var(--accent); font-family: ui-monospace, monospace; font-size: 12px; }
-#drawer .list .item .label { font-weight: 600; }
-#drawer .list .item .text { font-family: ui-monospace, monospace; font-size: 12px; color: var(--dim); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
 #agent { display: flex; flex-direction: column; height: 100%; }
 #agent .transcript { flex: 1; overflow: auto; padding: 12px 16px; }
 #agent .entry { display: flex; gap: 10px; margin-bottom: 10px; }
@@ -432,17 +403,13 @@ footer .msg.error { color: var(--del-fg); }
 }
 /* Touch: no hover, and a finger needs more room than a pointer. */
 @media (hover: none) {
-  aside#tree .add { visibility: visible; }
   input, textarea, select { font-size: 16px; }  /* below 16px iOS zooms the page into a focused field */
   button { padding: 8px 12px; }
   button.small { padding: 6px 10px; font-size: 13px; }
   header .focus button { min-height: 44px; }
-  aside#tree .row { min-height: 40px; }
   .list .item { min-height: 44px; }
   table.code { font-size: 13px; line-height: 1.7; }
   table.code td.n { min-width: 44px; padding: 0 8px; }
-  #drawer .list .item { min-height: 48px; }
-  aside#tree { resize: none; }
 }
 /* A phone, upright or on its side: one header row, the breadcrumb cut to the branch and the
    range, and one pane at a time. */
@@ -526,11 +493,6 @@ footer .msg.error { color: var(--del-fg); }
   .panelhead button { min-height: 40px; }
   .wide { display: none; }
   .list .item { min-height: 44px; padding: 10px 8px; }
-  /* Explore is the tree, or the file, never both; the overview is neither and takes it all. */
-  aside#tree { width: auto; min-width: 0; max-width: none; flex: 1; border-right: none; }
-  body[data-view=explore]:not(.showfile) #content { display: none; }
-  body[data-view=explore].showfile #tree { display: none; }
-  body[data-view=overview] #tree { display: none; }
   /* The tests are the list, or what is selected in it, never both. */
   aside#tests { width: auto; min-width: 0; max-width: none; flex: 1; border-right: none; resize: none; }
   aside#tests .row { min-height: 44px; align-items: center; }
@@ -553,7 +515,6 @@ footer .msg.error { color: var(--del-fg); }
   .cmt .text { flex-basis: 100%; }
   #ranges { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 75vh; border-radius: 10px 10px 0 0; padding-bottom: env(safe-area-inset-bottom); }
   #ranges .choice { min-height: 44px; align-items: center; }
-  #drawer { position: fixed; left: 0; right: 0; bottom: env(safe-area-inset-bottom); height: 50vh; width: auto; min-width: 0; max-width: none; border-left: none; border-top: 1px solid var(--accent); z-index: 4; box-shadow: 0 -8px 24px rgba(0,0,0,.3); }
   .sbs { grid-template-columns: 1fr; }
   [data-act=layout] { display: none; }
   .hunknav { display: flex; flex-direction: column; gap: 6px; position: fixed; right: 12px; bottom: calc(28px + env(safe-area-inset-bottom)); z-index: 4; }
@@ -575,9 +536,36 @@ footer .msg.error { color: var(--del-fg); }
   tr.form.picking .form { display: none; }
   #editor { align-items: flex-end; height: var(--vvh, 100%); }
   #editor .sheet { width: 100%; border-radius: 10px 10px 0 0; border-bottom: none; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
-  #popover { max-width: calc(100vw - 16px); }
   #agent .transcript { padding: 10px 12px; }
   #agent .entry .who { width: 44px; }
+}
+/* Where next from a name in the code, and the places a list names: hanging where it was asked
+   for, a sheet over the lower half of a phone. The search is a box over the page, the whole
+   screen on a phone. */
+#places, #finder { position: fixed; z-index: 25; background: var(--panel); border: 1px solid var(--accent);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.3); display: flex; flex-direction: column; }
+#places { top: 56px; right: 12px; width: min(560px, calc(100vw - 24px)); max-height: 60vh; }
+#finder { top: 56px; left: 50%; transform: translateX(-50%); width: min(760px, calc(100vw - 24px)); max-height: 78vh; }
+#places .head, #finder .head { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+#places .head .grow { font-weight: 600; font-family: ui-monospace, monospace; }
+#finder .head input { flex: 1; min-width: 0; }
+#finder .hint { padding: 4px 12px; font-size: 12px; }
+#places .list, #finder .list { overflow: auto; flex: 1; padding-bottom: 6px; }
+#places h4, #finder h4 { margin: 8px 12px 2px; color: var(--accent); font-size: 12px; display: flex; gap: 6px; }
+.place { padding: 4px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
+.place.on, .place:hover { background: var(--cursor); }
+.place .loc { color: var(--accent); font-family: ui-monospace, monospace; font-size: 12px; }
+.place .text { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.place .note { color: var(--dim); font-size: 12px; }
+.landing { padding: 16px 20px; max-width: 760px; }
+.landing p { margin: 0 0 12px; }
+@media (hover: none) { .place { min-height: 44px; justify-content: center; } }
+@media (max-width: 700px), (max-height: 500px) {
+  #places { top: auto; left: 0 !important; right: 0; bottom: 0; width: auto; height: 50vh; max-height: 50vh;
+    border-radius: 10px 10px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+  #finder { top: 0; left: 0; right: 0; transform: none; width: auto; height: var(--vvh, 100%); max-height: none;
+    border-radius: 0; border: none; padding-bottom: env(safe-area-inset-bottom); }
+  #places .head .keys { display: none; }
 }
 </style>
 </head>
@@ -608,8 +596,7 @@ footer .msg.error { color: var(--del-fg); }
   <button id="sidebarbtn" title="hide or show the side panel (\\)">☰</button>
   <button id="more" class="phone" title="search, colour scheme, and more">⋯</button>
   <div class="tools">
-    <input id="symbol" placeholder="find symbol (#)" size="16" title="definitions whose name contains this">
-    <input id="search" placeholder="search in file (/)" size="20">
+    <button id="searchbtn" title="search: a file, a definition, a test, a heading or any text (/)">Search</button>
     <select id="theme" title="colour scheme, saved to the config file"></select>
     <button id="refresh" title="re-read the repository and both Markdown files">Refresh</button>
     <button id="signout" title="end this session in this browser">Sign out</button>
@@ -618,12 +605,11 @@ footer .msg.error { color: var(--del-fg); }
 </header>
 <nav id="subnav" hidden></nav>
 <main>
-  <aside id="tree"></aside>
   <aside id="tests" aria-label="the end-to-end tests"></aside>
-  <section id="content"><div class="center">Pick a file from the tree.</div></section>
-  <aside id="drawer" hidden></aside>
+  <section id="content"><div class="center">reading the repository…</div></section>
 </main>
-<div id="popover" hidden></div>
+<div id="places" hidden></div>
+<div id="finder" hidden></div>
 <div id="ranges" hidden></div>
 <div id="loading" hidden role="status" aria-live="polite"><div class="label">loading…</div><div class="track"><div class="bar"></div></div></div>
 <div id="editor" hidden><div class="sheet"><div class="title"></div><div class="note" hidden></div><textarea></textarea>
@@ -648,7 +634,6 @@ const state = {
   // path -> the one-letter change mark, which is not the same shape as a ChangedFile's
   // `status`, a word.
   statusLetters: {}, pending: 0, hasCommits: true,
-  tree: { collapsed: new Set(), filter: '', shown: new Set() },
   file: null,      // { path, lines, text, comments, notes, line_ops, blame }
   diff: null,      // { params, data, unified, siblings, index, back }
   log: null,       // { path, commits, selected, files, exhausted }
@@ -811,7 +796,7 @@ document.addEventListener('click', e => { if (!e.target.closest('header') || e.t
 document.addEventListener('click', e => { if (!e.target.closest('.panelhead')) $('#content .acts')?.classList.remove('open'); });
 
 // Comment rows are as wide as the panel that scrolls the code, not as wide as the code; the
-// width is measured, since the tree and the drawer change it.
+// width is measured, since the tests' side panel changes it.
 const panelWatcher = window.ResizeObserver && new ResizeObserver(entries => {
   for (const en of entries) en.target.style.setProperty('--panel-w', Math.max(0, en.target.clientWidth - 24) + 'px');
 });
@@ -866,7 +851,8 @@ async function loadState() {
   $('#branch').textContent = s.branch;
   $('#commit').textContent = s.commit;
   $('#pending').textContent = s.pending ? '●' + s.pending : '';
-  renderTree();
+  // What the focus lists counts pending comments and marks changes, so it is drawn again.
+  if (state.view === 'explore' && !document.body.classList.contains('showfile')) renderLanding();
 }
 
 // ----- repositories ---------------------------------------------------------------------------
@@ -887,99 +873,73 @@ async function switchRepo(index) {
   watch.version = null;
   state.file = null; state.diff = null; state.log = null; state.allComments = undefined;
   state.e2e = null; state.stretchReport = null; state.testView = null; state.orphan = null; state.fileOf = {}; state.rangeData = null; state.range = null; state.specStretch = undefined;
-  state.tree.collapsed = new Set(); state.tree.filter = ''; state.tree.shown = new Set();
   Object.assign(agent, { version: 0, entries: [], permission: null, running: false, name: '', status: 'not started',
     progress: '', usage: '', pollFailures: 0, startedAt: null });
   state.allComments = await api('/comments');
   await loadState();
   setTabs('explore');
   document.body.classList.remove('showfile');
-  $('#content').innerHTML = '<div class="center">Pick a file from the tree.</div>';
+  $('#content').innerHTML = '';
   $('#agentdot').hidden = true;
   agentPoll();
   msg('repository ' + (state.repos[index] ? state.repos[index].name : index));
 }
 
-$('#repo').onchange = e => switchRepo(Number(e.target.value)).then(() => navigate(routes.tree())).catch(fail);
+$('#repo').onchange = e => switchRepo(Number(e.target.value)).then(() => navigate(routes.files())).catch(fail);
 
-// ----- tree -----------------------------------------------------------------------------------
+// ----- what a focus lists -------------------------------------------------------------------
 
-// How many files a directory shows before the rest fold behind "… N more".
-const TREE_FOLD = 10;
-
-// The files the focus on screen holds: every file for the code, the documents for Docs, the
-// datasets for Data. The server says which are which.
+// The files a focus lists where none is open: the documents for Docs, the datasets for Data.
+// The code lists none: a repository of thousands of files, most of them written by an agent,
+// is not read by walking a list of them. It says how to get to one instead.
 function focusFiles() {
   if (state.focus === 'docs') return state.documents;
   if (state.focus === 'data') return state.datasets;
-  return state.files;
+  return [];
 }
 
-function buildTree() {
-  const root = { dirs: new Map(), files: [] };
-  for (const f of focusFiles()) {
-    if (state.tree.filter && !f.toLowerCase().includes(state.tree.filter.toLowerCase())) continue;
-    const parts = f.split('/');
-    let node = root;
-    for (let i = 0; i < parts.length - 1; i++) {
-      if (!node.dirs.has(parts[i])) node.dirs.set(parts[i], { dirs: new Map(), files: [], path: parts.slice(0, i + 1).join('/') });
-      node = node.dirs.get(parts[i]);
+function renderLanding() {
+  const content = $('#content');
+  setCrumbFile(null);
+  if (state.focus === 'docs' || state.focus === 'data') {
+    const what = state.focus === 'docs' ? 'documents' : 'datasets';
+    const counts = Object.create(null);
+    for (const c of (state.allComments || [])) if (c.comment.section === 'Pending') counts[c.comment.path] = (counts[c.comment.path] || 0) + 1;
+    const files = focusFiles();
+    content.innerHTML = `<div class="panelhead"><span class="path">${what}</span><span class="dim">${files.length}</span>
+      <span class="spacer"></span><button data-act="search" title="search (/)">Search</button></div>
+      <div class="list files">${files.length ? '' : `<div class="center">No ${what} in this repository.</div>`}</div>`;
+    const list = content.querySelector('.files');
+    for (const f of files) {
+      const st = state.statusLetters[f] || '';
+      const el = document.createElement('div');
+      el.className = 'item';
+      el.dataset.file = f;
+      el.innerHTML = `${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st)}</span>` : ''}<span class="mono grow">${esc(f)}</span>`
+        + `${counts[f] ? `<span class="cnt" style="color:var(--exact)">●${esc(counts[f])}</span>` : ''}`
+        + `<span class="actions"><button class="small" data-act="comment" title="comment on the whole file">Comment</button></span>`;
+      el.onclick = e => {
+        if (e.target.closest('[data-act=comment]')) { e.stopPropagation(); addPathComment(f); return; }
+        openFile(f);
+      };
+      list.appendChild(el);
     }
-    node.files.push({ name: parts[parts.length - 1], path: f });
+  } else {
+    content.innerHTML = `<div class="landing">
+      <p><button class="primary" data-act="search">Search</button>
+        <span class="dim">/ searches for a file, a definition, a test, a heading or any text.</span></p>
+      <p class="dim">In a file, a click on a name shows where it leads: its definition, its usages, the tests
+        that ran the line, the documents that mention it. The browser's back comes back.</p>
+      <p class="dim">${state.files.length} files, ${state.pending} pending comments.</p>
+      <p><button data-act="summary">Summary</button> <button data-act="changes">Changes</button>
+        <button data-act="log">Log</button> <button data-act="open">Open a pull request or branch (o)</button></p></div>`;
+    on(content, 'summary', showOverview);
+    on(content, 'changes', () => showChanges());
+    on(content, 'log', () => showLog(null, true));
+    on(content, 'open', () => openRanges().catch(fail));
   }
-  return root;
-}
-
-function renderTree() {
-  const counts = Object.create(null);
-  for (const c of (state.allComments || [])) if (c.comment.section === 'Pending') counts[c.comment.path] = (counts[c.comment.path] || 0) + 1;
-  const parts = [`<input id="filter" placeholder="filter files" value="${esc(state.tree.filter)}">`];
-  const walk = (node, depth) => {
-    const dirs = [...node.dirs.keys()].sort();
-    for (const name of dirs) {
-      const d = node.dirs.get(name);
-      const collapsed = state.tree.collapsed.has(d.path) && !state.tree.filter;
-      const dcnt = counts[d.path] ? `<span class="cnt">●${esc(counts[d.path])}</span>` : '';
-      parts.push(`<div class="row dir" data-dir="${esc(d.path)}" style="padding-left:${8 + depth * 14}px"><span class="st"></span>${collapsed ? '▸' : '▾'} ${esc(name)}/${dcnt}<span class="add" title="comment on this directory">+</span></div>`);
-      if (!collapsed) walk(d, depth + 1);
-    }
-    // A directory of hundreds of files is a wall, and the next directory is somewhere below
-    // it. Past the tenth, files are folded behind a "… N more" row, except those the tree
-    // has something to say about: changed, commented on, or the one open. A filter is a
-    // request to see everything it matches, so nothing folds while one is typed.
-    const files = node.files.sort((a, b) => a.name.localeCompare(b.name));
-    const dirPath = node.path || '';
-    const speaks = f => !!state.statusLetters[f.path] || !!counts[f.path] || (state.file && state.file.path === f.path);
-    const foldable = !state.tree.filter && files.length > TREE_FOLD + 1;
-    const shown = foldable && state.tree.shown.has(dirPath);
-    let hidden = 0;
-    files.forEach((f, i) => {
-      if (foldable && !shown && i >= TREE_FOLD && !speaks(f)) { hidden++; return; }
-      const st = state.statusLetters[f.path] || '';
-      const cls = st === '?' ? 'q' : st;
-      const sel = state.file && state.file.path === f.path ? ' selected' : '';
-      const cnt = counts[f.path] ? `<span class="cnt">●${esc(counts[f.path])}</span>` : '';
-      parts.push(`<div class="row${sel}" data-file="${esc(f.path)}" style="padding-left:${8 + depth * 14}px"><span class="st ${esc(cls)}">${esc(st)}</span><span class="name ${esc(cls)}">${esc(f.name)}</span>${cnt}</div>`);
-    });
-    if (hidden) parts.push(`<div class="row more" data-more="${esc(dirPath)}" style="padding-left:${8 + depth * 14}px"><span class="st"></span>… ${hidden} more</div>`);
-    else if (shown) parts.push(`<div class="row more" data-fewer="${esc(dirPath)}" style="padding-left:${8 + depth * 14}px"><span class="st"></span>… fewer</div>`);
-  };
-  walk(buildTree(), 0);
-  state.treeFocus = state.focus;
-  const tree = $('#tree');
-  tree.innerHTML = parts.join('');
-  $('#filter').oninput = e => { state.tree.filter = e.target.value; renderTree(); $('#filter').focus(); $('#filter').setSelectionRange(1e9, 1e9); };
-  tree.querySelectorAll('[data-dir]').forEach(el => {
-    el.onclick = () => {
-      const p = el.dataset.dir;
-      if (state.tree.collapsed.has(p)) state.tree.collapsed.delete(p); else state.tree.collapsed.add(p);
-      renderTree();
-    };
-    el.querySelector('.add').onclick = e => { e.stopPropagation(); addPathComment(el.dataset.dir); };
-  });
-  tree.querySelectorAll('[data-file]').forEach(el => el.onclick = () => openFile(el.dataset.file));
-  tree.querySelectorAll('[data-more]').forEach(el => el.onclick = () => { state.tree.shown.add(el.dataset.more); renderTree(); });
-  tree.querySelectorAll('[data-fewer]').forEach(el => el.onclick = () => { state.tree.shown.delete(el.dataset.fewer); renderTree(); });
+  content.querySelectorAll('[data-act=search]').forEach(b => b.onclick = () => openFinder());
+  hint('/ searches. ? shows the keys.', 'Search from ⋯, or tap a name in a file.');
 }
 
 // ----- code rendering -------------------------------------------------------------------------
@@ -1165,15 +1125,16 @@ async function openFile(path, line) {
     watch.version = null;
     state.file = { ...f, blame: null };
     if (!['code', 'docs', 'data'].includes(state.focus)) state.focus = 'code';
+    // A file the documents or the data do not list is code.
+    if (state.focus !== 'code' && !focusFiles().includes(path)) state.focus = 'code';
     state.fileOf[state.focus] = path;
     state.view = 'explore';
     navigate(routes.file(path, line));
-    // On a phone the file replaces the tree.
+    // The file is on screen rather than what the focus lists.
     document.body.classList.add('showfile');
     renderFile.upToLine = line || 0;
     setCrumbFile(path);
     renderFile();
-    renderTree();
     if (line) scrollToLine(line);
   } catch (e) { fail(e); }
 }
@@ -1199,13 +1160,13 @@ function setSidebar(hidden) {
   document.body.classList.toggle('nosidebar', hidden);
 }
 
-// Back to the tree, on a phone; on a wide screen the tree never left.
-function showTree() {
+// What the focus lists, with no file on screen: the documents, the data, or, for the code, how
+// to get to a file. The file stays the focus's, a tap away.
+function showFiles() {
   setTabs('explore');
   document.body.classList.remove('showfile');
-  // With nothing open, whatever view was up would sit beside the tree under the wrong tab.
-  if (!state.file) $('#content').innerHTML = '<div class="center">Pick a file from the tree.</div>';
-  navigate(routes.tree());
+  renderLanding();
+  navigate(routes.files());
 }
 
 async function refreshFileComments() {
@@ -1227,12 +1188,12 @@ function renderFile() {
   const f = state.file;
   const content = $('#content');
   content.innerHTML = '';
-  if (!f) { content.innerHTML = '<div class="center">Pick a file from the tree.</div>'; return; }
+  if (!f) { renderLanding(); return; }
   setTabs('explore');
   const st = state.statusLetters[f.path] || '';
   const head = document.createElement('div');
   head.className = 'panelhead file';
-  head.innerHTML = `<button class="phone" data-act="up" title="back to the file tree">‹ files</button>
+  head.innerHTML = `<button class="phone" data-act="up" title="back to what this focus lists">‹ ${state.focus === 'code' ? 'code' : state.focus}</button>
     ${st ? `<span class="badge ${esc(st === '?' ? 'q' : st)}">${esc(st === '?' ? 'untracked' : st)}</span>` : ''}
     <span class="dim lines">${f.total_lines > f.lines.length ? 'first ' + f.lines.length + ' of ' + f.total_lines : f.lines.length} lines</span>
     <span class="spacer"></span>
@@ -1241,7 +1202,6 @@ function renderFile() {
     <button class="phone" data-act="menu" title="everything else this file can do">⋯</button>
     <span class="acts">
       <button class="phone" data-act="tests" title="the tests that name something this file defines">Tests</button>
-      <button data-act="symbols" title="definitions in this file (@)">Symbols</button>
       <button data-act="note">Note</button>
       <button data-act="history" ${state.hasCommits ? '' : 'disabled'}>History</button>
       <button data-act="diff" ${st && st !== '?' ? '' : 'disabled'}>Diff vs HEAD</button>
@@ -1261,11 +1221,10 @@ function renderFile() {
     on(banner, 'unran', () => { state.ran = null; renderFile(); });
     content.appendChild(banner);
   }
-  on(head, 'up', showTree);
+  on(head, 'up', showFiles);
   head.querySelectorAll('[data-act=tests]').forEach(b => b.onclick = () => showTestsOf(f.path));
   on(head, 'note', () => addNote(f.path));
   on(head, 'comment', () => addPathComment(f.path));
-  on(head, 'symbols', () => showFileSymbols(f.path));
   on(head, 'history', () => showLog(f.path));
   on(head, 'diff', () => showDiff({ kind: 'working', path: f.path, status: st }, [{ path: f.path, status: st, old_path: null }], 0));
   on(head, 'wrap', () => setWrap(!state.wrap));
@@ -1394,94 +1353,252 @@ function byteColumnOfClick(e) {
 
 async function codeClick(e, path, row, lineText) {
   const col = byteColumnOfClick(e);
-  hidePopover();
+  hidePlaces();
   if (col === null) return;
+  // A click that selects text is a selection, not a question.
+  if (String(window.getSelection() || '').length) return;
+  await showHere(path, row, col, e.clientX, e.clientY);
+}
+
+// ----- where next -----------------------------------------------------------------------------
+
+// The places a menu lists, in groups, and the one under its cursor.
+const places = { groups: [], rows: [], cursor: 0 };
+
+// Where the reader can go from a place in a file, asked of the server, which answers what the
+// terminal's `J` lists: the definition, the usages, the tests, the documents and the rest.
+async function showHere(path, line, column, x, y) {
   try {
-    const r = await api(`/identifier?path=${encodeURIComponent(path)}&line=${row}&col=${col}`);
-    if (!r.name) return;
-    showPopover(e.clientX, e.clientY, r.name);
+    const r = state.range;
+    const h = await api('/nav/here?' + qs({ path, line, column, base: r && r.base, head: r && r.head }));
+    state.lastHere = { path, line, column, x, y };
+    if (!h.groups.length) { msg(h.name ? 'nowhere to go from ' + h.name : 'nowhere to go from here'); return; }
+    // A definition is not said to be in itself.
+    const within = h.within && !(h.defines && h.name && h.within.endsWith(' ' + h.name)) ? ' in ' + h.within : '';
+    const title = h.name ? `${h.name}, ${h.defines ? 'defined' : 'used'} here${within}` : 'this line' + within;
+    // The obvious step under the cursor: from a use its definition, from a definition its usages.
+    showPlaces(title, h.groups, x, y, h.defines ? 'usages' : 'definition');
   } catch (err) { fail(err); }
 }
 
-function showPopover(x, y, name) {
-  const p = $('#popover');
-  p.innerHTML = `<span class="word">${esc(name)}</span><button class="small" data-act="def">Definition</button><button class="small" data-act="refs">Usages</button>`;
+function showPlaces(title, groups, x, y, first) {
+  const p = $('#places');
+  places.groups = groups;
+  places.rows = [];
+  const parts = [];
+  groups.forEach((g, gi) => {
+    parts.push(`<h4 data-group="${gi}">${esc(g.title)} <span class="dim">${g.places.length}</span>${g.key ? `<span class="dim">(${esc(g.key)})</span>` : ''}</h4>`);
+    for (const pl of g.places) {
+      const n = places.rows.length;
+      places.rows.push({ g: gi, p: pl });
+      parts.push(`<div class="place" data-row="${n}"><span class="loc">${esc(pl.path)}:${pl.line}${pl.commit ? ' · ' + esc(pl.commit.slice(0, 7)) : ''}</span>`
+        + `<span class="text">${esc(pl.text)}</span>${pl.note ? `<span class="note">${esc(pl.note)}</span>` : ''}</div>`);
+    }
+  });
+  p.innerHTML = `<div class="head"><span class="grow">${esc(title)}</span><span class="dim keys">a letter to its group, Enter goes, Esc closes</span>`
+    + `<button class="small" data-act="close" title="close (Esc)">✕</button></div><div class="list">${parts.join('')}</div>`;
   p.hidden = false;
-  // Keep it on screen: 260 is about as wide as the popover gets with a long name in it.
-  p.style.left = Math.min(x + 4, window.innerWidth - 260) + 'px';
-  p.style.top = (y + 8) + 'px';
-  on(p, 'def', () => { hidePopover(); gotoDefinition(name); });
-  on(p, 'refs', () => { hidePopover(); showReferences(name); });
-}
-function hidePopover() { $('#popover').hidden = true; }
-document.addEventListener('click', e => { if (!e.target.closest('#popover') && !e.target.closest('table.code td.c')) hidePopover(); });
-
-async function gotoDefinition(name) {
-  try {
-    const defs = await api('/definitions?name=' + encodeURIComponent(name));
-    if (!defs.length) { msg('no definition of ' + name + ' in the repository'); return; }
-    if (defs.length === 1) { await openFile(defs[0].path, defs[0].line); return; }
-    showDrawer(defs.length + ' definitions of ' + name, defs.map(symbolHit));
-  } catch (err) { fail(err); }
+  // Beside where it was asked for, kept on screen; a phone's stylesheet makes it a sheet.
+  if (x !== undefined && !phone()) {
+    p.style.left = Math.max(8, Math.min(x + 4, window.innerWidth - p.offsetWidth - 8)) + 'px';
+    p.style.top = Math.max(56, Math.min(y + 12, window.innerHeight - p.offsetHeight - 8)) + 'px';
+    p.style.right = 'auto';
+  } else { p.style.left = ''; p.style.top = ''; p.style.right = ''; }
+  on(p, 'close', hidePlaces);
+  p.querySelectorAll('.place').forEach(el => el.onclick = () => goToPlace(places.rows[+el.dataset.row].p));
+  const at = groups.findIndex(g => g.kind === first);
+  setPlaceCursor(at >= 0 ? places.rows.findIndex(r => r.g === at) : 0);
 }
 
-async function showReferences(name) {
-  try {
-    const refs = await api('/references?name=' + encodeURIComponent(name));
-    if (!refs.length) { msg('no occurrence of ' + name); return; }
-    showDrawer(refs.length + ' occurrences of ' + name, refs.map(r => ({ path: r.path, line: r.line, label: '', text: r.text })));
-  } catch (err) { fail(err); }
+function setPlaceCursor(n) {
+  if (!places.rows.length) return;
+  places.cursor = Math.max(0, Math.min(n, places.rows.length - 1));
+  document.querySelectorAll('#places .place').forEach(el => el.classList.toggle('on', +el.dataset.row === places.cursor));
+  $(`#places .place[data-row="${places.cursor}"]`)?.scrollIntoView({ block: 'nearest' });
 }
 
-async function showFileSymbols(path) {
-  try {
-    const syms = await api('/symbols?path=' + encodeURIComponent(path));
-    if (!syms.length) { msg('no symbols found in ' + path); return; }
-    showDrawer('symbols in ' + path, syms.map(symbolHit));
-  } catch (err) { fail(err); }
+function hidePlaces() { $('#places').hidden = true; }
+document.addEventListener('click', e => { if (!e.target.closest('#places') && !e.target.closest('table.code td.c')) hidePlaces(); });
+
+// The menu's keys, while it is up: a group's letter, the arrows, Enter, Esc. Whether it took
+// the key.
+function placesKey(e) {
+  if ($('#places').hidden) return false;
+  if (e.key === 'Escape') { hidePlaces(); return true; }
+  if (e.key === 'ArrowDown') { setPlaceCursor(places.cursor + 1); return true; }
+  if (e.key === 'ArrowUp') { setPlaceCursor(places.cursor - 1); return true; }
+  if (e.key === 'Enter') { const r = places.rows[places.cursor]; if (r) goToPlace(r.p); return true; }
+  const gi = places.groups.findIndex(g => g.key === e.key);
+  if (gi >= 0) { setPlaceCursor(places.rows.findIndex(r => r.g === gi)); return true; }
+  return false;
 }
 
-async function searchSymbols(q) {
-  if (!q.trim()) return;
-  try {
-    const syms = await api('/symbol_search?q=' + encodeURIComponent(q.trim()));
-    if (!syms.length) { msg('no symbol matches ' + q); return; }
-    showDrawer(syms.length + ' symbols matching ' + q, syms.map(symbolHit));
-  } catch (err) { fail(err); }
-}
-
-function symbolHit(s) {
-  return { path: s.path, line: s.line, label: s.kind + ' ' + s.name + (s.container ? ' in ' + s.container : ''), text: s.text };
-}
-
-function showDrawer(title, hits) {
-  const d = $('#drawer');
-  d.hidden = false;
-  d.innerHTML = `<div class="panelhead"><span class="path">${esc(title)}</span><span class="spacer"></span><button class="small" data-act="close">✕</button></div><div class="list"></div>`;
-  on(d, 'close', () => { d.hidden = true; });
-  const list = d.querySelector('.list');
-  if (!hits.length) list.innerHTML = '<div class="center">Nothing to show.</div>';
-  for (const h of hits) {
-    const el = document.createElement('div');
-    el.className = 'item';
-    el.innerHTML = `<span class="loc">${esc(h.path)}:${h.line}</span>${h.label ? `<span class="label">${esc(h.label)}</span>` : ''}<span class="text">${esc(h.text)}</span>`;
-    el.onclick = () => openFile(h.path, h.line);
-    list.appendChild(el);
+// Goes to a place the way opening a file does, so the browser's back is the way back; a place
+// in the history is the change that commit made to the file.
+function goToPlace(pl) {
+  hidePlaces();
+  if (pl.commit) {
+    const file = { path: pl.path, old_path: null, status: 'M' };
+    return showDiff({ kind: 'commit', hash: pl.commit, path: pl.path, old_path: '', status: 'M' }, [file], 0);
   }
+  return openFile(pl.path, pl.line || undefined);
 }
 
-// The tests that name something in `path`, in the drawer: the way from a file to what checks
+// The tests that name something in `path`, as places to go: the way from a file to what checks
 // it, as a test's card is the way back.
 async function showTestsOf(path) {
   try {
     const tests = await api('/tests_of?path=' + encodeURIComponent(path));
     const name = path.split('/').pop();
-    showDrawer(tests.length ? `${tests.length} ${tests.length === 1 ? 'test names' : 'tests name'} ${name}` : `No test names ${name}`,
-      tests.map(t => ({ path: t.path, line: t.line, label: t.label, text: `${kindName(t)}${t.security ? ', security' : ''}${t.ignored ? ', skipped' : ''}` })));
+    if (!tests.length) { msg('no test names ' + name); return; }
+    showPlaces(`${tests.length} ${tests.length === 1 ? 'test names' : 'tests name'} ${name}`, [{
+      kind: 'tests', title: 'Tests', key: 't',
+      places: tests.map(t => ({ path: t.path, line: t.line, text: t.label, note: `${kindName(t)}${t.security ? ', security' : ''}${t.ignored ? ', skipped' : ''}` })),
+    }]);
   } catch (e) { fail(e); }
 }
 
-$('#symbol').onkeydown = e => { if (e.key === 'Enter') { searchSymbols(e.target.value); e.target.blur(); } if (e.key === 'Escape') e.target.blur(); };
+// ----- search ---------------------------------------------------------------------------------
+
+// One search for somewhere new, asked of the server as it is typed: the open file, the
+// definitions, the paths, the tests, the headings, the comments; and, once typing stops for a
+// quarter of a second, every file's text, at the end.
+const finder = { q: '', groups: [], rows: [], cursor: 0, seq: 0, timer: null, textFor: null, path: null, searching: false };
+
+// The file the search is from: the one open, or the one a diff is of.
+function finderPath() {
+  if (state.view === 'explore' && state.file && document.body.classList.contains('showfile')) return state.file.path;
+  if (state.view === 'diff' && state.diff && state.diff.params) return state.diff.params.path;
+  return null;
+}
+
+function openFinder() {
+  hidePlaces();
+  document.querySelector('header').classList.remove('open');
+  const f = $('#finder');
+  Object.assign(finder, { path: finderPath(), q: '', groups: [], rows: [], cursor: 0, textFor: null, searching: false });
+  f.innerHTML = `<div class="head"><input class="find" placeholder="a name, a path, a test, a heading, or any text" autocomplete="off" autocapitalize="off" spellcheck="false">`
+    + `<button class="small" data-act="close" title="close (Esc)">✕</button></div>`
+    + `<div class="hint dim">f: files · s: symbols · t: tests · d: docs · c: comments · "…" exact · /…/ regex · Tab next group</div><div class="list"></div>`;
+  f.hidden = false;
+  const input = f.querySelector('input');
+  input.oninput = () => { finder.q = input.value; refind(); };
+  input.onkeydown = finderKey;
+  on(f, 'close', closeFinder);
+  input.focus();
+  drawFinder();
+}
+
+function closeFinder() {
+  $('#finder').hidden = true;
+  clearTimeout(finder.timer);
+  finder.seq++;
+}
+
+async function refind() {
+  const q = finder.q, seq = ++finder.seq;
+  clearTimeout(finder.timer);
+  if (!q.trim()) { finder.groups = []; drawFinder(); return; }
+  const r = state.range;
+  try {
+    const groups = await api('/search?' + qs({ q, path: finder.path, base: r && r.base, head: r && r.head }), { quiet: true });
+    if (seq !== finder.seq) return;
+    const text = finder.textFor === q ? finder.groups.find(g => g.group === 'text') : null;
+    finder.groups = text ? [...groups, text] : groups;
+    drawFinder();
+    finder.timer = setTimeout(() => findText(q, seq), 250);
+  } catch (e) { fail(e); }
+}
+
+async function findText(q, seq) {
+  if (finder.textFor === q) return;
+  finder.searching = true;
+  drawStatus();
+  try {
+    const hits = await api('/search/text?' + qs({ q, path: finder.path }), { quiet: true });
+    if (seq !== finder.seq || q !== finder.q) return;
+    finder.textFor = q;
+    finder.groups = finder.groups.filter(g => g.group !== 'text');
+    if (hits.length) finder.groups.push({ group: 'text', title: 'Text', hits });
+    drawFinder(true);
+  } catch (e) { fail(e); } finally { finder.searching = false; drawStatus(); }
+}
+
+function drawStatus() {
+  const el = $('#finder .hint');
+  if (!el) return;
+  const n = finder.groups.reduce((a, g) => a + g.hits.length, 0);
+  el.dataset.found = n;
+  el.textContent = finder.searching ? 'searching the text…'
+    : finder.q.trim() ? `${n} found · Tab next group, Enter goes, Esc closes`
+    : 'f: files · s: symbols · t: tests · d: docs · c: comments · "…" exact · /…/ regex · Tab next group';
+}
+
+function drawFinder(keep) {
+  const list = $('#finder .list');
+  if (!list) return;
+  const was = keep && finder.rows[finder.cursor];
+  finder.rows = [];
+  const parts = [];
+  for (const g of finder.groups) {
+    parts.push(`<h4 data-group="${esc(g.group)}">${esc(g.title)} <span class="dim">${g.hits.length}</span></h4>`);
+    g.hits.forEach((h, i) => {
+      const n = finder.rows.length;
+      finder.rows.push({ g, h, i });
+      parts.push(`<div class="place" data-row="${n}">${g.group === 'in_file' ? `<span class="loc">${h.line}</span>` : ''}`
+        + `<span class="text">${esc(h.text)}</span>${h.note ? `<span class="note">${esc(h.note)}</span>` : ''}</div>`);
+    });
+  }
+  list.innerHTML = parts.join('') || (finder.q.trim() && !finder.searching ? '<div class="center dim">nothing found yet</div>' : '');
+  list.querySelectorAll('.place').forEach(el => el.onclick = () => goToHit(finder.rows[+el.dataset.row].h));
+  let at = 0;
+  if (was) { const k = finder.rows.findIndex(r => r.g.group === was.g.group && r.i === was.i); if (k >= 0) at = k; }
+  setFinderCursor(at);
+  drawStatus();
+}
+
+function setFinderCursor(n) {
+  if (!finder.rows.length) return;
+  finder.cursor = Math.max(0, Math.min(n, finder.rows.length - 1));
+  document.querySelectorAll('#finder .place').forEach(el => el.classList.toggle('on', +el.dataset.row === finder.cursor));
+  $(`#finder .place[data-row="${finder.cursor}"]`)?.scrollIntoView({ block: 'nearest' });
+}
+
+function finderKey(e) {
+  if (e.key === 'Escape') { e.preventDefault(); closeFinder(); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); setFinderCursor(finder.cursor + 1); return; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); setFinderCursor(finder.cursor - 1); return; }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    // To the next group's first hit, round to the first; Shift-Tab back.
+    const starts = finder.rows.map((r, k) => r.i === 0 ? k : -1).filter(k => k >= 0);
+    if (!starts.length) return;
+    const next = e.shiftKey ? ([...starts].reverse().find(k => k < finder.cursor) ?? starts[starts.length - 1])
+      : (starts.find(k => k > finder.cursor) ?? starts[0]);
+    setFinderCursor(next);
+    return;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const r = finder.rows[finder.cursor];
+    if (r) goToHit(r.h); else msg('nothing found to go to');
+  }
+}
+
+// Goes to a hit. One in the open file leaves the query marked there, the cursor's line on it.
+function goToHit(h) {
+  closeFinder();
+  const q = finder.q.trim().replace(/^[fstdc]:\s*/, '');
+  if (h.group === 'in_file') {
+    state.search = q;
+    if (state.view === 'diff' && state.diff) { renderDiff(); return; }
+    return openFile(h.path, h.line);
+  }
+  state.search = '';
+  return openFile(h.path, h.line || undefined);
+}
+
+$('#searchbtn').onclick = e => { e.stopPropagation(); openFinder(); };
 
 // ----- agent ----------------------------------------------------------------------------------
 
@@ -1707,7 +1824,7 @@ async function showOverview() {
     content.innerHTML = `<div class="panelhead"><span class="path">${esc(repo ? repo.name : 'repository')}</span>
       <span class="dim mono">${esc(st.branch)}</span>
       <span class="spacer"></span>
-      <button data-act="files">Files</button>
+      <button data-act="search" title="search: a file, a definition, a test or any text (/)">Search</button>
       <button data-act="explain" title="have the agent write an orientation into OVERVIEW.md, under About">Explain this repository</button></div>
       <div class="overview">
         <section class="summary">
@@ -1737,7 +1854,7 @@ async function showOverview() {
         ${o.docs.length ? '<section><h3>Also written down</h3><div class="docs"></div></section>' : ''}
         ${st.biggest.length ? '<section><h3>Biggest files</h3><div class="biggest"></div></section>' : ''}
       </div>`;
-    on(content, 'files', showTree);
+    on(content, 'search', () => openFinder());
     on(content, 'explain', explainRepository);
     loadSummary(content);
     on(content, 'changed', () => showChanges());
@@ -1751,7 +1868,7 @@ async function showOverview() {
       into.appendChild(el);
     };
     const entries = content.querySelector('.entries');
-    if (!o.entries.length) entries.innerHTML = '<div class="dim">Nothing this page knows the conventions for. The tree is a tap away.</div>';
+    if (!o.entries.length) entries.innerHTML = '<div class="dim">Nothing this page knows the conventions for. The search, /, finds the rest.</div>';
     for (const e of o.entries) link(entries, e.path, e.why);
     const docs = content.querySelector('.docs');
     if (docs) for (const d of o.docs) link(docs, d, '');
@@ -2079,11 +2196,11 @@ function renderEndToEnd(content, o) {
   content.innerHTML = `<div class="panelhead">${backToTests()}<span class="path">${esc(repo ? repo.name : 'repository')}</span>
       <span class="spacer"></span>
       <button data-act="summary">Summary</button>
-      <button data-act="files">Files</button></div>
+      <button data-act="search" title="search: a file, a definition, a test or any text (/)">Search</button></div>
     <div class="e2e"></div>`;
   on(content, 'tests', () => showEndToEnd());
   on(content, 'summary', showOverview);
-  on(content, 'files', showTree);
+  on(content, 'search', () => openFinder());
 
   const root = content.querySelector('.e2e');
   if (!o.tests.length) {
@@ -3319,7 +3436,7 @@ async function showReview() {
 
 // ----- notes ----------------------------------------------------------------------------------
 
-// A comment on a whole file or directory, from the tree or the file header.
+// A comment on a whole file, from the list of documents or datasets, or the file header.
 async function addPathComment(path) {
   const text = await askText('Comment on ' + path, '', 'Add to REVIEW.md');
   if (!text) return;
@@ -3327,7 +3444,7 @@ async function addPathComment(path) {
     await api('/comments', { body: { path, line: null, end_line: null, text } });
     msg('comment added to REVIEW.md');
     if (state.file && state.file.path === path) { await refreshFileComments(); return; }
-    // The tree counts comments per path, so it needs the new one before it redraws.
+    // The list counts comments per path, so it needs the new one before it redraws.
     state.allComments = await api('/comments');
     await loadState();
     if (state.view === 'review') showReview();
@@ -3574,11 +3691,11 @@ async function showRange(params, { focus = 'code' } = {}) {
 // Four focuses, picked at the top right, tests first, as in the terminal UI: what it
 // demonstrably does, the code, the documents and the data. The tests and the code hold several
 // views each, picked from a row under the header, and a focus remembers which of them was
-// last open and goes back to it; the documents and the data are a file tree each. The agent
+// last open and goes back to it; the documents and the data each list their files. The agent
 // is not a focus: its button in the header opens it over whatever the reader was looking at.
 const GROUPS = {
   tests: [['e2e', 'End to end'], ['spec', 'All tests']],
-  code: [['overview', 'Summary'], ['explore', 'Files'], ['changes', 'Changes'], ['log', 'Log'],
+  code: [['overview', 'Summary'], ['explore', 'File'], ['changes', 'Changes'], ['log', 'Log'],
     ['review', 'Comments'], ['notes', 'Notes']],
 };
 const FOCUS_OF = { e2e: 'tests', spec: 'tests', overview: 'code', changes: 'code', log: 'code', diff: 'code',
@@ -3604,13 +3721,10 @@ function setTabs(view) {
   if (GROUPS[group] && GROUPS[group].some(([v]) => v === view)) lastInGroup[group] = view;
   document.querySelectorAll('header .focus button').forEach(b => b.classList.toggle('active', b.dataset.focus === group));
   renderSubnav(group, view);
-  // The stylesheet shows the tree for the explorer only, and on a phone either it or the file.
   document.body.dataset.view = view;
   document.body.dataset.focus = group;
-  if (state.treeFocus !== state.focus) renderTree();
   document.querySelector('header').classList.remove('open');
-  hidePopover();
-  if (view !== 'explore') $('#drawer').hidden = true;
+  hidePlaces();
 }
 
 // Draws whatever view is showing, again. Three places need this and they used to each
@@ -3672,7 +3786,7 @@ function openFocus(focus) {
     const path = state.fileOf[focus];
     if (path && !here) return openFile(path);
     state.file = null;
-    return showTree();
+    return showFiles();
   }
   const first = GROUPS[focus][0][0];
   const v = here ? first : (lastInGroup[focus] || first);
@@ -3684,12 +3798,10 @@ function openFocus(focus) {
 // Opens one of the views a focus holds. `again` is a tap on what is already lit.
 function openView(v, again = false) {
   // A tab always starts its view afresh, rather than redrawing what was there. Explore
-  // goes back to the open file, or, tapped again on a phone while a file is up, to the tree.
+  // goes back to the open file, or, tapped again while a file is up, to what the focus lists.
   if (v === 'explore') {
-    // Nothing open: the tree; the Code tab itself lands on the summary. A file open: that file.
-    // On a phone, tapped again while the file is up: the tree, which is how you get to the next.
-    if ((again || phone()) && state.view === 'explore' && document.body.classList.contains('showfile')) showTree();
-    else if (!state.file) showTree();
+    if (again && state.view === 'explore' && document.body.classList.contains('showfile')) showFiles();
+    else if (!state.file) showFiles();
     else { setTabs('explore'); navigate(routes.file(state.file.path)); renderFile(); }
   }
   if (v === 'e2e') showEndToEnd();
@@ -3741,7 +3853,7 @@ $('#refresh').onclick = () => doRefresh().catch(fail);
 // What must not be redrawn under the reader's hands: a comment being written, the text sheet,
 // and the menu over a name in the code. Each holds something typed or pointed at.
 function pageIsBusy() {
-  return !!$('#content .form') || !$('#editor').hidden || !$('#popover').hidden
+  return !!$('#content .form') || !$('#editor').hidden || !$('#places').hidden || !$('#finder').hidden
     || !!$('#content .acts.open') || document.querySelector('header').classList.contains('open');
 }
 
@@ -3774,8 +3886,6 @@ function startWatching() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) watchPoll(); });
 }
 
-$('#search').oninput = e => { state.search = e.target.value; if (state.view === 'explore' && state.file) renderFile(); else if (state.diff && document.querySelector('.sbs, table.code')) renderDiff(); };
-$('#search').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; state.search = ''; e.target.blur(); if (state.file) renderFile(); } };
 
 const HELP = `
 <h3>Tests</h3><table>
@@ -3783,7 +3893,8 @@ const HELP = `
 <tr><td><kbd>Ask the agent to write the first ones</kbd></td><td>where there are none: the agent writes them, each leaving a recording</td></tr></table>
 <h3>The frame</h3><table>
 <tr><td><kbd>Tests</kbd> <kbd>Code</kbd> <kbd>Docs</kbd> <kbd>Data</kbd></td><td>what to look at: the tests, the code, the Markdown documents, the datasets</td></tr>
-<tr><td><kbd>☰</kbd> or <kbd>\\</kbd></td><td>hide or show the side panel</td></tr>
+<tr><td><kbd>☰</kbd> or <kbd>\\</kbd></td><td>hide or show the tests' side panel</td></tr>
+<tr><td><kbd>/</kbd> or <kbd>Search</kbd></td><td>one search: the open file, definitions, paths, tests, headings, comments, then every file's text; <kbd>f:</kbd> <kbd>s:</kbd> <kbd>t:</kbd> <kbd>d:</kbd> <kbd>c:</kbd> narrow it, "…" is exact, /…/ a regular expression; Tab goes to the next group</td></tr>
 <tr><td><kbd>Agent</kbd></td><td>the coding agent, over what is on screen</td></tr>
 <tr><td><kbd>o</kbd> or the range in the breadcrumb</td><td>open: a pull request, a worktree as it is on disk, a branch or a tag to review, then what to compare it with; or a stretch</td></tr></table>
 <h3>All tests</h3><table>
@@ -3792,8 +3903,7 @@ const HELP = `
 <tr><td><kbd>Tests in this commit</kbd></td><td>in the log: the same for one commit</td></tr></table>
 <h3>Code</h3><table>
 <tr><td><kbd>click line number</kbd></td><td>comment on that line; shift-click, or the form's <kbd>Extend range</kbd> and another line number, extends the range</td></tr>
-<tr><td><kbd>Comment</kbd></td><td>a comment on the whole file; <kbd>+</kbd> on a directory in the tree comments on it</td></tr>
-<tr><td><kbd>/</kbd></td><td>search in the file (smart case)</td></tr>
+<tr><td><kbd>Comment</kbd></td><td>a comment on the whole file, from its header or from the list of documents or datasets</td></tr>
 <tr><td><kbd>Note</kbd></td><td>a note on the file, kept in NOTES.md</td></tr>
 <tr><td><kbd>History</kbd></td><td>every commit that touched the file, and the diff of each</td></tr>
 <tr><td><kbd>Diff vs HEAD</kbd></td><td>what changed in the working tree</td></tr>
@@ -3801,10 +3911,10 @@ const HELP = `
 <tr><td><kbd>Wrap lines</kbd> or <kbd>w</kbd></td><td>wrap long lines instead of scrolling sideways, with the continuation indented; remembered in this browser</td></tr></table>
 <h3>Changes</h3><table>
 <tr><td><kbd>Commit</kbd></td><td>in the working tree view, stages everything listed and commits it; in the staged view, commits what is staged. The sheet names the files and any comment still pending on them, and hooks run as they do on the command line</td></tr></table>
-<h3>Symbols</h3><table>
-<tr><td><kbd>click a name</kbd></td><td>Definition or Usages, found with tree-sitter across the repository</td></tr>
-<tr><td><kbd>@</kbd></td><td>symbols defined in the open file</td></tr>
-<tr><td><kbd>#</kbd></td><td>search symbols by name</td></tr></table>
+<h3>Where next</h3><table>
+<tr><td><kbd>click a name</kbd></td><td>where it leads: its definition, its usages, the tests that ran the line or name it, the documents that mention it, and more, each group with its letter</td></tr>
+<tr><td><kbd>J</kbd></td><td>the same menu again, for the name last clicked</td></tr>
+<tr><td>a letter, <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Enter</kbd></td><td>to a group, move, go; the browser's back comes back</td></tr></table>
 <h3>Agent</h3><table>
 <tr><td><kbd>ask agent</kbd></td><td>on a comment: have the agent address it; on a selection: ask about those lines</td></tr>
 <tr><td><kbd>Address all pending</kbd></td><td>the agent works through REVIEW.md and moves each comment to Completed</td></tr>
@@ -3826,18 +3936,28 @@ $('#helpbtn').onclick = () => { $('#help').hidden = !$('#help').hidden; };
 document.addEventListener('keydown', e => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea') return;
+  if (placesKey(e)) { e.preventDefault(); return; }
   if (e.key === 'Escape') {
-    // Esc closes whatever is open, innermost first.
+    // Esc closes whatever is open, innermost first, and then lets go of a search's marks.
     $('#help').hidden = true;
     $('#content .form')?.closest('tr')?.remove();
+    if (state.search) {
+      state.search = '';
+      if (state.view === 'explore' && state.file) renderFile();
+      else if (state.view === 'diff' && state.diff) renderDiff();
+    }
     return;
   }
   if (e.key === '?') { $('#help').hidden = !$('#help').hidden; return; }
   if (e.key === '\\') { setSidebar(!document.body.classList.contains('nosidebar')); return; }
   if (e.key === 'w' && !e.ctrlKey && !e.metaKey) { setWrap(!state.wrap); return; }
-  if (e.key === '/') { e.preventDefault(); $('#search').focus(); $('#search').select(); return; }
-  if (e.key === '#') { e.preventDefault(); $('#symbol').focus(); $('#symbol').select(); return; }
-  if (e.key === '@' && state.file) { showFileSymbols(state.file.path); return; }
+  if (e.key === '/') { e.preventDefault(); openFinder(); return; }
+  // Where next from the name last clicked, again.
+  if (e.key === 'J' && state.lastHere && state.file && state.file.path === state.lastHere.path) {
+    const h = state.lastHere;
+    showHere(h.path, h.line, h.column, h.x, h.y);
+    return;
+  }
   if (e.key === 'r' && !e.ctrlKey && !e.metaKey) { $('#refresh').click(); return; }
   // Open: what to review, and against what, as in the terminal.
   if (e.key === 'o' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); openRanges().catch(fail); return; }
@@ -3876,8 +3996,8 @@ const routes = {
   testsOverview: () => routes.prefix() + '/tests',
   test: (file, name) => routes.prefix() + '/test?' + qs({ file, name }),
   overview: () => routes.prefix() + '/summary',
-  // The documents and the data are trees of their own; a file opened in one says so.
-  tree: () => routes.prefix() + (state.focus === 'docs' ? '/docs' : state.focus === 'data' ? '/data' : '/tree'),
+  // What a focus lists with nothing open; a file opened in the documents or the data says so.
+  files: () => routes.prefix() + (state.focus === 'docs' ? '/docs' : state.focus === 'data' ? '/data' : '/code'),
   file: (path, line) => {
     const q = qs({ line: line || undefined, in: ['docs', 'data'].includes(state.focus) ? state.focus : undefined });
     return routes.prefix() + '/file/' + encodeURIComponent(path).replace(/%2F/g, '/') + (q ? '?' + q : '');
@@ -3928,11 +4048,12 @@ async function route() {
     state.focus = ['docs', 'data'].includes(params.in) ? params.in : 'code';
     return openFile(decodeURIComponent(path.slice(6)), params.line ? Number(params.line) : undefined);
   }
-  if (path === '/docs' || path === '/data') { state.focus = path.slice(1); state.file = null; return showTree(); }
+  if (path === '/docs' || path === '/data') { state.focus = path.slice(1); state.file = null; return showFiles(); }
   if (path === '/changes') return showChanges(params.staged === '1');
   if (path === '/log') return showLog(params.path || null, true, params.commit || null);
   if (path === '/diff' && params.path) return showDiff(params, [{ path: params.path, old_path: params.old_path || null, status: params.status || 'M' }], 0);
-  if (path === '/tree') { state.focus = 'code'; return showTree(); }
+  // `/tree` is what the code's address was while it had a file tree.
+  if (path === '/code' || path === '/tree') { state.focus = 'code'; return showFiles(); }
   if (path === '/review') return showReview();
   if (path === '/notes') return showNotes();
   if (path === '/agent') return showAgent();
@@ -3956,7 +4077,7 @@ startWatching();
     await loadRepos();
     state.allComments = await api('/comments');
     await loadState();
-    hint('Pick a file on the left. ? shows the keys.', 'Pick a file from the tree.');
+    hint('/ searches. ? shows the keys.', 'Search from ⋯, or tap a name in a file.');
     await route();
   } catch (e) { fail(e); }
 })();

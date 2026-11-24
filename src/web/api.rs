@@ -1092,83 +1092,130 @@ pub(super) async fn post_config(state: Ctx, Json(body): Json<ConfigChange>) -> A
 
 // ----- symbols -------------------------------------------------------------------------------
 
-pub(super) async fn get_symbols(state: Ctx, Query(q): Query<PathQuery>) -> ApiResult<Vec<Symbol>> {
-    Ok(Json(
-        with_session(&state, move |s| Ok(s.symbols_in(&q.path))).await?,
-    ))
-}
-
 #[derive(Deserialize)]
-pub(super) struct NameQuery {
-    name: String,
-}
-
-pub(super) async fn get_definitions(
-    state: Ctx,
-    Query(q): Query<NameQuery>,
-) -> ApiResult<Vec<Symbol>> {
-    Ok(Json(
-        with_session(&state, move |s| Ok(s.definitions(&q.name))).await?,
-    ))
-}
-
-/// The most matches one search answers with; a one-letter query otherwise returns the
-/// whole index.
-const MAX_HITS: usize = 500;
-
-pub(super) async fn get_references(
-    state: Ctx,
-    Query(q): Query<NameQuery>,
-) -> ApiResult<Vec<Location>> {
-    Ok(Json(
-        with_session(&state, move |s| {
-            let mut hits = s.references(&q.name);
-            hits.truncate(MAX_HITS);
-            Ok(hits)
-        })
-        .await?,
-    ))
-}
-
-#[derive(Deserialize)]
-pub(super) struct SearchQuery {
-    q: String,
-}
-
-pub(super) async fn get_symbol_search(
-    state: Ctx,
-    Query(q): Query<SearchQuery>,
-) -> ApiResult<Vec<Symbol>> {
-    Ok(Json(
-        with_session(&state, move |s| {
-            let mut hits = s.search_symbols(&q.q);
-            hits.truncate(MAX_HITS);
-            Ok(hits)
-        })
-        .await?,
-    ))
-}
-
-#[derive(Deserialize)]
-pub(super) struct IdentifierQuery {
+pub(super) struct HereQuery {
     path: String,
     /// 0-based row.
     line: usize,
     /// 0-based byte column.
-    col: usize,
+    column: usize,
+    /// The review range on the page, if one is: its two sides.
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    head: Option<String>,
 }
 
-#[derive(Serialize)]
-pub(super) struct IdentifierResponse {
-    name: Option<String>,
+/// The files the range from `base` to `head` changed, worked out as `/range` does; none
+/// without both.
+fn range_files(
+    s: &mut crate::session::Session,
+    base: &Option<String>,
+    head: &Option<String>,
+) -> std::collections::HashSet<String> {
+    let (Some(base), Some(head)) = (base, head) else {
+        return Default::default();
+    };
+    let stretch = crate::spec::Stretch::Range {
+        base: base.clone(),
+        head: head.clone(),
+        pull: None,
+        label: None,
+    };
+    let Ok(span) = crate::spec::span(s, &stretch) else {
+        return Default::default();
+    };
+    let to = span.to.clone().unwrap_or_default();
+    s.repo
+        .diff_files(&span.base, &to)
+        .map(|files| files.into_iter().map(|f| f.path).collect())
+        .unwrap_or_default()
 }
 
-pub(super) async fn get_identifier(
+/// Where the reader can go from a place in a file: what is there, and the groups of places
+/// (`nav::here`), the same the terminal's `J` lists.
+pub(super) async fn get_nav_here(
     state: Ctx,
-    Query(q): Query<IdentifierQuery>,
-) -> ApiResult<IdentifierResponse> {
-    let name = with_session(&state, move |s| Ok(s.identifier_at(&q.path, q.line, q.col))).await?;
-    Ok(Json(IdentifierResponse { name }))
+    Query(q): Query<HereQuery>,
+) -> ApiResult<crate::nav::Here> {
+    Ok(Json(
+        with_session(&state, move |s| {
+            let changed = range_files(s, &q.base, &q.head);
+            Ok(crate::nav::here_in(s, &q.path, q.line, q.column, &changed))
+        })
+        .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+pub(super) struct FindQuery {
+    q: String,
+    /// The file open, searched first and ranked near.
+    #[serde(default)]
+    path: Option<String>,
+    /// The review range on the page, whose files rank higher.
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    head: Option<String>,
+}
+
+/// One group of what a search found, named for the page.
+#[derive(Serialize)]
+pub(super) struct FoundGroup {
+    group: crate::search::Group,
+    title: &'static str,
+    hits: Vec<crate::search::Hit>,
+}
+
+/// The search, all but the text: the open file, definitions, paths, tests, headings and
+/// comments, in groups, the best first.
+pub(super) async fn get_search(
+    state: Ctx,
+    Query(q): Query<FindQuery>,
+) -> ApiResult<Vec<FoundGroup>> {
+    Ok(Json(
+        with_session(&state, move |s| {
+            let file = match &q.path {
+                Some(path) => s
+                    .repo
+                    .read_working(path)?
+                    .map(|bytes| (path.clone(), String::from_utf8_lossy(&bytes).into_owned())),
+                None => None,
+            };
+            let changed = range_files(s, &q.base, &q.head);
+            let near = crate::search::Near { file, changed };
+            Ok(crate::search::search(s, &q.q, &near)
+                .into_iter()
+                .map(|(group, hits)| FoundGroup {
+                    group,
+                    title: group.title(),
+                    hits,
+                })
+                .collect())
+        })
+        .await?,
+    ))
+}
+
+/// The text search, every file's lines, through git grep: slow enough on a large repository
+/// that it runs without the session, so nothing else waits for it.
+pub(super) async fn get_search_text(
+    state: Ctx,
+    Query(q): Query<FindQuery>,
+) -> ApiResult<Vec<crate::search::Hit>> {
+    let root = with_session(&state, |s| Ok(s.root().to_path_buf())).await?;
+    let hits = tokio::task::spawn_blocking(move || -> Result<Vec<crate::search::Hit>> {
+        let repo = crate::repo::Repo::open(&root)?;
+        let near = crate::search::Near {
+            file: q.path.map(|p| (p, String::new())),
+            ..Default::default()
+        };
+        Ok(crate::search::text(&repo, &q.q, &near))
+    })
+    .await
+    .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))??;
+    Ok(Json(hits))
 }
 
 // ----- analysis ------------------------------------------------------------------------------
