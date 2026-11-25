@@ -48,6 +48,25 @@ pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         _ => " end to end ".into(),
     };
+    // On the overview, the unit and integration tests have a box of their own under the end-to-end
+    // tests', beside it rather than in it; never more than half the screen.
+    let on_overview = state.main
+        && !state.full
+        && state.test.as_ref().is_none_or(|t| !t.full)
+        && state.rows.current() == Some(&E2eRow::Overview);
+    let area = match &state.opening {
+        Some(o) if on_overview && !o.missing() => {
+            let lines = others_lines(&theme, &o.others, area.width.saturating_sub(2) as usize);
+            let below = (lines.len() as u16 + 2).min(area.height / 2);
+            let [top, bottom] =
+                Layout::vertical([Constraint::Fill(1), Constraint::Length(below)]).areas(area);
+            if below > 2 {
+                draw_others(frame, &theme, &o.others, lines, bottom);
+            }
+            top
+        }
+        _ => area,
+    };
     let block = title_block(&theme, title, true);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -95,8 +114,8 @@ pub(super) fn draw_end_to_end(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// The overview, the first screen of the tests: what the stretch did to the tests and the
-/// code, each row leading to it, and what the one under the cursor means; below it, the rest
-/// of the tests summed up. Returns the height of its rows, which is what a page key moves by.
+/// code, each row leading to it, and what the one under the cursor means. Returns the height of
+/// its rows, which is what a page key moves by.
 fn draw_overview(
     frame: &mut Frame,
     theme: &Theme,
@@ -104,15 +123,6 @@ fn draw_overview(
     base_status: Option<&str>,
     area: Rect,
 ) -> u16 {
-    let others = state
-        .opening
-        .as_ref()
-        .map(|o| others_lines(theme, &o.others, area.width.saturating_sub(2) as usize))
-        .unwrap_or_default();
-    // The summary's lines and its box, never more than half the screen.
-    let below = (others.len() as u16 + 2).min(area.height / 2);
-    let [top, bottom] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(below)]).areas(area);
     let explained = matches!(
         state.overview.current(),
         Some(E2eRow::Change(_) | E2eRow::Unran(_) | E2eRow::Base)
@@ -122,34 +132,40 @@ fn draw_overview(
         Constraint::Length(u16::from(explained)),
         Constraint::Fill(if explained { 2 } else { 0 }),
     ])
-    .areas(top);
+    .areas(area);
     let _ = gap;
     draw_list(frame, theme, state, base_status, rows, true);
     if explained {
         draw_stretch_detail(frame, theme, state, detail);
     }
-    if below > 2
-        && let Some(opening) = &state.opening
-    {
-        let o = &opening.others;
-        let mut title: Vec<Span> = vec![" unit and integration tests ".into()];
-        if o.total > 0 {
-            let mut said = format!(
-                "{} in {} ",
-                plural(o.total, "test", "tests"),
-                plural(o.files, "file", "files")
-            );
-            if o.ignored > 0 {
-                said.push_str(&format!("· {} marked to skip ", o.ignored));
-            }
-            title.push(said.dim());
-        }
-        let block = title_block(theme, title.into(), false);
-        let inner = block.inner(bottom);
-        frame.render_widget(block, bottom);
-        frame.render_widget(Paragraph::new(others), inner);
-    }
     rows.height
+}
+
+/// The unit and integration tests' box, under the end-to-end tests' on the overview: `lines`,
+/// from [`others_lines`], under a title that counts them.
+fn draw_others(
+    frame: &mut Frame,
+    theme: &Theme,
+    o: &crate::e2e::Others,
+    lines: Vec<Line<'static>>,
+    area: Rect,
+) {
+    let mut title: Vec<Span> = vec![" unit and integration tests ".into()];
+    if o.total > 0 {
+        let mut said = format!(
+            "{} in {} ",
+            plural(o.total, "test", "tests"),
+            plural(o.files, "file", "files")
+        );
+        if o.ignored > 0 {
+            said.push_str(&format!("· {} marked to skip ", o.ignored));
+        }
+        title.push(said.dim());
+    }
+    let block = title_block(theme, title.into(), false);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// The tests below the end-to-end ones, in lines for the overview's panel: the last run of

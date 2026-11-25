@@ -749,47 +749,46 @@ over it is closed. A list of places to go, once one is picked, is closed with it
 ask the agent something, open its panel over the screen they were pressed on, and `q` there comes
 back to it.
 
-`o`, open, from any screen but the agent's (or `gp`), opens the range picker over the screen,
-in two steps. First, what to review: the forge's
-open pull requests, each with its number, title, author and whether it is a draft, which the
-picker says it is asking for while it does and fills in when the answer comes, or says why there
-are none; the worktrees as they are on disk, each with what it has checked out and this one
-marked; the branches, the remote branches and the tags; and the three stretches of this checkout,
-the cursor on the one marked. `/` narrows the list to what matches what is typed, headings with
-nothing left under them gone; `Enter` keeps the filter and `Esc` drops it. A stretch picked is
-what the tests mark, and a pull request is a head and a base already. Anything else goes on to
-the second step, titled with it: what to compare it with, the likeliest first, each saying why
-it is offered where it has a reason; `Esc` there goes back to the first. The forge is asked on a
-thread of its own, and so is the fetch a pull request may need, so nothing on screen waits for
-the network. A comparison or a pull request is the range the tests are seen through, and opens
-on the tests, their overview selected: what it did to them is what is read first. The code, the
-documents and the data each get its screen over their first screen, a digit away and said so:
-titled with the pull request's number and title or with the head against the base; for a pull
-request, its state, its two branches and its author, and its address, which `ge` opens; then the
-files of it the focus holds — every one for the code, the documents for Docs, the datasets for
-Data, saying so when there are none — headed by how many and how big their change is together,
+`o`, open, from any screen but the agent's (or `gp`), opens the range picker over the screen, in two
+steps. First, what to review: the forge's open pull requests, each with its number, title, author
+and whether it is a draft, which the picker says it is asking for while it does and fills in when
+the answer comes, or says why there are none; the worktrees as they are on disk, each with what it
+has checked out and this one marked; the branches, the remote branches and the tags; and the three
+stretches of this checkout, the cursor on the first of them all, at the top. `/` narrows the list to
+what matches what is typed, headings with nothing left under them gone; `Enter` keeps the filter and
+`Esc` drops it. A stretch picked is what the tests mark, and a pull request is a head and a base
+already. Anything else goes on to the second step, titled with it: what to compare it with, the
+likeliest first, each saying why it is offered where it has a reason; `Esc` there goes back to the
+first. The forge is asked on a thread of its own, and so is the fetch a pull request may need, so
+nothing on screen waits for the network. A comparison or a pull request is the range the tests are
+seen through, and opens on the tests, their overview selected: what it did to them is what is read
+first. The code, the documents and the data each get its screen over their first screen, a digit
+away and said so: titled with the pull request's number and title or with the head against the base;
+for a pull request, its state, its two branches and its author, and its address, which `ge` opens;
+then the files of it the focus holds — every one for the code, the documents for Docs, the datasets
+for Data, saying so when there are none — headed by how many and how big their change is together,
 each with its own size: `+` inserted, `−` deleted, `~` updated and `↷` moved lines as omnidiff
 counts them, a line that is on both sides once, `no change in its code` when only what omnidiff
 ignores changed, and `not text` for a file that is not; and, for a pull request, its comments on
-those files, oldest first, each with its author and where it is, the ones on the whole pull
-request with the code. `Enter` on a file opens it, its path in the breadcrumb and its size, which
-file of the range it is and which change the cursor is on in the status line. A changed file
-opens as a diff, in omnidiff's own diff view hosted in the screen: the two sides matched node by
-node, one panel at a time where both do not fit, the after side first; `n` and `p` go from change
-to change, `v` changes the layout, Tab the panel, and omnidiff's other keys work as they do in it.
-A file added or deleted opens as code instead — the file as it is at the head, or as it was at the
-base, syntax highlighted and nothing painted as changed — under a title saying that the whole
-file is new or gone, since a diff against nothing is half a screen of nothing and the other half
-one colour. `s` goes from the diff to the code at the head, to the code at the base, and back,
-leaving out a side the file does not have; the title says which end the code is. The code moves
-as a file does (`j`/`k`, Ctrl-d/u, Page Up/Down, Home/End, `G`), and the after side keeps the
-review's comments under their lines. Around either, `]` and `[` go to the range's next and
-previous file, `c` comments on the after side's line under the cursor, recording its text and the
-head's commit as a comment from a diff does, `/` searches, `ge` opens the line in `$EDITOR` and
-`q` goes back. A file that is not text opens in the plain diff. `Enter` on a comment on a line
-opens its file there at that line, which counts in the pull request's head; a comment on the
-whole pull request has nowhere to go. The breadcrumb names the range: a stretch by its name, a
-pull request as `#` and its number, a comparison as its head against its base.
+those files, oldest first, each with its author and where it is, the ones on the whole pull request
+with the code. `Enter` on a file opens it, its path in the breadcrumb and its size, which file of
+the range it is and which change the cursor is on in the status line. A changed file opens as a
+diff, in omnidiff's own diff view hosted in the screen: the two sides matched node by node, one
+panel at a time where both do not fit, the after side first; `n` and `p` go from change to change,
+`v` changes the layout, Tab the panel, and omnidiff's other keys work as they do in it. A file added
+or deleted opens as code instead — the file as it is at the head, or as it was at the base, syntax
+highlighted and nothing painted as changed — under a title saying that the whole file is new or
+gone, since a diff against nothing is half a screen of nothing and the other half one colour. `s`
+goes from the diff to the code at the head, to the code at the base, and back, leaving out a side
+the file does not have; the title says which end the code is. The code moves as a file does
+(`j`/`k`, Ctrl-d/u, Page Up/Down, Home/End, `G`), and the after side keeps the review's comments
+under their lines. Around either, `]` and `[` go to the range's next and previous file, `c` comments
+on the after side's line under the cursor, recording its text and the head's commit as a comment
+from a diff does, `/` searches, `ge` opens the line in `$EDITOR` and `q` goes back. A file that is
+not text opens in the plain diff. `Enter` on a comment on a line opens its file there at that line,
+which counts in the pull request's head; a comment on the whole pull request has nowhere to go. The
+breadcrumb names the range: a stretch by its name, a pull request as `#` and its number, a
+comparison as its head against its base.
 
 A repository opens on its end-to-end tests, the first screen of the first focus, with nothing under
 them, unless a file was named on the command line, which opens in the code; this goes for a
@@ -798,27 +797,28 @@ screen, on their overview; the tests that name the open file, which `E` used to 
 Until the symbol index is built the tests are those `OVERVIEW.md` lists, and with no such file the
 screen says it is reading them; either way it reads them again once the index is in, and again on
 `r`, staying on the same test. There is no side panel: one thing is shown at a time, across the
-whole width. The tests open on the overview, what the stretch did, described below, with a box under
-it that sums up the unit and integration tests as the opening does, and says that `P` lists every
-test by its kind. The overview is the tests' first screen: `Tab` from it is the list of every test,
-and `q` or `Esc` from the list comes back to it. The list has the overview first, then each test
-file as a heading with its tests under it, each marked passed, failed or without a recording, and a
-security mark where it has one; recordings whose test is gone follow under a heading of their own.
-The title counts the end-to-end tests against all the tests, the failed and those without a
-recording. `Enter`, `Tab`, `l` or `→` on a row of the list opens it on its own: the overview; a
-test, as the test's own view; a recording whose test is gone, as its label, file and line, how its
-last run went, and its recording with its steps. `q`, `Esc`, `Tab`, `h` or `←` come back from a test
-or a recording to the list, on the row that was opened. A range that is opened lands on the overview
-too. A terminal recording is played into frames when its test is first selected, shown paused at its
-first frame in a box titled with the position, the length and whether it plays, and cropped to the
-box with a note when it is bigger; `z` gives it the whole of the tests' screen. `Space` or `p` plays
-and pauses, from the start again once it has ended; `]` and `[` go to the next and previous step;
-`0` goes back to the start; `Space`, `p`, `]`, `[` and `0` on a test in the list open it and do the
-same; while it plays the screen is drawn every 40 ms. A video cannot be drawn, so it is named, and
-`ge` hands it to the system's opener (`xdg-open`, or `open` on macOS). `s` in the panel opens the
-test's source at its line. A repository with no end-to-end tests opens on that finding instead: what
-one would look like for the kind of software it seems to be, how many tests of other kinds it has,
-and `a`, which sends the agent the request for the first ones, each leaving a recording.
+whole width. The tests open on the overview, what the stretch did, described below, and under the
+end-to-end tests' box, beside it rather than in it, a box of its own that sums up the unit and
+integration tests as the opening does, and says that `P` lists every test by its kind. The overview
+is the tests' first screen: `Tab` from it is the list of every test, and `q` or `Esc` from the list
+comes back to it. The list has the overview first, then each test file as a heading with its tests
+under it, each marked passed, failed or without a recording, and a security mark where it has one;
+recordings whose test is gone follow under a heading of their own. The title counts the end-to-end
+tests against all the tests, the failed and those without a recording. `Enter`, `Tab`, `l` or `→` on
+a row of the list opens it on its own: the overview; a test, as the test's own view; a recording
+whose test is gone, as its label, file and line, how its last run went, and its recording with its
+steps. `q`, `Esc`, `Tab`, `h` or `←` come back from a test or a recording to the list, on the row
+that was opened. A range that is opened lands on the overview too. A terminal recording is played
+into frames when its test is first selected, shown paused at its first frame in a box titled with
+the position, the length and whether it plays, and cropped to the box with a note when it is bigger;
+`z` gives it the whole of the tests' screen. `Space` or `p` plays and pauses, from the start again
+once it has ended; `]` and `[` go to the next and previous step; `0` goes back to the start;
+`Space`, `p`, `]`, `[` and `0` on a test in the list open it and do the same; while it plays the
+screen is drawn every 40 ms. A video cannot be drawn, so it is named, and `ge` hands it to the
+system's opener (`xdg-open`, or `open` on macOS). `s` in the panel opens the test's source at its
+line. A repository with no end-to-end tests opens on that finding instead: what one would look like
+for the kind of software it seems to be, how many tests of other kinds it has, and `a`, which sends
+the agent the request for the first ones, each leaving a recording.
 
 A test's own view, beside the panel: where it is and why it counts, how its last run went and when,
 how long it took, how many commits and changed files the tree has moved on since, and what any

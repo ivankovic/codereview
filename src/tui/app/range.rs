@@ -235,12 +235,8 @@ impl App {
             filtering: false,
         };
         picker.rebuild();
-        let here = picker
-            .rows
-            .items
-            .iter()
-            .position(|r| matches!(r, RangeChoice::Stretch(s) if *s == self.stretch));
-        picker.rows.cursor = here.unwrap_or(0);
+        // On the first row that can be picked, at the top, where reading starts.
+        picker.rows.cursor = 0;
         super::end_to_end::settle(&mut picker.rows, 1, RangeChoice::selectable);
         self.range_picker = Some(picker);
     }

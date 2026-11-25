@@ -334,8 +334,7 @@ fn a_stretch_picked_from_the_range_picker_is_what_the_tests_mark() {
     t.keys("g");
     t.keys("p");
     t.wait_for("review what?");
-    t.keys("j");
-    t.keys("j");
+    t.keys("G");
     t.keys(ENTER);
     t.wait_for("marking uncommitted work (w)");
     let top = t.screen().lines().next().unwrap_or_default().to_string();
@@ -344,6 +343,19 @@ fn a_stretch_picked_from_the_range_picker_is_what_the_tests_mark() {
         top.contains("› uncommitted ›"),
         || top.clone(),
     );
+}
+
+#[test]
+fn the_range_picker_opens_on_its_first_choice_at_the_top() {
+    let mut t = term!();
+    t.documents("SPECS.md#Pull requests and comparisons");
+    t.on_the_tests();
+    t.step("open the range picker, and pick what the cursor starts on");
+    t.keys("o");
+    t.wait_for("review what?");
+    t.keys(ENTER);
+    t.step("it was the first worktree, at the top, not a stretch at the bottom");
+    t.wait_for("with what?");
 }
 
 #[test]
@@ -977,6 +989,14 @@ fn the_tests_overview_sums_up_the_unit_and_integration_tests_below_the_end_to_en
     t.wait_for("By area: ");
     t.wait_for("No run on record");
     t.wait_for("P every test, by kind");
+    let screen = t.screen();
+    t.check(
+        "its box is beside the end-to-end tests' box, not inside it",
+        screen
+            .lines()
+            .any(|l| l.starts_with("┌ unit and integration tests")),
+        || screen.clone(),
+    );
 }
 
 /// Turns the scratch directory into a directory of checkouts: no repository of its own, and
